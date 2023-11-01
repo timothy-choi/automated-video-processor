@@ -19,9 +19,6 @@ public class Templates {
     @DynamoDBAttribute(attributeName = "name")
     private String name;
 
-    @DynamoDBAttribute(attributeName = "SlideCount")
-    private Int SlideCount;
-
     @DynamoDBAttribute(attributeName = "Slides")
     private List<String> slides; 
 
@@ -68,5 +65,83 @@ public class Templates {
         key.setTemplateId(newUUID.toString());
     }
 
-}
+    public String getName() {
+        return name;
+    }
 
+    public void setName(String templateName) {
+        name = TemplateName;
+    }
+
+    public List<String> getSlides() {
+        return slides;
+    }
+
+    public void createSlides() {
+        slides = new ArrayList<String>();
+    }
+
+    public void addSlide(String slideId) {
+        slides.add(slideId);
+    }
+
+    public List<Int> getPartitions() {
+        return partitions;
+    }
+
+    public void createPartitions() {
+        partitions = new ArrayList<Int>();
+    }
+
+    public void addPartition(Int slideNumber) {
+        partitions.add(slideNumber);
+    }
+
+    public List<String> getText() {
+        return Text;
+    }
+
+    public void createText() {
+        text = new ArrayList<String>();
+    }
+
+    public void addText(String data) {
+        text.add(data);
+    }
+
+    public List<Int> getSlideDuration() {
+        return SlideDuration;
+    }
+
+    public void createSlideDuration() {
+        SlideDuration = new ArrayList<Int>();
+    }
+
+    public void addSlideDuration(Int time) {
+        SlideDuration.add(time);
+    }
+
+    public List<String> getShapes() {
+        return Shapes;
+    }
+
+    public void createShapes() {
+        Shapes = new ArrayList<String>();
+    }
+
+    public void addShape(String shapeId) {
+        ShapeId.add(shapeId);
+    }
+
+    public List<String> getImages() {
+        return Images;
+    }
+
+    public void createImages() {
+        Images = new ArrayList<String>();
+    }
+
+    public void addSlideDuration(String imageUrl) {
+        Images.add(imageUrl);
+    }
+}
