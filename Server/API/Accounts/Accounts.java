@@ -32,7 +32,7 @@ public class Accounts {
         this.joined = date;
         this.email = email;
         this.NumberOfVideosMade = 0;
-        VideosCreated = new ArrayList<Long>();
+        this.VideosCreated = new ArrayList<Long>();
     }
 
     public Long getId() {
