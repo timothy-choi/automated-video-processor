@@ -14,7 +14,11 @@ public interface AccountsService {
 
     void createAccount(String name, String username, String email);
 
-    void updateUsername(String username, HttpServletResponse response);
+    void updateUsername(String username, String newUser, HttpServletResponse response);
+
+    void addVideo(String username, Long videoId);
+
+    void addVideoCount(String username, Int change);
 
     List<Accounts> findAll();
 }
