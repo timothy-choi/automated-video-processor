@@ -141,7 +141,7 @@ public class Templates {
         Images = new ArrayList<String>();
     }
 
-    public void addSlideDuration(String imageUrl) {
+    public void addImage(String imageUrl) {
         Images.add(imageUrl);
     }
 }
