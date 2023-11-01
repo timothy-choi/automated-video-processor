@@ -5,7 +5,6 @@ import org.springframework.web.bind.annotation.RestController;
 import API.Auth.Accounts;
 
 import org.springframework.web.bind.annotation.RequestMapping;
-import javax.servlet.http.HttpServletResponse;
 
 
 @RestController
@@ -55,8 +54,7 @@ public class AccountsController {
     @PutMapping(value = "/accounts/username/{currUsername}/{newUsername}")
     public ResponseEntity updateUsername(@PathVariable String username, @PathVariable String newUsername) {
         try {
-            HttpServletResponse response = new HttpServletResponse();
-            accountsService.updateUsername(username, newUsername, response);
+            accountsService.updateUsername(username, newUsername);
         }
         catch (Exception e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Account not found");

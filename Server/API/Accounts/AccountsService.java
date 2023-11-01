@@ -3,7 +3,6 @@ package api.accounts;
 import java.util.List;
 
 import API.Auth.Accounts;
-import javax.servlet.http.HttpServletResponse;
 
 public interface AccountsService {
     Accounts findByUsername(String username);
@@ -14,7 +13,7 @@ public interface AccountsService {
 
     void createAccount(String name, String username, String email);
 
-    void updateUsername(String username, String newUser, HttpServletResponse response);
+    void updateUsername(String username, String newUser);
 
     void addVideo(String username, Long videoId);
 

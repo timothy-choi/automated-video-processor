@@ -6,7 +6,6 @@ import Java.API.Auth.Accounts;
 
 import java.util.List;
 
-import javax.servlet.http.HttpServletResponse;
 
 
 public class AccountsServiceImpl implements AccountsService {
@@ -43,7 +42,7 @@ public class AccountsServiceImpl implements AccountsService {
     }
 
     @Override
-    public void updateUsername(String username, String newUser, HttpServletResponse response) {
+    public void updateUsername(String username, String newUser) {
         Accounts account = accountsRepository.findByUsername(username);
         if (account == null) {
             throw new Exception("Username not found");
