@@ -11,7 +11,7 @@ import javafx.util.Pair;
 import java.util.*;
 
 
-@DynamoDBDocument(tableName = "Template")
+@DynamoDBTable(tableName = "Template")
 public class Templates {
     @Id
     private PrimaryKey key;
