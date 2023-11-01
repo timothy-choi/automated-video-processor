@@ -55,6 +55,10 @@ public class Accounts {
         return this.username;
     }
 
+    public void setUsername(String newUsername) {
+        this.username = newUsername;
+    }
+
     public void setNumVideos(int change) {
         this.NumberOfVideosMade += change;
     }
