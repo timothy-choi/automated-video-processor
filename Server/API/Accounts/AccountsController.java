@@ -84,6 +84,17 @@ public class AccountsController {
         return ResponseEntity("Video added successfully", HttpStatus.OK);
     }
 
+    @PostMapping(value = "/accounts/{username}/templates")
+    public ResponseEntity addTemplate(@PathVariable String username, @RequestBody Long templateId) {
+        try {
+            accountsService.addTemplate(username, templateId);
+        }
+        catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Account not found");
+        }
+        return ResponseEntity("Template added successfully", HttpStatus.OK);
+    }
+
     @DeleteMapping(value="/accounts/{accountId}")
     public ResponseEntity deleteAcct(@PathVariable Long accountId) {
         try {

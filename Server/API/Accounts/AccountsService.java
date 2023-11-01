@@ -20,4 +20,6 @@ public interface AccountsService {
     void addVideoCount(String username, Int change);
 
     List<Accounts> findAll();
+
+    void addTemplate(String username, Long templateId);
 }

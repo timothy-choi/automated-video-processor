@@ -84,4 +84,14 @@ public class AccountsServiceImpl implements AccountsService {
         accountsRepository.save(accounts);
     }
 
+    @Override
+    public void addTemplate(String username, Long templateId) {
+        Accounts account = accountsRepository.findByUsername(username);
+        if (account == null) {
+            throw new Exception("Username not found");
+        }
+
+        account.addTemplate(templateId);
+        accountsRepository.save(accounts);
+    }
 }
