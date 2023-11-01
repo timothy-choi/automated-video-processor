@@ -21,6 +21,8 @@ public class Accounts {
 
     private Int NumberOfVideosMade;
     private List<Long> VideosCreated;
+
+    private List<Long> TemplatesCreated;
     
     Accounts() {}
 
@@ -33,6 +35,7 @@ public class Accounts {
         this.email = email;
         this.NumberOfVideosMade = 0;
         this.VideosCreated = new ArrayList<Long>();
+        this.TemplatesCreated = new ArrayList<Long>();
     }
 
     public Long getId() {
@@ -68,10 +71,18 @@ public class Accounts {
     }
 
     public void addVideo(Long videoId) {
-        VideosCreated.add(videoId);
+        this.VideosCreated.add(videoId);
     }
 
     public List<Long> getVideos() {
-        return VideosCreated;
+        return this.VideosCreated;
+    }
+
+    public void addTemplate(Long templateId) {
+        this.TemplatesCreated.add(templateId);
+    }
+
+    public List<Long> getTemplates() {
+        return this.TemplatesCreated;
     }
 }
