@@ -81,4 +81,43 @@ public class TemplateOperations {
         }
         return res;
     }
+
+    public static BatchUpdatePresentationResponse addText(String presentationId, String textBoxId, String text, String prevText) throws IOException {
+        GoogleCredentials credentials = GoogleCredentials.getApplicationDefault()
+        .createScoped(Collections.singleton(SlidesScopes.PRESENTATIONS));
+        HttpRequestInitializer reqInitializer = new HttpCredentialsAdapter(credentials);
+
+        Slides service = new Slides.Builder(new NetHttpTransport(),
+            GsonFactory.getDefaultInstance(),
+            reqInitializer)
+            .setApplicationName("VideoProcessing")
+            .build();
+        
+        List<Request> req = new ArrayList<>();
+
+        req.add(new Request()
+            .setInsertText(new InsertTextRequest()
+                .setObjectId(textBodyId)
+                .setText(text)
+                .setinsertionIndex(prevText.size())));
+
+        BatchUpdatePresentationResponse res = null;
+        try {
+            BatchUpdatePresentationRequest body = new BatchUpdatePresentationRequest().setRequests(requests);
+            res = service.presentations().batchUpdate(presentationId, body).execute();
+
+        } catch (GoogleJsonResponseException e) {
+            GoogleJsonError error = e.getDetails();
+            if (error.getCode() == 400) {
+                throw new Exception("Id is not unique");
+            }
+            else if (error.getCode() == 404) {
+                throw new Exception("Couldn't find presentation");
+            }
+            else {
+                throw e;
+            }
+        }
+        return res;
+    }
 }

@@ -84,6 +84,16 @@ public class Templates {
         slides.add(slideId);
     }
 
+    public void deleteSlide(String slideId) {
+        int deleted = -1;
+        for (int i = 0; i < this.slides.size(); ++i) {
+            if (this.slides.get(i) == slideId) {
+                deleted = i;
+            }
+        }
+        this.slides.remove(Integer.valueOf(deleted));
+    }
+
     public List<Int> getPartitions() {
         return partitions;
     }
@@ -94,6 +104,16 @@ public class Templates {
 
     public void addPartition(Int slideNumber) {
         partitions.add(slideNumber);
+    }
+
+    public void deletePartition(String slideNum) {
+        int deleted = -1;
+        for (int i = 0; i < this.partitions.size(); ++i) {
+            if (this.partitions.get(i) == slideNum) {
+                deleted = i;
+            }
+        }
+        this.partitions.remove(Integer.valueOf(deleted));
     }
 
     public List<String> getText() {
@@ -108,6 +128,10 @@ public class Templates {
         text.add(data);
     }
 
+    public void deleteText(int index) {
+        this.text.remove(Integer.valueOf(index));
+    }
+
     public List<Int> getSlideDuration() {
         return SlideDuration;
     }
@@ -118,6 +142,10 @@ public class Templates {
 
     public void addSlideDuration(Int time) {
         SlideDuration.add(time);
+    }
+
+    public void deleteSlideDuration(int index) {
+        this.SlideDuration.remove(Integer.valueOf(index));
     }
 
     public List<String> getShapes() {
@@ -132,6 +160,10 @@ public class Templates {
         ShapeId.add(shapeId);
     }
 
+    public void deleteShapes(int index) {
+        this.Shapes.remove(Integer.valueOf(index));
+    }
+
     public List<String> getImages() {
         return Images;
     }
@@ -142,5 +174,9 @@ public class Templates {
 
     public void addImage(String imageUrl) {
         Images.add(imageUrl);
+    }
+
+    public void deleteImages(int index) {
+        this.Images.remove(Integer.valueOf(index));
     }
 }
