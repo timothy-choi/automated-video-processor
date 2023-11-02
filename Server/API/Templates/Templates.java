@@ -57,12 +57,11 @@ public class Templates {
         return key.getTemplateId();
     }
 
-    public void setTemplateId() {
+    public void setTemplateId(String newId) {
         if (key == null) {
             key = new PrimaryKey();
         }
-        UUID newUUID = UUID.randomUUID();
-        key.setTemplateId(newUUID.toString());
+        key.setTemplateId(newId);
     }
 
     public String getName() {
