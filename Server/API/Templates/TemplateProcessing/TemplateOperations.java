@@ -9,6 +9,8 @@ import com.google.api.services.slides.v1.model.Presentation;
 import com.google.auth.http.HttpCredentialsAdapter;
 import com.google.auth.oauth2.GoogleCredentials;
 
+import apple.laf.JRSUIConstants.Size;
+
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.client.googleapis.json.GoogleJsonError;
 import com.google.api.services.slides.v1.model.BatchUpdatePresentationRequest;
@@ -21,6 +23,9 @@ import java.io.IOException;
 import java.sql.BatchUpdateException;
 import java.util.Collections;
 import java.util.List;
+
+import org.omg.PortableInterceptor.RequestInfo;
+
 import java.util.ArrayList;
 
 
@@ -43,7 +48,7 @@ public class TemplateOperations {
         return presentation.presentationId();
     }
 
-    public static BatchUpdatePresentationResponse createSlide(String presentationId) {
+    public static BatchUpdatePresentationResponse createSlide(String presentationId, String slideId, bool color, double red, double blue, double green) {
         GoogleCredentials credentials = GoogleCredentials.getApplicationDefault()
         .createScoped(Collections.singleton(SlidesScopes.PRESENTATIONS));
         HttpRequestInitializer reqInitializer = new HttpCredentialsAdapter(credentials);
@@ -59,11 +64,23 @@ public class TemplateOperations {
         try {
             Request newSlide = new Request()
                 .setCreateSlide(new CreateSlideRequest()
+                    .setObjectId(slideId)
                     .setSlideLayoutReference(new LayoutReference())
                         .setPredefinedLayout("TITLE_AND_TWO_COLUMNS"));
             req.add(newSlide);
 
-
+            if (color) {
+                req.add(new RequestInfo() 
+                    .updatePageProperties(new UpdatePagePropertiesRequest()
+                        .setObjectId(slideId)
+                        .setPageProperties(new PageProperties()
+                            .setPageBackgrounFill(new PageBackgroundFill()
+                                .setSolidFill(new SolidFill()
+                                    .setColor(new RgbColor() 
+                                        .setRed(red)
+                                        .setBlue(blue)
+                                        .setGreen(green)))))));
+            }
             BatchUpdatePresentationRequest body = new BatchUpdatePresentationRequest().setRequests(req);
             res = service.presentations().batchUpdate(presentationId, body).execute();
         }
@@ -120,4 +137,83 @@ public class TemplateOperations {
         }
         return res;
     }
-}
+
+    public static BatchUpdatePresentationResponse createShape(String presentationId, String shapeId, String shape, String slideID, bool transparent, double magnitude, double red, double green, double blue) {
+        GoogleCredentials credentials = GoogleCredentials.getApplicationDefault()
+        .createScoped(Collections.singleton(SlidesScopes.PRESENTATIONS));
+        HttpRequestInitializer reqInitializer = new HttpCredentialsAdapter(credentials);
+
+        Slides service = new Slides.Builder(new NetHttpTransport(),
+            GsonFactory.getDefaultInstance(),
+            reqInitializer)
+            .setApplicationName("VideoProcessing")
+            .build();
+        
+        Dimension pageSize = new Dimension().setMagnitude(magnitude).setUnit("PT");
+        
+        List<Request> req = new ArrayList<>();
+
+        if (border) {
+            req.add(new RequestInfo() 
+            .setCreateShape(new CreateShapeRequest()
+                .setObjectId(shapeId)
+                .setShapeType(shape)
+                .setElementProperties(new PageElementProperties()
+                    .setPageObjectId(slideID)
+                    .setSize(new Size()
+                        .setHeight(pageSize)
+                        .setWeight(pageSize)
+                        .setUnit("PT")
+                    ))));
+
+            req.add(new RequestInfo() 
+                .updateShapeProperties(new UpdateShapePropertiesRequest()
+                    .setObjectId(shapeId)
+                    .setShapeProperties(new ShapeProperties()
+                        .setShapeBackgroundFill(new ShapeBackgroundFill()
+                            .setPropertyState(PropertyState.RENDERED))
+                            .setSolidFill(new SolidFill()
+                                .setColor(new OpaqueColor()
+                                    .setRgbColor(new RgbColor()
+                                        .setRed(red)
+                                        .setBlue(blue)
+                                        .setGreen(green))
+                                .setAlpha(1.0)))
+
+                    )));
+            } else {
+                req.add(new RequestInfo() 
+                .setCreateShape(new CreateShapeRequest()
+                    .setObjectId(shapeId)
+                    .setShapeType(shape)
+                    .setElementProperties(new PageElementProperties()
+                        .setPageObjectId(slideID)
+                        .setSize(new Size()
+                            .setHeight(pageSize)
+                            .setWeight(pageSize)
+                            .setUnit("PT")
+                        ))));
+            }
+        
+        BatchUpdatePresentationResponse res = null;
+
+        try {
+            BatchUpdatePresentationRequest body = new BatchUpdatePresentationRequest().setRequests(req);
+            res = service.presentations().batchUpdate(presentationId, body).execute();
+        }
+        catch (GoogleJsonResponseException e) {
+            GoogleJsonError error = e.getDetails();
+            if (error.getCode() == 400) {
+                throw new Exception("Id is not unique");
+            }
+            else if (error.getCode() == 404) {
+                throw new Exception("Couldn't find presentation");
+            }
+            else {
+                throw e;
+            }
+        }
+
+            return res;
+        }
+    }
