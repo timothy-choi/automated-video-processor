@@ -260,4 +260,49 @@ public class TemplateOperations {
             }
             return res;
         }
+
+        public static BatchUpdatePresentationResponse addImage(String presentationId, String slideId, String imageUrl, double magnitude) {
+            GoogleCredentials credentials = GoogleCredentials.getApplicationDefault()
+            .createScoped(Collections.singleton(SlidesScopes.PRESENTATIONS));
+            HttpRequestInitializer reqInitializer = new HttpCredentialsAdapter(credentials);
+
+            Slides service = new Slides.Builder(new NetHttpTransport(),
+                GsonFactory.getDefaultInstance(),
+                reqInitializer)
+                    .setApplicationName("VideoProcessing")
+                    .build();
+            
+            List<Request> req = new ArrayList<>();
+
+            Dimension size = new Dimension().setMagnitude(magnitude).setUnit("EMU");
+
+            req.add(new Request()
+                .setCreateImage(new CreateImageRequest()
+                    .setUrl(imageUrl)
+                    .setElementProperties(new PageElementProperties()
+                        .setPageObjectId(slideId)
+                        .setSize(new Size()
+                            .setHeight(size)
+                            .setWidth(size)))));
+            
+            BatchUpdatePresentationResponse res = null;
+
+            try {
+                BatchUpdatePresentationRequest body = new BatchUpdatePresentationRequest().setRequests(requests);
+                res = service.presentations().batchUpdate(presentationId, body).execute();
+
+            } catch (GoogleJsonResponseException e) {
+                GoogleJsonError error = e.getDetails();
+                if (error.getCode() == 400) {
+                    throw new Exception("Id is not unique");
+                }
+                else if (error.getCode() == 404) {
+                    throw new Exception("Couldn't find presentation");
+                }
+                else {
+                    throw e;
+                }
+            }
+            return res;
+        }
     }
