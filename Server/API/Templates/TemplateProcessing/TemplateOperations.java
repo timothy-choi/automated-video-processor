@@ -346,7 +346,7 @@ public class TemplateOperations {
             
         }
 
-        public static BatchUpdatePresentationResponse deleteSlide(String presentationId, String slideId) throws IOException {
+        public static BatchUpdatePresentationResponse deleteObject(String presentationId, String objId) throws IOException {
             GoogleCredentials credentials = GoogleCredentials.getApplicationDefault()
             .createScoped(Collections.singleton(SlidesScopes.PRESENTATIONS));
             HttpRequestInitializer reqInitializer = new HttpCredentialsAdapter(credentials);
@@ -361,7 +361,7 @@ public class TemplateOperations {
 
             req.add(new Request()
                 .deleteObject(new DeleteObjectRequest()
-                    .setObjectId(slideId)));
+                    .setObjectId(objId)));
             
             BatchUpdatePresentationResponse res = null;
 
