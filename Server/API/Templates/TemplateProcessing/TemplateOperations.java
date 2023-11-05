@@ -420,5 +420,30 @@ public class TemplateOperations {
                 }
             }
             return res;
-        } 
+        }
+
+        public static Presentation getPresentation(String presentationId) throws IOException {
+            GoogleCredentials credentials = GoogleCredentials.getApplicationDefault()
+            .createScoped(Collections.singleton(SlidesScopes.PRESENTATIONS));
+            HttpRequestInitializer reqInitializer = new HttpCredentialsAdapter(credentials);
+
+            Slides service = new Slides.Builder(new NetHttpTransport(),
+                GsonFactory.getDefaultInstance(),
+                reqInitializer)
+                    .setApplicationName("VideoProcessing")
+                    .build();
+
+            try {
+                Presentation pres = service.presentations().get(presentationId).execute();
+                if (pres) {
+                    return pres;
+                }
+                else {
+                    throw new Exception("Couldn't find presentation");
+                }
+            }
+            catch (Exception e) {
+                throw new Exception("Invalid PresentationId");
+            }
+        }
     }
