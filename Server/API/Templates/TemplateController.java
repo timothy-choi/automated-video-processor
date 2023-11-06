@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import com.google.api.services.slides.v1.model.Presentation;
 
 import api.templates.PrimaryKey;
 import api.templates.TemplateRepository;
@@ -40,5 +41,32 @@ public class TemplateController {
             return ResponseEntity.ok(found);
         }
         return ResponseEntity.notFound().build();
+    }
+
+    @GetMapping("/template/presentation/{presentationId}") 
+    public ResponseEntity getSelectedPresentation(@PathVariable("presentationId") string presentationId) {
+        try {
+            Presentation currPresentation = getPresentation(presentationId);
+            return ResponseEntity.ok(currPresentation);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }    
+
+    @PostMapping("/template")
+    public ResponseEntity createNewTemplate(@RequestBody String name) {
+        String templateId = createTemplate(name);
+        Template newTemplate = new Template()
+            .setName(name)
+            .setUserId()
+            .setTemplateId(templateId)
+            .createSlides()
+            .createPartitions()
+            .createText()
+            .createSlideDuration()
+            .createShapes()
+            .createImages();
+        
+        return ResponseEntity.ok(templateRepository.save(newTemplate));
     }
 }
