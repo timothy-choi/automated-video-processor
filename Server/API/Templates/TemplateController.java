@@ -48,7 +48,7 @@ public class TemplateController {
     @GetMapping("/template/presentation/{presentationId}") 
     public ResponseEntity getSelectedPresentation(@PathVariable("presentationId") string presentationId) {
         try {
-            Presentation currPresentation = getPresentation(presentationId);
+            Presentation currPresentation = TemplateOperations.getPresentation(presentationId);
             return ResponseEntity.ok(currPresentation);
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
