@@ -197,4 +197,26 @@ public class TemplateController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @PostMapping("/template/image") 
+    public ResponseEntity addImage(@RequestBody Map<String, String> requestInfo) {
+        try {
+            TemplateOperations.addImage(requestInfo.get("presId"), requestInfo.get("slideId"), requestInfo.get("imageUrl"), Double.parseDouble(requestInfo.get("magnitude")));
+
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}")
+                .build(requestInfo.get("userId"), requestId.get("templateId")))
+            .retrieve()
+            .bodyToMono(Template.class);
+
+            corrTemplate.addImage(slideId + " " + imageUrl);
+
+            templateRepository.save(corrTemplate);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }
