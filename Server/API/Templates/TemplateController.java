@@ -95,4 +95,40 @@ public class TemplateController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @PostMapping("/template/text")
+    public ResponseEntity addText(@RequestBody Map<String, String> requestInfo) {
+        String presentationId = requestInfo.get("presId");
+        String slideId = requestInfo.get("SlideId");
+        String shape = requestInfo.get("shape");
+        String shapeId = requestInfo.get("shapeId");
+        bool transparent = Boolean.parseBoolean(requestInfo.get("transparent"));
+        double magnitude = Double.parseDouble(requestInfo.get("magnitude"));
+        double red = Double.parseDouble(requestInfo.get("red"));
+        double blue = Double.parseDouble(requestInfo.get("blue"));
+        double green = Double.parseDouble(requestInfo.get("green"));
+        String textBoxId = requestInfo.get("textBoxId");
+        String text = requestInfo.get("text");
+        String prevText = requestInfo.get("prevText");
+        try {
+            //create a text box that has same color as that of slide
+            TemplateOperations.createShape(presentationId, shapeId, shape, slideId, transparent, magnitude, red, green, blue);
+            //add text into box
+            TemplateOperations.addText(presentationId, textBoxId, text, prevText);
+
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}")
+                .build(requestInfo.get("userId"), requestId.get("templateId")))
+            .retrieve()
+            .bodyToMono(Template.class);
+            corrTemplate.addText(slideId + " " + textBoxId + " " + text);
+            templateRepository.save(corrTemplate);
+
+            return ResponseEntity.ok();
+        }
+        catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }
