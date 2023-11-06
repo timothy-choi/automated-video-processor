@@ -272,4 +272,24 @@ public class TemplateController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @PostMapping("/template/slideDuration")
+    public ResponseEntity addSlideDuration(@RequestBody Map<String, String> requestInfo) {
+        try {
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}")
+                .build(requestInfo.get("userId"), requestId.get("templateId")))
+            .retrieve()
+            .bodyToMono(Template.class);
+
+            corrTemplate.addSlideDuration(Integer.parseInt(requestInfo.get("duration")));
+
+            templateRepository.save(corrTemplate);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }
