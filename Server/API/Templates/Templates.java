@@ -132,6 +132,10 @@ public class Templates {
         this.text.remove(Integer.valueOf(index));
     }
 
+    public void editText(int index, String newData) {
+        this.text.set(index, newData);
+    }
+
     public List<Int> getSlideDuration() {
         return SlideDuration;
     }
