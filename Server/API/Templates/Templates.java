@@ -158,6 +158,10 @@ public class Templates {
         this.SlideDuration.remove(Integer.valueOf(index));
     }
 
+    public void editSlideDuration(int index, int newTime) {
+        this.SlideDuration.set(index, newTime);
+    }
+
     public List<String> getShapes() {
         return Shapes;
     }

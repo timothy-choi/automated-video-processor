@@ -273,6 +273,26 @@ public class TemplateController {
         }
     }
 
+    @DeleteMapping("/template/partition/{userId}/{templateId}/{slideNum}")
+    public ResponseEntity deletePartition(@PathVariable("userId") String userId, @PathVariable("templateId") String templateId, @PathVariable("slideNum") Int slideNum) {
+        try {
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}")
+                .build(userId, templateId))
+            .retrieve()
+            .bodyToMono(Template.class);
+
+            corrTemplate.deletePartition(slideNum);
+
+            templateRepository.save(corrTemplate);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @PostMapping("/template/slideDuration")
     public ResponseEntity addSlideDuration(@RequestBody Map<String, String> requestInfo) {
         try {
@@ -284,6 +304,26 @@ public class TemplateController {
             .bodyToMono(Template.class);
 
             corrTemplate.addSlideDuration(Integer.parseInt(requestInfo.get("duration")));
+
+            templateRepository.save(corrTemplate);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PutMapping("/template/slideDuration/{userId}/{templateId}/{slideIndex}/{newTime}")
+    public ResponseEntity editSlideDuration(@PathVariable("userId") String userId, @PathVariable("templateId") String templateId, @PathVariable("slideIndex") Int slideIndex, @PathVariable("newTime") Int newTime) {
+        try {
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}")
+                .build(userId, templateId))
+            .retrieve()
+            .bodyToMono(Template.class);
+
+            corrTemplate.editSlideDuration(slideIndex, newTime);
 
             templateRepository.save(corrTemplate);
 
