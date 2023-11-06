@@ -132,6 +132,43 @@ public class TemplateController {
         }
     }
 
+    @PutMapping("/template/editText")
+    public ResponseEntity editText(@RequestBody Map<String, String> requestInfo) {
+        try {
+            TemplateOperations.replaceText(requestInfo.get("presId"), requestInfo.get("shapeId"), requestInfo.get("newText"));
+
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}")
+                .build(requestInfo.get("userId"), requestId.get("templateId")))
+            .retrieve()
+            .bodyToMono(Template.class);
+
+            List<String> allText = corrTemplate.getText();
+
+            List<Int> textIndices = new ArrayList<Int>();
+
+            for (int i = 0; i < allText.size(); ++i) {
+                if (allText.get(i).contains(requestInfo.get("shapeId"))) {
+                    textIndices.add(i);
+                }
+            }
+
+            corrTemplate.editText(textIndices.get(0), requestInfo.get("newText"));
+
+            for (int j = 1; j < textIndices.size(); ++j) {
+                corrTemplate.deleteText(textIndices.get(j));
+            }
+            
+            templateRepository.save(corrTemplate);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+
     @PostMapping("/template/shape")
     public ResponseEntity addShape(@RequestBody Map<String, String> requestInfo) {
         try {
