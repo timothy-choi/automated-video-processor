@@ -219,4 +219,37 @@ public class TemplateController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @PutMapping("/template/move/slide")
+    public ResponseEntity moveSlide(@RequestBody Map<String, String> requestInfo) {
+        try {
+            TemplateOperations.moveSlide(requestInfo.get("presId"), requestInfo.get("slideId"), Integer.parseInt(requestInfo.get("newIndex")));
+
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}")
+                .build(requestInfo.get("userId"), requestId.get("templateId")))
+            .retrieve()
+            .bodyToMono(Template.class);
+
+            List<String> allSlides = corrTemplate.getSlides();
+
+            int index = -1;
+
+            for (int i = 0; i < allSlides.size(); ++i) {
+                if (allSlides.get(i).equals(requestInfo.get("slideId"))) {
+                    index = i;
+                    break;
+                }
+            }
+
+            corrTemplate.moveSlide(index, Integer.parseInt(requestInfo.get("newIndex")));
+
+            templateRepository.save(corrTemplate);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }
