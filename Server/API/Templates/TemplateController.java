@@ -252,4 +252,24 @@ public class TemplateController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @PostMapping("/template/partition")
+    public ResponseEntity addPartition(@RequestBody Map<String, String> requestInfo) {
+        try {
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}")
+                .build(requestInfo.get("userId"), requestId.get("templateId")))
+            .retrieve()
+            .bodyToMono(Template.class);
+
+            corrTemplate.addPartition(Integer.parseInt(requestInfo.get("slideIndex")));
+
+            templateRepository.save(corrTemplate);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }
