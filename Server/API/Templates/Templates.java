@@ -94,6 +94,12 @@ public class Templates {
         this.slides.remove(Integer.valueOf(deleted));
     }
 
+    public void moveSlide(int preIndex, int postIndex) {
+        String slideId = this.slides.get(preIndex);
+        this.slides.remove(slideId);
+        this.slides.add(postIndex, slideId);
+    }
+
     public List<Int> getPartitions() {
         return partitions;
     }
