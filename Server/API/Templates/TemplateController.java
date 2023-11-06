@@ -131,4 +131,33 @@ public class TemplateController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @PostMapping("/template/shape")
+    public ResponseEntity addShape(@RequestBody Map<String, String> requestInfo) {
+        try {
+            String presentationId = requestInfo.get("presId");
+            String slideId = requestInfo.get("SlideId");
+            String shape = requestInfo.get("shape");
+            String shapeId = requestInfo.get("shapeId");
+            bool transparent = Boolean.parseBoolean(requestInfo.get("transparent"));
+            double magnitude = Double.parseDouble(requestInfo.get("magnitude"));
+            double red = Double.parseDouble(requestInfo.get("red"));
+            double blue = Double.parseDouble(requestInfo.get("blue"));
+            double green = Double.parseDouble(requestInfo.get("green"));
+
+            TemplateOperations.createShape(presentationId, shapeId, shape, slideId, transparent, magnitude, red, green, blue);
+
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}")
+                .build(requestInfo.get("userId"), requestId.get("templateId")))
+            .retrieve()
+            .bodyToMono(Template.class);
+            corrTemplate.addShape(slideId + " " + shapeId);
+            templateRepository.save(corrTemplate);
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }
