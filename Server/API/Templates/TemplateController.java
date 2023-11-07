@@ -247,6 +247,8 @@ public class TemplateController {
                 }
             }
 
+            templateRepository.save(corrTemplate);
+
             TemplateOperations.deleteObject(templateId, textBoxId);
 
             return ResponseEntity.ok();
