@@ -121,6 +121,17 @@ public class TemplateController {
         }
     }
 
+    @GetMapping("/template/slide/{presentationId}/{slideId}")
+    public ResponseEntity getSpecifiedSlide(@PathVariable("presentationId") String presentationId, @PathVariable("slideId") String slideId) {
+        try {
+            Page slide = TemplateOperations.getSlide(presentationId, slideId);
+            return ResponseEntity.ok(slide);
+        }
+        catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @PostMapping("/template/text")
     public ResponseEntity addText(@RequestBody Map<String, String> requestInfo) {
         String presentationId = requestInfo.get("presId");
