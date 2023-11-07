@@ -20,14 +20,35 @@ public class TemplateController {
     @Autowired
     TemplateRepository templateRepository;
 
-    @GetMapping("/template/{userId}")
-    public ResponseEntity getAllUserTemplates(@PathVariable("userId") string userId) {
+    private Map getTemplate(Template template) {
+        Map temp = new HashMap();
+        temp.put("primaryKeyUserId", template.getUserId());
+        temp.put("primaryKeyTemplateId", template.getTemplateId());
+        temp.put("name", template.getName());
+        temp.put("slides", template.getSlides());
+        temp.put("text", template.getText());
+        temp.put("partitions", template.getPartitions());
+        temp.put("slideDuration", template.getSlideDuration());
+        temp.put("shapes", template.getShapes());
+        temp.put("images", template.getImages());
+        return temp;
+    }
+
+    @GetMapping("/template/{userId}/{publicDisplay}")
+    public ResponseEntity getAllUserTemplates(@PathVariable("userId") string userId, @PathVariable("publicDisplay") bool publicDisplay) {
         List<Templates> allUserTemplates = templateRepository.findByUserId(userId);
+        if (publicDisplay) {
+            List<Map> res = new ArrayList<Map>();
+            for (Template temp : allUserTemplates) {
+                res.add(getTemplate(temp));
+            }
+            return ResponseEntity.ok(res);
+        }
         return ResponseEntity.ok(allUserTemplates);
     }
 
-    @GetMapping("/template/{userId}/{templateId}")
-    public ResponseEntity getReqUserTemplate(@PathVariable("userId") string userId, @PathVariable("templateId") string templateId) {
+    @GetMapping("/template/{userId}/{templateId}/{publicDisplay}")
+    public ResponseEntity getReqUserTemplate(@PathVariable("userId") string userId, @PathVariable("templateId") string templateId, @PathVariable("publicDisplay") bool publicDisplay) {
         PrimaryKey primKey = new PrimaryKey();
         primKey.setUserId(userId);
         primKey.setTemplateId(templateId);
@@ -40,6 +61,10 @@ public class TemplateController {
         );
 
         if (found) {
+            if (publicDisplay) {
+                Map res = getTemplate(found);
+                return ResponseEntity.ok(res);
+            }
             return ResponseEntity.ok(found);
         }
         return ResponseEntity.notFound().build();
