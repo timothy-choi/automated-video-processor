@@ -287,6 +287,35 @@ public class TemplateController {
         }
     }
 
+    @DeleteMapping("/template/shape/{userId}/{presentationId}/{shapeId}")
+    public ResponseEntity deleteGivenShape(@PathVariable("userId") String userId, @PathVariable("presentationId") String presentationId, @PathVariable("shapeId") String shapeId) {
+        try {
+            TemplateOperations.deleteObject(presentationId, shapeId);
+
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(userId, presentationId, false))
+            .retrieve()
+            .bodyToMono(Template.class);
+
+            List<String> shapes = corrTemplate.getShapes();
+
+            for (int i = 0; i < shapes.size(); ++i) {
+                if (shapes.get(i).equals(shapeId)) {
+                    corrTemplate.deleteShapes(i);
+                    break;
+                }
+            }
+
+            templateRepository.save(corrTemplate);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @PostMapping("/template/image") 
     public ResponseEntity addImage(@RequestBody Map<String, String> requestInfo) {
         try {
