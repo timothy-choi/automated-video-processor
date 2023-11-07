@@ -338,6 +338,35 @@ public class TemplateController {
         }
     }
 
+    @DeleteMapping("/template/image/{userId}/{presentationId}/{imageId}/{imageUrl}")
+    public ResponseEntity deleteGivenImage(@PathVariable("userId") String userId, @PathVariable("presentationId") String presentationId, @PathVariable("imageId") String imageId, @PathVariable("imageUrl") String imageUrl) {
+        try {
+            TemplateOperations.deleteObject(presentationId, imageId);
+
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(userId, presentationId, false))
+            .retrieve()
+            .bodyToMono(Template.class);
+
+            List<String> images = corrTemplate.getImages();
+
+            for (int i = 0; i < images.size(); ++i) {
+                if (images.get(i).equals(imageUrl)) {
+                    corrTemplate.deleteImages(i);
+                    break;
+                }
+            }
+
+            templateRepository.save(corrTemplate);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @PutMapping("/template/move/slide")
     public ResponseEntity moveSlide(@RequestBody Map<String, String> requestInfo) {
         try {
