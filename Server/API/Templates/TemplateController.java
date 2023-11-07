@@ -132,6 +132,29 @@ public class TemplateController {
         }
     }
 
+    @DeleteMapping("/template/slide/{userId}/{presentationId}/{slideId}")
+    public ResponseEntity deleteSlide(@PathVariable("userId") String userId, @PathVariable("presentationId") String presentationId, @PathVariable("slideId") String slideId) {
+        try {
+            TemplateOperations.deleteObject(presentationId, slideId);
+
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(userId, presentationId, false))
+            .retrieve()
+            .bodyToMono(Template.class);
+
+            corrTemplate.deleteSlide(slideId);
+
+            templateRepository.save(corrTemplate);
+
+            return ResponseEntity.ok();
+
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @PostMapping("/template/text")
     public ResponseEntity addText(@RequestBody Map<String, String> requestInfo) {
         String presentationId = requestInfo.get("presId");
