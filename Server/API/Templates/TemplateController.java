@@ -109,8 +109,8 @@ public class TemplateController {
             TemplateOperations.createSlide(presentationId, slideId, color, red, blue, green);
             Template corrTemplate = WebClientConfig.webClient().get()
             .uri(uriBuilder -> uriBuilder
-                .path("/templates/{userId}/{templateId}")
-                .build(requestInfo.get("userId"), requestId.get("templateId")))
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(requestInfo.get("userId"), requestId.get("templateId"), false))
             .retrieve()
             .bodyToMono(Template.class);
             corrTemplate.addSlide(slideId);
@@ -143,8 +143,8 @@ public class TemplateController {
 
             Template corrTemplate = WebClientConfig.webClient().get()
             .uri(uriBuilder -> uriBuilder
-                .path("/templates/{userId}/{templateId}")
-                .build(requestInfo.get("userId"), requestId.get("templateId")))
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(requestInfo.get("userId"), requestId.get("templateId"), false))
             .retrieve()
             .bodyToMono(Template.class);
             corrTemplate.addText(slideId + " " + textBoxId + " " + text);
@@ -164,8 +164,8 @@ public class TemplateController {
 
             Template corrTemplate = WebClientConfig.webClient().get()
             .uri(uriBuilder -> uriBuilder
-                .path("/templates/{userId}/{templateId}")
-                .build(requestInfo.get("userId"), requestId.get("templateId")))
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(requestInfo.get("userId"), requestId.get("templateId"), false))
             .retrieve()
             .bodyToMono(Template.class);
 
@@ -200,7 +200,7 @@ public class TemplateController {
 
             Template corrTemplate = WebClientConfig.webClient().get()
             .uri(uriBuilder -> uriBuilder
-                .path("/templates/{userId}/{templateId}/{public}")
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
                 .build(requestInfo.get("userId"), requestId.get("templateId"), false))
             .retrieve()
             .bodyToMono(Template.class);
@@ -239,8 +239,8 @@ public class TemplateController {
 
             Template corrTemplate = WebClientConfig.webClient().get()
             .uri(uriBuilder -> uriBuilder
-                .path("/templates/{userId}/{templateId}")
-                .build(requestInfo.get("userId"), requestId.get("templateId")))
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(requestInfo.get("userId"), requestId.get("templateId"), false))
             .retrieve()
             .bodyToMono(Template.class);
             corrTemplate.addShape(slideId + " " + shapeId);
@@ -258,8 +258,8 @@ public class TemplateController {
 
             Template corrTemplate = WebClientConfig.webClient().get()
             .uri(uriBuilder -> uriBuilder
-                .path("/templates/{userId}/{templateId}")
-                .build(requestInfo.get("userId"), requestId.get("templateId")))
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(requestInfo.get("userId"), requestId.get("templateId"), false))
             .retrieve()
             .bodyToMono(Template.class);
 
@@ -280,8 +280,8 @@ public class TemplateController {
 
             Template corrTemplate = WebClientConfig.webClient().get()
             .uri(uriBuilder -> uriBuilder
-                .path("/templates/{userId}/{templateId}")
-                .build(requestInfo.get("userId"), requestId.get("templateId")))
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(requestInfo.get("userId"), requestId.get("templateId"), false))
             .retrieve()
             .bodyToMono(Template.class);
 
@@ -311,8 +311,8 @@ public class TemplateController {
         try {
             Template corrTemplate = WebClientConfig.webClient().get()
             .uri(uriBuilder -> uriBuilder
-                .path("/templates/{userId}/{templateId}")
-                .build(requestInfo.get("userId"), requestId.get("templateId")))
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(requestInfo.get("userId"), requestId.get("templateId"), false))
             .retrieve()
             .bodyToMono(Template.class);
 
@@ -331,8 +331,8 @@ public class TemplateController {
         try {
             Template corrTemplate = WebClientConfig.webClient().get()
             .uri(uriBuilder -> uriBuilder
-                .path("/templates/{userId}/{templateId}")
-                .build(userId, templateId))
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(userId, templateId, false))
             .retrieve()
             .bodyToMono(Template.class);
 
@@ -351,8 +351,8 @@ public class TemplateController {
         try {
             Template corrTemplate = WebClientConfig.webClient().get()
             .uri(uriBuilder -> uriBuilder
-                .path("/templates/{userId}/{templateId}")
-                .build(requestInfo.get("userId"), requestId.get("templateId")))
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(requestInfo.get("userId"), requestId.get("templateId"), false))
             .retrieve()
             .bodyToMono(Template.class);
 
@@ -371,8 +371,8 @@ public class TemplateController {
         try {
             Template corrTemplate = WebClientConfig.webClient().get()
             .uri(uriBuilder -> uriBuilder
-                .path("/templates/{userId}/{templateId}")
-                .build(userId, templateId))
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(userId, templateId, false))
             .retrieve()
             .bodyToMono(Template.class);
 
@@ -391,8 +391,8 @@ public class TemplateController {
         try {
             Template corrTemplate = WebClientConfig.webClient().get()
             .uri(uriBuilder -> uriBuilder
-                .path("/templates/{userId}/{templateId}")
-                .build(userId, templateId))
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(userId, templateId, false))
             .retrieve()
             .bodyToMono(Template.class);
 
