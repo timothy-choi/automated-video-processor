@@ -15,6 +15,9 @@ public class VideoProcessing {
     @DynamoDBAttribute(name = "name")
     private String name;
 
+    @DynamoDBAttribute(name = "creator")
+    private String creator;
+
     @DynamoDBAttribute(name = "templateId")
     private String templateId;
 
