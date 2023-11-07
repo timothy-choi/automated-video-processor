@@ -446,4 +446,33 @@ public class TemplateOperations {
                 throw new Exception("Invalid PresentationId");
             }
         }
+
+        public static Page getSlide(String presentationId, String pageObjectId) throws IOException {
+            GoogleCredentials credentials = GoogleCredentials.getApplicationDefault()
+            .createScoped(Collections.singleton(SlidesScopes.PRESENTATIONS));
+            HttpRequestInitializer reqInitializer = new HttpCredentialsAdapter(credentials);
+
+            Slides service = new Slides.Builder(new NetHttpTransport(),
+                GsonFactory.getDefaultInstance(),
+                reqInitializer)
+                    .setApplicationName("VideoProcessing")
+                    .build();
+            
+            try {
+                Presentation pres = service.presentations().get(presentationId).execute();
+                if (pres) {
+                    for (Page p : pres.getSlides()) {
+                        if (p.getObjectId().equals(pageObjectId)) {
+                            return p;
+                        }
+                    }
+                }
+                else {
+                    throw new Exception("Couldn't find presentation");
+                }
+            }
+            catch (Exception e) {
+                throw new Exception("Invalid PresentationId");
+            }
+        }
     }
