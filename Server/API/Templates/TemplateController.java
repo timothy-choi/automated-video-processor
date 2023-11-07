@@ -193,6 +193,34 @@ public class TemplateController {
         }
     }
 
+    @DeleteMapping("/template/text/{userId}/{templateId}/{textId}/{textBoxId}")
+    public ResponseEntity deleteGivenText(@PathVariable("userId") String userId, @PathVariable("templateId") String templateId, @PathVariable("textId") String textId, @PathVariable("textBoxId") String textBoxId) {
+        try {
+            TemplateOperations.deleteText(templateId, textId);
+
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}/{public}")
+                .build(requestInfo.get("userId"), requestId.get("templateId"), false))
+            .retrieve()
+            .bodyToMono(Template.class);
+
+            List<String> allText = corrTemplate.getText();
+
+            for (int i = 0; i < allText.size(); ++i) {
+                if (allText.get(i).contains(textBoxId)) {
+                    corrTemplate.deleteText(i);
+                }
+            }
+
+            TemplateOperations.deleteObject(templateId, textBoxId);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
 
     @PostMapping("/template/shape")
     public ResponseEntity addShape(@RequestBody Map<String, String> requestInfo) {
