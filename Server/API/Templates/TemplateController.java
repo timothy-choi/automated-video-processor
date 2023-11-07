@@ -332,4 +332,24 @@ public class TemplateController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @DeleteMapping("/template/slideDuration/{userId}/{templateId}/{slideIndex}")
+    public ResponseEntity deleteSlideDuration(@PathVariable("userId") String userId, @PathVariable("templateId") String templateId, @PathVariable("slideIndex") Int slideIndex) {
+        try {
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}")
+                .build(userId, templateId))
+            .retrieve()
+            .bodyToMono(Template.class);
+
+            corrTemplate.deleteSlideDuration(slideIndex);
+
+            templateRepository.save(corrTemplate);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }
