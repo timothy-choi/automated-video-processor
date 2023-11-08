@@ -221,6 +221,7 @@ public class VideoProcessingController {
     public ResponseEntity replaceImportedVideo(@RequestParam("newVideo") MultipartFile newVideo, @RequestBody Map<String, String> reqInfo) {
         try {
             client.replaceObjectInBucket(reqInfo.get("bucketName"), reqInfo.get("objKey"), newVideo);
+            return ResponseEntity.ok();
         }
         catch (AmazonS3Exception e) {
             return ResponseEntity.notFound().build();
