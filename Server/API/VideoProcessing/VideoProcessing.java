@@ -121,6 +121,17 @@ public class VideoProcessing {
         templatePartitions.delete(partition);
     }
 
+    public void editPartition(Int index, Int value, bool next) {
+        Pair<Int, Int> p = templateParitions.get(index);
+        if (next) {
+            p.second = next;
+        }
+        else {
+            p.first = next;
+        }
+        templatePartitons.set(index, p);
+    }
+
     public List<String> getImportedVideos() {
         return importedVideos;
     }
