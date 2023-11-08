@@ -50,4 +50,25 @@ public class VideoProcessingController {
 
         return ResponseEntity.notFound().build();
     }
+
+    @PostMapping("/videoProcessing/") 
+    public ResponseEntity createVideoProcessingInstance(@RequestBody Map<String, String> reqInfo) {
+        try {
+           VideoProcessing videoObj = new VideoProcessing()
+                .setUserId()
+                .setVideoProcessingId()
+                .setName(reqInfo.get("templateName"))
+                .setTemplateId(reqInfo.get("templateId"))
+                .setCreator(reqInfo.get("creator"))
+                .createImageSlides()
+                .createPartitions()
+                .createImportedVideos()
+                .createAnimations()
+                .createVideoOrder();
+                   
+           return ResponseEntity.ok(_videoProcessingRepository.save(videoObj));
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }

@@ -93,6 +93,10 @@ public class VideoProcessing {
         return imageSlides;
     }
 
+    public void createImageSlides() {
+        imageSlides = new ArrayList<String>();
+    }
+
     public void addImageSlide(String imagePath) {
         imageSlides.add(imagePath);
     }
@@ -103,6 +107,10 @@ public class VideoProcessing {
 
     public List<Pair<Int, Int>> getPartitions() {
         return templatePartitions;
+    }
+
+    public void createPartitions() {
+        templatePartitons = new ArrayList<Pair<Int, Int>>();
     }
 
     public void addPartition(Pair<Int, Int> partition) {
@@ -117,6 +125,10 @@ public class VideoProcessing {
         return importedVideos;
     }
 
+    public void createImportedVideos() {
+        importedVideos = new ArrayList<String>();
+    }
+
     public void addImportedVideos(String video) {
         importedVideos.add(video);
     }
@@ -127,6 +139,10 @@ public class VideoProcessing {
 
     public List<String> getVideoOrder() {
         return videoOrder;
+    }
+
+    public void createVideoOrder() {
+        videoOrder = new ArrayList<String>();
     }
 
     public void addOrder(String order) {
@@ -143,6 +159,10 @@ public class VideoProcessing {
 
     public List<String> getAnimations() {
         return slideAnimations;
+    }
+
+    public void createAnimations() {
+        slideAnimations = new ArrayList<String>();
     }
 
     public void addAnimation(String animation) {
