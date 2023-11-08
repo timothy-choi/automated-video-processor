@@ -13,12 +13,17 @@ import api.WebClientConfig;
 import api.videoProcessing.VideoProcessing;
 import javafx.util.Pair;
 
+import AWS;
+import AWS.AWSHelper;
+
 import java.util.*;
 
 @RestController
 public class VideoProcessingController {
     @Autowired
     private VideoProcessingRepository _videoProcessingRepository;
+
+    private AWSHelper client;
 
     @GetMapping("/videoProcessing/{userId}/{videoProcessingId}/{publicDisplay}")
     public ResponseEntity getVideoProcessingInstance(@PathVariable("userId") String userId, @PathVariable("videoProcessingId") String videoProcessingId, @PathVariable("publicDisplay") bool publicDisplay) {
@@ -183,5 +188,32 @@ public class VideoProcessingController {
         catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
+    }
+
+    @PostMapping("/videoProcessing/importedVideo")
+    public ResponseEntity uploadImportedVideo(@RequestParam("video") MultipartFile video, @RequestBody Map<String, String> reqInfo) {
+        String objKey = reqInfo.get("owner") + "/imported/" + video.getOriginalFilename();
+        try {
+            client.addObjectIntoBucket(reqInfo.get("bucketName"), objKey, video);
+        }
+        catch (AmazonS3Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+
+        try {
+            VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/videoProcessing/{userId}/{videoProcessingId}/{publicDisplay}")
+                .build(reqInfo.get("userId"), reqInfo.get("videoProcessingId"), false))
+            .retrieve()
+            .bodyToMono(VideoProcessing.class);
+
+            videoProcessObj.addImportedVideos(objKey);
+
+            _videoProcessingRepository.save(videoProcessObj);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok();
     }
 }

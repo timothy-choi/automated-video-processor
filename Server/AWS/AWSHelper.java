@@ -39,17 +39,20 @@ public class AWSHelper {
         return false;
     }
 
-    public void addObjectIntoBucket(String name, String objKey, String videoPath) {
+    public void addObjectIntoBucket(String name, String objKey, MultipartFile video) {
         try {
-            PutObjectRequest putReq = new PutObjectRequest(name, objKey, new File(videoPath));
+            ObjectMetadata metadata = new ObjectMetaData();
+            metadata.setContentType(video.getContentType());
+            metadata.setContentLength(video.getSize());
+            PutObjectRequest putReq = new PutObjectRequest(name, objKey, video.getInputStream(), metadata);
             client.putObject(putReq);
         } catch (AmazonS3Exception e) {
             throw new Exception("Object doesn't exist");
         }
     }
 
-    public void replaceObjectInBucket(String name, String objKey, String newVideoPath) {
-        addObjectIntoBucket(name, objKey, newVideoPath);
+    public void replaceObjectInBucket(String name, String objKey, MultipartFile video) {
+        addObjectIntoBucket(name, objKey, video);
     }
 
     public S3Object getObjectFromBucket(String name, String objKey) {
