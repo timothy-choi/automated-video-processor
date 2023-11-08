@@ -4,6 +4,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import com.google.api.services.slides.v1.model.Presentation;
+import com.google.api.services.slides.v1.model.Page;
 
 import org.springframework.web.reactive.function.client.WebClient;
 
@@ -117,4 +119,36 @@ public class VideoProcessingController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @PostMapping("/videoProcessing/images")
+    public ResponseEntity convertSlidesToImages(@RequestBody Map<String, String> reqInfo) {
+        try {
+            Presentation pres = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/template/presentation/{presentationId}")
+                .build(reqInfo.get("templateId")))
+            .retrieve();
+
+            VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/videoProcessing/{userId}/{videoProcessingId}/{publicDisplay}")
+                .build(reqInfo.get("userId"), reqInfo.get("videoProcessingId"), false))
+            .retrieve()
+            .bodyToMono(VideoProcessing.class);
+
+            List<Page> slides = pres.getSlides();
+
+            for (Page slide : slides) {
+                String imageName = ImageSlide.convertSlideToImage(slide, reqInfo.get("templateId"));
+
+                videoProcessObj.addImageSlide(imageName);
+            }
+
+            _videoProcessingRepository.save(videoProcessObj);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    } 
 }
