@@ -151,4 +151,37 @@ public class VideoProcessingController {
             return ResponseEntity.notFound().build();
         }
     } 
+
+    @DeleteMapping("/videoProcessing/partitions/{userId}/{videoProcessingId}/{PartitionNum}")
+    public ResponseEntity deletePartition(@PathVariable("userId") String userId, @PathVariable("videoProcessingId") String videoProcessingId, @PathVariable("partitionNum") Int partitionNum) {
+        try {
+            VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/videoProcessing/{userId}/{videoProcessingId}/{publicDisplay}")
+                .build(reqInfo.get("userId"), reqInfo.get("videoProcessingId"), false))
+            .retrieve()
+            .bodyToMono(VideoProcessing.class);
+
+            Pair<Int, Int> currPair = videoProcessObj.getPartitions().get(partitionNum);
+
+            videoProcessObj.deletePartition(currPair);
+
+            if (partitionNum == 0) {
+                videoProcessObj.editPartition(partitionNum+1, currPair.first, true);
+            }
+            else if (partitionNum == videoProcessObj.getPartitions().size() - 1) {
+                videoProcessObj.editPartition(partition-1, currPair.second,false);
+            }
+            else {
+                videoProcessObj.editPartition(partitionNum+1, currPair.first, true);
+            }
+
+            _videoProcessingRepository.save(videoProcessObj);
+
+            return ResponseEntity.ok();
+        }
+        catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }
