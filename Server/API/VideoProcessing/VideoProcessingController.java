@@ -8,6 +8,8 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import api.WebClientConfig;
+import api.videoProcessing.VideoProcessing;
+import javafx.util.Pair;
 
 import java.util.*;
 
@@ -66,6 +68,51 @@ public class VideoProcessingController {
             keyInfo.set("userId", videoObj.getUserId());
             keyInfo.set("videoProcessingId", videoObj.getVideoProcessingId());
            return ResponseEntity.ok(keyInfo);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PostMapping("/videoProcessing/partitions")
+    public ResponseEntity addSlidePartitions(@RequestBody Map<String, String> reqInfo) {
+        try {
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(reqInfo.get("userId"), reqId.get("templateId"), false))
+            .retrieve()
+            .bodyToMono(Template.class);
+
+            List<Int> partitions = corrTemplate.getPartitions();
+
+            VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/videoProcessing/{userId}/{videoProcessingId}/{publicDisplay}")
+                .build(reqInfo.get("userId"), reqInfo.get("videoProcessingId"), false))
+            .retrieve()
+            .bodyToMono(VideoProcessing.class);
+
+
+            for (int i = 0; i < partitions.size(); ++i) {
+                int prevIndex = -1;
+                if (i == 0) {
+                    prevIndex = 0;
+                }
+                else {
+                    prevIndex = partitions.get(i-1)+1;
+                }
+                Pair<Int, Int> currPartition = new Pair<Int, Int>(prevIndex, partitions.get(i));
+                videoProcessObj.addPartition(currPartition);
+            }
+
+            if (partitions.get(partitions.size()-1) < corrTemplate.getSlides().size()-1) {
+                Pair<Int, Int> lastPartition = new Pair<Int, Int>(partitions.get(partitions.size()-1) + 1, corrTemplate.getSlides().size()-1);
+                videoProcessObj.addPartition(lastPartition); 
+            }
+
+            _videoProcessingRepository.save(videoProcessObj);
+
+            return ResponseEntity.ok();
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
