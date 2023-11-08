@@ -7,9 +7,6 @@ import org.springframework.web.bind.annotation.*;
 
 import org.springframework.web.reactive.function.client.WebClient;
 
-import api.videoProcessing.PrimaryKey;
-import api.videoProcessing.VideoProcessingRepository;
-import api.videoProcessing.VideoProcessing;
 import api.WebClientConfig;
 
 import java.util.*;
@@ -65,8 +62,10 @@ public class VideoProcessingController {
                 .createImportedVideos()
                 .createAnimations()
                 .createVideoOrder();
-                   
-           return ResponseEntity.ok(_videoProcessingRepository.save(videoObj));
+            Pair<String, String> keyInfo = new Pair<String, String>();
+            keyInfo.set("userId", videoObj.getUserId());
+            keyInfo.set("videoProcessingId", videoObj.getVideoProcessingId());
+           return ResponseEntity.ok(keyInfo);
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
