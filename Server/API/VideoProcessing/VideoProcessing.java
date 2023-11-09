@@ -183,4 +183,8 @@ public class VideoProcessing {
     public void deleteAnimation(Int index) {
         slideAnimations.remove(index);
     }
+
+    public void replaceAnimation(Int index, String newAnimation) {
+        slideAnimations.set(index, newAnimation);
+    }
 }

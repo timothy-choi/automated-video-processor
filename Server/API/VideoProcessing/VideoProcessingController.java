@@ -319,10 +319,39 @@ public class VideoProcessingController {
             List<String> animations = videoProcessObj.getAnimations();
             for (int i = 0; i < animations.size(); ++i) {
                 if (animations.get(i).contains(slideId)) {
-                    animations.delete(i);
+                    videoProcessObj.deleteAnimation(i);
                     break;
                 }
             }
+
+            _videoProcessingRepository.save(videoProcessObj);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PutMapping("/videoProcessing/animations/{userId}/{videoProcessingId}/{slideId}/{newAnimation}")
+    public ResponseEntity replaceAnimation(@PathVariable("userId") String userId, @PathVariable("videoProcessingId") String videoProcessingId, @PathVariable("slideId") String slideId, @PathVariable("newAnimation") String newAnimation) {
+        try {
+            VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/videoProcessing/{userId}/{videoProcessingId}/{publicDisplay}")
+                .build(userId, videoProcessingId, false))
+            .retrieve()
+            .bodyToMono(VideoProcessing.class);
+
+            List<String> animations = videoProcessObj.getAnimations();
+            int index = -1;
+            for (int i = 0; i < animations.size(); ++i) {
+                if (animations.get(i).contains(slideId)) {
+                    index = i;
+                    break;
+                }
+            }
+
+            videoProcessObj.replaceAnimation(index, newAnimation);
 
             _videoProcessingRepository.save(videoProcessObj);
 
