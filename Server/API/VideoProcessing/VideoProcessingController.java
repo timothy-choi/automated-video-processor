@@ -194,6 +194,9 @@ public class VideoProcessingController {
     public ResponseEntity uploadImportedVideo(@RequestParam("video") MultipartFile video, @RequestBody Map<String, String> reqInfo) {
         String objKey = reqInfo.get("owner") + "/imported/" + video.getOriginalFilename();
         try {
+            if (!client.checkIfBucketExists(reqInfo.get("bucketName"))) {
+                client.createNewBucket(reqInfo.get("bucketName"));
+            }
             client.addObjectIntoBucket(reqInfo.get("bucketName"), objKey, video);
         }
         catch (AmazonS3Exception e) {
