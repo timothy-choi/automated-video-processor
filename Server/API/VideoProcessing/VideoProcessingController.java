@@ -227,4 +227,57 @@ public class VideoProcessingController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @PostMapping("/videoProcessing/order")
+    public ResponseEntity addNewVideoOrder(@RequestBody Map<String, String> reqInfo) {
+        try {
+            VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/videoProcessing/{userId}/{videoProcessingId}/{publicDisplay}")
+                .build(reqInfo.get("userId"), reqInfo.get("videoProcessingId"), false))
+            .retrieve()
+            .bodyToMono(VideoProcessing.class);
+
+            if (Boolean.parseBoolean(reqInfo.get("positioned"))) {
+                videoProcessObj.addOrderAtPos(Integer.parseInt(req.get("index")), reqInfo.get("filename"));
+            }
+            else {
+                videoProcessObj.addOrder(reqInfo.get("filename"));
+            }
+
+            _videoProcessingRepository.save(videoProcessObj);
+
+            return ResponseEntity.ok();
+        }
+        catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PostMapping("/videoProcessing/order/reposition")
+    public ResponseEntity repositionVideoOrder(@RequestBody Map reqInfo) {
+        try {
+            VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/videoProcessing/{userId}/{videoProcessingId}/{publicDisplay}")
+                .build(reqInfo.get("userId"), reqInfo.get("videoProcessingId"), false))
+            .retrieve()
+            .bodyToMono(VideoProcessing.class);
+
+            List<Int> changes = reqInfo.get("OrderChanges");
+
+            for (Int change : changes) {
+                String file = videoProcessObj.getVideoOrder().get(change);
+                videoProcessObj.deleteOrder(file);
+                videoProcessObj.addOrderAtPos(change, file);
+            }
+
+            _videoProcessingRepository.save(videoProcessObj);
+
+            return ResponseEntity.ok();
+        }
+        catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }
