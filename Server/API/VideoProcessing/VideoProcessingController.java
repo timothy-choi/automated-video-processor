@@ -292,10 +292,36 @@ public class VideoProcessingController {
             .bodyToMono(VideoProcessing.class);
 
             if (Boolean.parseBoolean(reqInfo.get("positioned"))) {
-                videoProcessObj.addAnimation(Integer.parseInt(reqInfo.get("index")), reqInfo.get("animation"));
+                videoProcessObj.addAnimation(Integer.parseInt(reqInfo.get("index")), reqInfo.get("slideId") + " " + reqInfo.get("animation"));
             }
             else {
-                videoProcessObj.addAnimation(reqInfo.get("animation"));
+                videoProcessObj.addAnimation(reqInfo.get("slideId") + " " + reqInfo.get("animation"));
+            }
+
+            _videoProcessingRepository.save(videoProcessObj);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @DeleteMapping("/videoProcessing/animations/{userId}/{videoProcessingId}/{slideId}")
+    public ResponseEntity deleteAnimation(@PathVariable("userId") String userId, @PathVariable("videoProcessingId") String videoProcessingId, @PathVariable("slideId") String slideId) {
+        try {
+            VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/videoProcessing/{userId}/{videoProcessingId}/{publicDisplay}")
+                .build(userId, videoProcessingId, false))
+            .retrieve()
+            .bodyToMono(VideoProcessing.class);
+
+            List<String> animations = videoProcessObj.getAnimations();
+            for (int i = 0; i < animations.size(); ++i) {
+                if (animations.get(i).contains(slideId)) {
+                    animations.delete(i);
+                    break;
+                }
             }
 
             _videoProcessingRepository.save(videoProcessObj);
