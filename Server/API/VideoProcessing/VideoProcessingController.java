@@ -280,4 +280,29 @@ public class VideoProcessingController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @PostMapping("/videoProcessing/animations")
+    public ResponseEntity addAnimation(@RequestBody Map<String, String> reqInfo) {
+        try {
+            VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/videoProcessing/{userId}/{videoProcessingId}/{publicDisplay}")
+                .build(reqInfo.get("userId"), reqInfo.get("videoProcessingId"), false))
+            .retrieve()
+            .bodyToMono(VideoProcessing.class);
+
+            if (Boolean.parseBoolean(reqInfo.get("positioned"))) {
+                videoProcessObj.addAnimation(Integer.parseInt(reqInfo.get("index")), reqInfo.get("animation"));
+            }
+            else {
+                videoProcessObj.addAnimation(reqInfo.get("animation"));
+            }
+
+            _videoProcessingRepository.save(videoProcessObj);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }

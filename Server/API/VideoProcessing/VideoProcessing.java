@@ -180,6 +180,10 @@ public class VideoProcessing {
         slideAnimations.add(animation);
     }
 
+    public void addAnimationInPos(Int index, String animation) {
+        slideAnimations.add(index, animation);
+    }
+
     public void deleteAnimation(Int index) {
         slideAnimations.remove(index);
     }
