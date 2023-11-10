@@ -10,6 +10,7 @@ import com.google.api.services.slides.v1.model.Page;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import api.WebClientConfig;
+import api.videoProcessing.SlideVideoConverter;
 import api.videoProcessing.VideoProcessing;
 import javafx.util.Pair;
 
@@ -17,6 +18,11 @@ import AWS;
 import AWS.AWSHelper;
 
 import java.util.*;
+import java.io.*;
+
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.util.MimeTypeUtils;
+
 
 @RestController
 public class VideoProcessingController {
@@ -404,12 +410,50 @@ public class VideoProcessingController {
             //group them to create video, add animation for requested slides before they fully appear (one helper function)
             //get the video file and upload video to s3 bucket (another helper function)
 
-            for (int i = 0; i < allPartitions.size(); ++i) {
-                Pair<Int, Int> currPartition = allPartitions.get(i);
+            for (Pair<Int, Int> partition : allPartitions) {
+                Pair<Int, Int> currPartition = partition;
 
                 List<String> allAssocSlides = allImageSlides.subList(currPartition.first, currPartition.second);
 
                 List<Int> subDurations = durations.subList(currPartition.first, currPartition.second);
+
+                String partitionVideoFile = SlideVideoConverter.combineSlidesIntoVideo(pageSlides, allAssocSlides, allAnimations, subDurations, currPartition.first);
+
+                if (!client.checkIfBucketExists(partitionVideoFile)) {
+                    client.createNewBucket(reqInfo.get("bucketName"));
+                }
+
+                File partitionFile = new File(partitionVideoFile);
+
+                byte[] vidBytes;
+
+                try (InputStream is = new FileInputStream(partitionFile)) {
+                    vidBytes = is.readAllBytes();
+                } catch (IOException e) {
+                    return ResponseEntity.notFound().build();
+                }
+
+                client.addObjectIntoBucket(reqInfo.get("bucketName"), partitionVideoFile, new MockMultipartFile("video", partitionFile.getName(), MimeTypeUtils.APPLICATION_OCTET_STREAM_VALUE, vidBytes));
+
+                for (String filePath : allAssocSlides) {
+                    try {
+                        Path currImg = Paths.get(filePath);
+
+                        Files.delete(currImg);
+
+                    } catch (IOException e) {
+                        return ResponseEntity.notFound().build();
+                    }
+                }
+
+                try {
+                    Path video = Paths.get(partitionVideoFile);
+
+                    Files.delete(video);
+
+                } catch (IOException e) {
+                    return ResponseEntity.notFound().build();
+                }
             }
 
             return ResponseEntity.ok();

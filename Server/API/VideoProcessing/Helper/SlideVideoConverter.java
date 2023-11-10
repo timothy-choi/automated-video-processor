@@ -40,7 +40,7 @@ public class SlideVideoConverter {
                 }
             }
 
-            String firstSlideId = pageSlides.get(0).getObjectId();
+            String firstSlideId = pageSlides.get(n).getObjectId();
 
             List<BufferedImage> animationFrames = new ArrayList<BufferedImage>();
 
