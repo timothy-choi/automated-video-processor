@@ -368,14 +368,26 @@ public class VideoProcessingController {
     @PostMapping("/videoProcessing/processVideoSlides")
     public ResponseEntity processVideoTemplates(@RequestBody Map<String, String> reqInfo) {
         try {
-            api.videoProcessing.VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
+            VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
             .uri(uriBuilder -> uriBuilder
                 .path("/videoProcessing/{userId}/{videoProcessingId}/{publicDisplay}")
-                .build(userId, videoProcessingId, false))
+                .build(reqInfo.get("userId"), reqInfo.get("videoProcessingId"), false))
             .retrieve()
             .bodyToMono(VideoProcessing.class);
 
+            Presentation pres = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/template/presentation/{presentationId}")
+                .build(reqInfo.get("templateId")))
+            .retrieve();
+
+            List<Page> pageSlides = pres.getSlides();
+
             List<String> allAnimations = videoProcessObj.getAnimations();
+
+            List<String> allImageSlides = videoProcessObj.getAllImageSlides();
+
+            List<Pair<Int, Int>> allPartitions = videoProcessObj.getPartitions();
 
             //in a loop
             //get all partition ranges
@@ -383,6 +395,13 @@ public class VideoProcessingController {
             //group them to create video, add animation for requested slides before they fully appear (one helper function)
             //get the video file and upload video to s3 bucket (another helper function)
 
+            for (int i = 0; i < allPartitions.size(); ++i) {
+                Pair<Int, Int> currPartition = allPartitions.get(i);
+
+                List<String> allAssocSlides = allImageSlides.subList(currPartition.first, currPartition.second);
+
+
+            }
 
             return ResponseEntity.ok();
         } catch (Exception e) {
