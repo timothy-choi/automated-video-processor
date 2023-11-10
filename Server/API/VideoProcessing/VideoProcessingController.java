@@ -363,4 +363,30 @@ public class VideoProcessingController {
             return ResponseEntity.notFound().build();
         }
     }
+
+
+    @PostMapping("/videoProcessing/processVideoSlides")
+    public ResponseEntity processVideoTemplates(@RequestBody Map<String, String> reqInfo) {
+        try {
+            api.videoProcessing.VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/videoProcessing/{userId}/{videoProcessingId}/{publicDisplay}")
+                .build(userId, videoProcessingId, false))
+            .retrieve()
+            .bodyToMono(VideoProcessing.class);
+
+            List<String> allAnimations = videoProcessObj.getAnimations();
+
+            //in a loop
+            //get all partition ranges
+            //get images slides for each partition
+            //group them to create video, add animation for requested slides before they fully appear (one helper function)
+            //get the video file and upload video to s3 bucket (another helper function)
+
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }
