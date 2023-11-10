@@ -28,7 +28,7 @@ public class ImageSlide {
             .setObjectId(slide.getObjectId())
             .setMineType("image/png");
         
-        String filename = "imageSlide" + slide.getObjectId() + ".png";
+        String filename = System.getProperty("user.home") + "/Downloads/imageSlide" + slide.getObjectId() + ".png";
         
         try {
             Thumbnail thumbnail = slidesService.presentations().pages().getThumbail(presentationId, thumbnailReq).execute();

@@ -381,6 +381,13 @@ public class VideoProcessingController {
                 .build(reqInfo.get("templateId")))
             .retrieve();
 
+            Template corrTemplate = WebClientConfig.webClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/templates/{userId}/{templateId}/{publicDisplay}")
+                .build(reqInfo.get("userId"), reqId.get("templateId"), false))
+            .retrieve()
+            .bodyToMono(Template.class);
+
             List<Page> pageSlides = pres.getSlides();
 
             List<String> allAnimations = videoProcessObj.getAnimations();
@@ -388,6 +395,8 @@ public class VideoProcessingController {
             List<String> allImageSlides = videoProcessObj.getAllImageSlides();
 
             List<Pair<Int, Int>> allPartitions = videoProcessObj.getPartitions();
+
+            List<Int> durations = corrTemplate.getSlideDuration();
 
             //in a loop
             //get all partition ranges
@@ -400,7 +409,7 @@ public class VideoProcessingController {
 
                 List<String> allAssocSlides = allImageSlides.subList(currPartition.first, currPartition.second);
 
-
+                List<Int> subDurations = durations.subList(currPartition.first, currPartition.second);
             }
 
             return ResponseEntity.ok();
