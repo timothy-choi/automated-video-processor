@@ -417,7 +417,9 @@ public class VideoProcessingController {
 
                 List<Int> subDurations = durations.subList(currPartition.first, currPartition.second);
 
-                String partitionVideoFile = SlideVideoConverter.combineSlidesIntoVideo(pageSlides, allAssocSlides, allAnimations, subDurations, currPartition.first);
+                List<Page> givenPages = pageSlides.subList(currPartition.first, currPartition.second);
+
+                String partitionVideoFile = SlideVideoConverter.combineSlidesIntoVideo(givenPages, allAssocSlides, allAnimations, subDurations, currPartition.first);
 
                 if (!client.checkIfBucketExists(partitionVideoFile)) {
                     client.createNewBucket(reqInfo.get("bucketName"));

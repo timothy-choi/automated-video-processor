@@ -68,13 +68,53 @@ public class SlideVideoConverter {
             }
 
             if (animationIncluded) {
+                BufferedImage editedFirstImage = bufferedImages.get(n);
                 for (BufferedImage frame : animationFrames) {
+                    editedFirstImage = blendFrames(editedFirstImage, frame);
+                }
 
+                try {
+                    ImageIO.write(editedFirstImage, "png", new File(imageSlides.get(0)));
+                    bufferedImages.set(0, editedFirstImage);
+                } catch (IOException e) {
+                    throw new Exception("Couldn't create animations");
                 }
             }
 
-            for (BufferedImage bufferedImg : bufferedImages) {
+            for (int i = 0; i < bufferedImages.size(); ++i) {
+                BufferedImage currImg = bufferedImages.get(i);
 
+                for (int j = 0; j < SlideDuration.get(i); ++j) {
+                    IplImage iplImg = convertToIplImage(bufferedImages.get(i));
+                    Frame frame = new OpenCVFrameConverter.ToIplImage().convert(iplImg);
+                    recorder.record(frame);
+                }
+                if (i < bufferedImages.size() - 1) {
+                    String slideId = pageSlides.get(i).getObjectId();
+                    if (!animations.get(i).contains(slideId)) {
+                        continue;
+                    }
+                    BufferedImage nextImg = bufferedImages.get(i+1);
+                    String animationType = animation.get(i).substring(animation.lastIndexOf(" ") + 1);
+                    switch(animationType) {
+                        case "fade-in":
+                            animationFrames = createFadeInAnimation(currImg, nextImg);
+                            break;
+                        case "slide":
+                            animationFrames = createSlideAnimation(currImg, nextImg);
+                            break;
+                        case "zoom":
+                            animationFrames = createZoomAnimation(currImg, nextImg);
+                            break;
+                        default:
+                            break; 
+                    }
+                    for (BufferedImage animationFrame : animationFrames) {
+                        IplImage iplImg = convertToIplImage(animationFrame);
+                        Frame frame = new OpenCVFrameConverter.ToIplImage().convert(iplImg);
+                        recorder.record(frame);
+                    }
+                }
             }
 
             recorder.stop();
@@ -85,6 +125,14 @@ public class SlideVideoConverter {
         }
 
         return outputPath;
+    }
+
+    public static BufferedImage blendFrames(BufferedImage baseImage, BufferedImage overlayFrame) {
+
+    }
+
+    public static IplImage convertToIplImage(BufferedImage img) {
+
     }
 
     public static List<BufferedImage> createFadeInAnimation(BufferedImage currImage, BufferedImage nextImage) {
