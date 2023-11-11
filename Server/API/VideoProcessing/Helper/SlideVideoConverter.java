@@ -2,6 +2,8 @@ package api.videoProcessing;
 
 import java.util.*;
 
+import javax.imageio.ImageIO;
+
 import com.google.api.services.slides.v1.model.Page;
 
 import org.bytedeco.javacv.FFmpegFrameRecorder;
@@ -128,11 +130,23 @@ public class SlideVideoConverter {
     }
 
     public static BufferedImage blendFrames(BufferedImage baseImage, BufferedImage overlayFrame) {
+        BufferedImage blended = new BufferedImage(baseImage.getWidth(), baseImage.getHeight(), BufferedImage.TYPE_4BYTE_ABGR);
 
+        Graphics2D drawing = blended.createGraphics();
+        drawing.drawImage(baseImage, 0, 0, null);
+        drawing.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f));
+        drawing.drawImage(overlayFrame, 0, 0, null);
+        drawing.dispose();
+
+        return blended;
     }
 
     public static IplImage convertToIplImage(BufferedImage img) {
-
+        ToIplImage iplConverter = new OpenCVFrameConverter.ToIplImage();
+        Java2DFrameConverter javaConverter = new Java2DFrameConverter();
+        Frame newFrame = javaConverter.convert(img);
+        IplImage result =  iplConverter.convert(newFrame);
+        return result;
     }
 
     public static List<BufferedImage> createFadeInAnimation(BufferedImage currImage, BufferedImage nextImage) {
