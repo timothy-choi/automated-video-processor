@@ -422,7 +422,7 @@ public class VideoProcessingController {
                 String partitionVideoFile = "";
 
                 try {
-                    partitionVideoFile = SlideVideoConverter.combineSlidesIntoVideo(givenPages, allAssocSlides, allAnimations, subDurations, currPartition.first);
+                    partitionVideoFile = SlideVideoConverter.combineSlidesIntoVideo(givenPages, allAssocSlides, allAnimations, subDurations, 0);
                 } catch (Exception e) {
                     return ResponseEntity.notFound().build();
                 }
