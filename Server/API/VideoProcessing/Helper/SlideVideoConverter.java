@@ -14,6 +14,8 @@ import org.bytedeco.javacpp.opencv_core;
 import org.bytedeco.javacv.OpenCVFrameConverter;
 import org.bytedeco.javacv.Frame;
 
+import java.awt.image.BufferedImage;
+import java.awt.Color;
 import java.io.File;
 import java.io.IOException;
 
@@ -150,7 +152,45 @@ public class SlideVideoConverter {
     }
 
     public static List<BufferedImage> createFadeInAnimation(BufferedImage currImage, BufferedImage nextImage) {
+        List<BufferedImage> animateFrames = new List<BufferedImage>();
 
+        int width = 800;
+        int height = 600;
+        int duration = 10;
+        if (nextImage == null) {
+            for (int index = 0; index < duration; ++index) {
+                float alpha = (float) index / (float) duration;
+                BufferedImage frame = new BufferedImage(width, height);
+                Graphics2D g = frame.createGraphics();
+                g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+
+                Color imgColor = new Color(currImage.getRGB(50,50));
+                g.setColor(imgColor);
+
+                int rectWidth = 50;
+                int rectHeight = 50;
+                int x = (frame.getWidth() - rectWidth) / 2;
+                int y = (frame.getHeight() - rectHeight) / 2;
+                g.fillRect(x, y, rectWidth, rectHeight);
+                g.dispose();
+                animateFrames.add(frame);
+            }
+        }
+        else {
+            width = currImage.getWidth();
+            height = currImage.getHeight();
+            for (int index = 0; index < duration; ++index) {
+                float alpha = (float) index / (float) duration;
+                BufferedImage frame = new BufferedImage(width, height, BufferedImage.TYPE_4BYTE_ABGR);
+                Graphics2D g = frame.createGraphics();
+                g.drawImage(currImage, 0, 0, null);
+                g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f - alpha));
+                g.drawImage(nextImage, 0, 0, null);
+                g.dispose();
+                animateFrames.add(frame);
+            }
+        }
+        return animateFrames;
     }
 
     public static List<BufferedImage> createSlideAnimation(BufferedImage currImage, BufferedImage nextImage) {
