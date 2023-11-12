@@ -7,10 +7,7 @@ import javax.imageio.ImageIO;
 import com.google.api.services.slides.v1.model.Page;
 
 import org.bytedeco.javacv.FFmpegFrameRecorder;
-import org.bytedeco.javacv.Java2DFrameUtils;
-import org.bytedeco.opencv.opencv_core.CvType;
 import org.bytedeco.opencv.opencv_core.IplImage;
-import org.bytedeco.javacpp.opencv_core;
 import org.bytedeco.javacv.OpenCVFrameConverter;
 import org.bytedeco.javacv.Frame;
 
