@@ -419,9 +419,15 @@ public class VideoProcessingController {
 
                 List<Page> givenPages = pageSlides.subList(currPartition.first, currPartition.second);
 
-                String partitionVideoFile = SlideVideoConverter.combineSlidesIntoVideo(givenPages, allAssocSlides, allAnimations, subDurations, currPartition.first);
+                String partitionVideoFile = "";
 
-                if (!client.checkIfBucketExists(partitionVideoFile)) {
+                try {
+                    partitionVideoFile = SlideVideoConverter.combineSlidesIntoVideo(givenPages, allAssocSlides, allAnimations, subDurations, currPartition.first);
+                } catch (Exception e) {
+                    return ResponseEntity.notFound().build();
+                }
+
+                if (!client.checkIfBucketExists(reqInfo.get("bucketName"))) {
                     client.createNewBucket(reqInfo.get("bucketName"));
                 }
 
