@@ -194,10 +194,51 @@ public class SlideVideoConverter {
     }
 
     public static List<BufferedImage> createSlideAnimation(BufferedImage currImage, BufferedImage nextImage) {
+        List<BufferedImage> animateFrames = new List<BufferedImage>();
+        
+        int width = currImage.getWidth();
+        int height = currImage.getHeight();
+        int duration = 10;
 
+        for (int index = 0; index < duration; ++index) {
+            float alpha = (float) index / (float) duration;
+            BufferedImage frame = new BufferedImage(width, height, BufferedImage.TYPE_4BYTE_ABGR);
+            Graphics2D g = frame.createGraphics();
+            g.drawImage(currImage, 0, 0, null);
+
+            int transEffect = (int) (alpha * width);
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+            g.drawImage(nextImage, -transEffect, 0, null);
+            g.dispose();
+            animateFrames.add(frame);
+        }
+        return animateFrames;
     }
 
     public static List<BufferedImage> createZoomAnimation(BufferedImage currImage, BufferedImage nextImage) {
+        List<BufferedImage> animateFrames = new List<BufferedImage>();
+        
+        int width = currImage.getWidth();
+        int height = currImage.getHeight();
+        int duration = 10;
 
+        for (int index = 0; index < duration; ++index) {
+            float alpha = 1.0f + (float) index / (float) duration;
+
+            int scaledWidth = (int) (width * alpha);
+            int scaledHeight = (int) (height * alpha);
+
+            BufferedImage frame = new BufferedImage(width, height, BufferedImage.TYPE_4BYTE_ABGR);
+            Graphics2D g = frame.createGraphics();
+            g.drawImage(currImage, 0, 0, null);
+
+            int offsetX = (width - scaledWidth) / 2;
+            int offsetY = (height - scaledHeight) / 2;
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f));
+            g.drawImage(nextImage, offsetX, offsetY, scaledWidth, scaledHeight, null);
+            g.dispose();
+            animateFrames.add(frame);
+        }
+        return animateFrames;
     }
 }
