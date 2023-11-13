@@ -543,7 +543,7 @@ public class VideoProcessingController {
                 return ResponseEntity.notFound().build();
             }
 
-            return ResponseEntity.ok();
+            return ResponseEntity.ok(newVideoFile);
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
