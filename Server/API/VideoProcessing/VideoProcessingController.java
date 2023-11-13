@@ -521,7 +521,7 @@ public class VideoProcessingController {
                 return ResponseEntity.notFound().build();
             }
 
-            client.addObjectIntoBucket(reqInfo.get("finalVideoBucket"), newVideoFile, new MockMultipartFile("video", partitionFile.getName(), MimeTypeUtils.APPLICATION_OCTET_STREAM_VALUE, vidBytes));
+            client.addObjectIntoBucket(reqInfo.get("finalVideoBucket"), newVideoFile, new MockMultipartFile("video", videoFile.getName(), MimeTypeUtils.APPLICATION_OCTET_STREAM_VALUE, vidBytes));
 
             for (String filePath : videoOrder) {
                 try {
