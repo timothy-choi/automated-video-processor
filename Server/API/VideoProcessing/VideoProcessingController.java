@@ -499,7 +499,7 @@ public class VideoProcessingController {
                 S3Object vid = client.getObjectFromBucket(bucket, video);
 
                 ResponseInputStream<GetObjectResponse> vidContent = vid.read();
-                Path outFile = Path.of(video);
+                Path outFile = Path.get(video);
                 Files.createDirectories(outFile.getParent(), null);
                 Files.createFile(outFile);
                 Files.copy(vidContent, outFile, StandardCopyOption.REPLACE_EXISTING);
