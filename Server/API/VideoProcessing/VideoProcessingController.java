@@ -197,7 +197,7 @@ public class VideoProcessingController {
 
     @PostMapping("/videoProcessing/importedVideo")
     public ResponseEntity uploadImportedVideo(@RequestParam("video") MultipartFile video, @RequestBody Map<String, String> reqInfo) {
-        String objKey = reqInfo.get("owner") + "/imported/" + video.getOriginalFilename();
+        String objKey = System.getProperty("user.home") + "/Downloads/" + video.getOriginalFilename();
         try {
             if (!client.checkIfBucketExists(reqInfo.get("bucketName"))) {
                 client.createNewBucket(reqInfo.get("bucketName"));
@@ -500,6 +500,8 @@ public class VideoProcessingController {
 
                 ResponseInputStream<GetObjectResponse> vidContent = vid.read();
                 Path outFile = Path.of(video);
+                Files.createDirectories(outFile.getParent(), null);
+                Files.createFile(outFile);
                 Files.copy(vidContent, outFile, StandardCopyOption.REPLACE_EXISTING);
             }
 
