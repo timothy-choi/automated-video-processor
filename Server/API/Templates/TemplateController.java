@@ -499,4 +499,29 @@ public class TemplateController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @DeleteMapping("/template/{userId}/{templateId}")
+    public ResponseEntity deleteTemplate(@PathVariable("userId") String userId, @PathVariable("templateId") String templateId) {
+        try {
+            PrimaryKey primKey = new PrimaryKey();
+            primKey.setUserId(userId);
+            primKey.setTemplateId(templateId);
+
+            Template found = null;
+
+            Optional<Template> selectedTemplate = templateRepository.findByUserId(primKey);
+            selectedTemplate.ifPresent(
+                template -> found = template
+            );
+
+            if (found == null) {
+                return ResponseEntity.notFound().build();
+            }
+ 
+            templateRepository.delete(found);
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }

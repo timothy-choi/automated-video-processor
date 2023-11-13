@@ -548,4 +548,24 @@ public class VideoProcessingController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @DeleteMapping("/videoProcessing/{userId}/{processingId}")
+    public ResponseEntity deleteVideoProcessing(@PathVariable("userId") String userId, @PathVariable("processingId") String processingId) {
+        PrimaryKey newKey = new PrimaryKey();
+        newKey.setUserId(userId);
+        newKey.setVideoProcessingId(processingId);
+        Optional<VideoProcessing> videoProcess = _videoProcessingRepository.findByUserId(newKey);
+
+        VideoProcessing videoProcessObj;
+
+        videoProcess.isPresent(
+            videoPro -> videoProcessObj = videoPro
+        );
+
+        if (videoProcessObj) {
+            _videoProcessingRepository.delete(videoProcessObj);
+            return ResponseEntity.ok();
+        }
+        return ResponseEntity.notFound().build();
+    }
 }
