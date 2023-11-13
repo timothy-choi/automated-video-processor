@@ -1,5 +1,7 @@
 package api.videoProcessing;
 
+import java.util.List;
+
 import org.bytedeco.javacv.FFmpegFrameGrabber;
 import org.bytedeco.javacv.FFmpegFrameRecorder;
 
@@ -10,6 +12,18 @@ public class VideoProcessor {
             FFmpegFrameRecorder recorder = new FFmpegFrameRecorder(outputFile, 800,600);
 
             recorder.start();
+
+            for (String videoPath : allVideoPaths) {
+                FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(videoPath);
+
+                grabber.start();
+
+                for (int i = 0; i < grabber.getLengthInFrames(); i++) {
+                    recorder.record(grabber.grab());
+                }
+
+                grabber.stop();
+            }
 
             recorder.stop();
             recorder.release();

@@ -505,7 +505,7 @@ public class VideoProcessingController {
                 Files.copy(vidContent, outFile, StandardCopyOption.REPLACE_EXISTING);
             }
 
-            String newVideoFile = "";
+            String newVideoFile = VideoProcessor.combineAllVideos(allVideos, reqInfo.get("finalVideoName"));
 
             if (!client.checkIfBucketExists(reqInfo.get("finalVideoBucket"))) {
                 client.createNewBucket(reqInfo.get("finalVideoBucket"));
