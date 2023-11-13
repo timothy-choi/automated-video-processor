@@ -1,24 +1,23 @@
 package api.videoProcessing;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
 import com.google.api.services.slides.v1.model.Presentation;
 import com.google.api.services.slides.v1.model.Page;
 
-import org.springframework.web.reactive.function.client.WebClient;
-
 import api.WebClientConfig;
-import api.videoProcessing.SlideVideoConverter;
-import api.videoProcessing.VideoProcessing;
 import javafx.util.Pair;
 
-import AWS;
 import AWS.AWSHelper;
+import software.amazon.awssdk.services.s3.model.S3Object;
+import software.amazon.awssdk.services.s3.model.S3ObjectResponse;
+import software.amazon.awssdk.core.sync.ResponseInputStream;
 
 import java.util.*;
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.util.MimeTypeUtils;
@@ -483,7 +482,64 @@ public class VideoProcessingController {
             .retrieve()
             .bodyToMono(VideoProcessing.class);
 
+            List<String> videoOrder = videoProcessObj.getVideoOrder();
 
+            List<String> allVideos = new ArrayList<String>();
+
+            for (String video : videoOrder) {
+                String bucket = "";
+                if (video.contains("partition")) {
+                    bucket = reqInfo.get("partitionVideosBucket");
+                }
+                else {
+                    bucket = reqInfo.get("importedVideosBucket");
+                }
+
+                allVideos.add(video);
+                S3Object vid = client.getObjectFromBucket(bucket, video);
+
+                ResponseInputStream<GetObjectResponse> vidContent = vid.read();
+                Path outFile = Path.of(video);
+                Files.copy(vidContent, outFile, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            String newVideoFile = "";
+
+            if (!client.checkIfBucketExists(reqInfo.get("finalVideoBucket"))) {
+                client.createNewBucket(reqInfo.get("finalVideoBucket"));
+            }
+
+            File videoFile = new File(newVideoFile);
+
+            byte[] vidBytes;
+
+            try (InputStream is = new FileInputStream(videoFile)) {
+                vidBytes = is.readAllBytes();
+            } catch (IOException e) {
+                return ResponseEntity.notFound().build();
+            }
+
+            client.addObjectIntoBucket(reqInfo.get("finalVideoBucket"), newVideoFile, new MockMultipartFile("video", partitionFile.getName(), MimeTypeUtils.APPLICATION_OCTET_STREAM_VALUE, vidBytes));
+
+            for (String filePath : videoOrder) {
+                try {
+                    Path currImg = Paths.get(filePath);
+
+                    Files.delete(currImg);
+
+                } catch (IOException e) {
+                    return ResponseEntity.notFound().build();
+                }
+            }
+
+            try {
+                Path video = Paths.get(newVideoFile);
+
+                Files.delete(video);
+
+            } catch (IOException e) {
+                return ResponseEntity.notFound().build();
+            }
 
             return ResponseEntity.ok();
         } catch (Exception e) {
