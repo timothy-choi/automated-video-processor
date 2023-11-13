@@ -372,7 +372,7 @@ public class VideoProcessingController {
 
 
     @PostMapping("/videoProcessing/processVideoSlides")
-    public ResponseEntity processVideoTemplates(@RequestBody Map<String, String> reqInfo) {
+    public ResponseEntity processVideoTemplates(@RequestBody Map reqInfo) {
         try {
             VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
             .uri(uriBuilder -> uriBuilder
@@ -410,6 +410,8 @@ public class VideoProcessingController {
             //group them to create video, add animation for requested slides before they fully appear (one helper function)
             //get the video file and upload video to s3 bucket (another helper function)
 
+            int index = 0;
+
             for (Pair<Int, Int> partition : allPartitions) {
                 Pair<Int, Int> currPartition = partition;
 
@@ -422,7 +424,7 @@ public class VideoProcessingController {
                 String partitionVideoFile = "";
 
                 try {
-                    partitionVideoFile = SlideVideoConverter.combineSlidesIntoVideo(givenPages, allAssocSlides, allAnimations, subDurations, 0);
+                    partitionVideoFile = SlideVideoConverter.combineSlidesIntoVideo(givenPages, allAssocSlides, allAnimations, subDurations, 0, reqInfo.get("filenames").get(index));
                 } catch (Exception e) {
                     return ResponseEntity.notFound().build();
                 }
@@ -462,7 +464,26 @@ public class VideoProcessingController {
                 } catch (IOException e) {
                     return ResponseEntity.notFound().build();
                 }
+                index++;
             }
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PostMapping("/videoProcessing/processFullVideo")
+    public ResponseEntity processFullVideo(@RequestBody Map reqInfo) {
+        try {
+            VideoProcessing videoProcessObj = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/videoProcessing/{userId}/{videoProcessingId}/{publicDisplay}")
+                .build(reqInfo.get("userId"), reqInfo.get("videoProcessingId"), false))
+            .retrieve()
+            .bodyToMono(VideoProcessing.class);
+
+
 
             return ResponseEntity.ok();
         } catch (Exception e) {

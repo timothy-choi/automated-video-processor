@@ -18,8 +18,8 @@ import java.io.IOException;
 
 
 public class SlideVideoConverter {
-    public static String combineSlidesIntoVideo(List<Page> pageSlides, List<String> imageSlides, List<String> animations, List<Int> durations, int n) {
-        String outputPath = System.getProperty("user.home") + "/Downloads/" + "partition" + n + ".mp4";
+    public static String combineSlidesIntoVideo(List<Page> pageSlides, List<String> imageSlides, List<String> animations, List<Int> durations, int n, String filename) {
+        String outputPath = System.getProperty("user.home") + "/Downloads/" + filename + ".mp4";
         List<File> imageFiles = new ArrayList<File>();
         List<BufferedImage> bufferedImages = new ArrayList<BufferedImages>();
 
