@@ -64,13 +64,31 @@ public class VideoAccountsController {
         }
     }
 
+    @PostMapping("/videoAccounts/videos")
+    public ResponseEntity addVideo(@RequestBody Map reqInfo) {
+        try {
+            VideoAccounts videoAcct = WebClientConfig.WebClient().get()
+            .uri(uriBuilder -> uriBuilder
+                .path("/videoAccounts/{userId}/{videoAccountId}/{publicDisplay}")
+                .build(reqInfo.get("userId"), reqInfo.get("videoAccountId"), false))
+            .retrieve()
+            .bodyToMono(VideoAccounts.class);
+
+            videoAcct.addCreatedVideo(reqInfo.get("video"));
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @DeleteMapping("/videoAccounts/{userId}/{videoAccountId}/{video}")
     public ResponseEntity deleteVideo(@PathVariable("userId") String userId, @PathVariable("videoAccountId") String videoAccountId, @PathVariable("video") String video) {
         try {
             VideoAccounts videoAcct = WebClientConfig.WebClient().get()
             .uri(uriBuilder -> uriBuilder
                 .path("/videoAccounts/{userId}/{videoAccountId}/{publicDisplay}")
-                .build(reqInfo.get("userId"), reqInfo.get("videoAccountId"), false))
+                .build(userId, videoAccountId, false))
             .retrieve()
             .bodyToMono(VideoAccounts.class);
 
