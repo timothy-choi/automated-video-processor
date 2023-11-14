@@ -21,7 +21,7 @@ public class VideoAccountsController {
             currKey.setUserId(userId);
             currKey.setVideoAccountId(videoAccountId);
 
-            Optional<VideoAccounts> videoAccountResults = _videoAccountsRepository.findByUserId(currKey);
+            Optional<VideoAccounts> videoAccountResults = _videoAccountsRepository.findById(currKey);
 
             VideoAccounts videoAccount;
 
@@ -56,6 +56,23 @@ public class VideoAccountsController {
             acct.setVideoAccountId();
 
             _videoAccountsRepository.save(acct);
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @DeleteMapping("/videoAccounts/{userId}/{videoAccountId}")
+    public ResponseEntity deleteVideoAccount(@PathVariable("userId") String userId, @PathVariable("videoAccountId") String videoAccountId) {
+        try {
+            PrimaryKey currKey = new PrimaryKey();
+            currKey.setUserId(userId);
+            currKey.setVideoAccountId(videoAccountId);
+
+            VideoAccounts acct = _videoAccountsRepository.findById(currKey);
+
+            _videoAccountsRepository.delete(acct);
+
             return ResponseEntity.ok();
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
