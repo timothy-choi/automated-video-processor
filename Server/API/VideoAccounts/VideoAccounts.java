@@ -41,11 +41,12 @@ public class VideoAccounts {
         return key.getVideoAccountId();
     }
 
-    public void setVideoAccountId(String newVidAccountId) {
+    public void setVideoAccountId() {
         if (key == null) {
             key = new PrimaryKey();
         }
-        key.setVideoAccountId(newVidAccountId);
+        UUID newUUID = UUID.randomUUID();
+        key.setVideoAccountId(newUUID);
     }
 
     public String getUsername() {
@@ -58,6 +59,10 @@ public class VideoAccounts {
 
     public List<String> getMadeVideos() {
         return videosMade;
+    }
+
+    public void createMadeVideos() {
+        videosMade = new ArrayList<String>();
     }
 
     public void addCreatedVideo(String newVideo) {

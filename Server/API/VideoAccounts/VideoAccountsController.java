@@ -43,4 +43,22 @@ public class VideoAccountsController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @PostMapping("/videoAccounts")
+    public ResponseEntity createVideoAccount(@RequestBody Map reqInfo) {
+        try {
+            VideoAccounts acct = new VideoAccounts()
+                .setUserId()
+                .setUsername(reqInfo.get("username"))
+                .createMadeVideos()
+                .setVideoBucket(reqInfo.get("bucketname"));
+            
+            acct.setVideoAccountId();
+
+            _videoAccountsRepository.save(acct);
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }

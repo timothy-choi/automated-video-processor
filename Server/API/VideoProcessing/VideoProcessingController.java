@@ -79,6 +79,8 @@ public class VideoProcessingController {
             Pair<String, String> keyInfo = new Pair<String, String>();
             keyInfo.set("userId", videoObj.getUserId());
             keyInfo.set("videoProcessingId", videoObj.getVideoProcessingId());
+
+            _videoProcessingRepository.save(videoObj);
            return ResponseEntity.ok(keyInfo);
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
