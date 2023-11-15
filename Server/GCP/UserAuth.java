@@ -1,6 +1,7 @@
 package api.gcp;
 
 import com.google.api.client.auth.oauth2.AuthorizationCodeFlow;
+import com.google.api.client.auth.oauth2.Credential;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.api.client.json.JsonFactory;
 import com.google.api.client.json.jackson2.JacksonFactory;
@@ -35,5 +36,9 @@ public class UserAuth {
 
     public static bool checkForCredentials(AuthorizationCodeFlow flow, String userId) {
         return flow.loadCredentials(userId) != null;
+    }
+
+    public static Credential getCredential(AuthorizationCodeFlow flow, String id) {
+        return flow.loadCredentials(id);
     }
 }
