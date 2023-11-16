@@ -17,6 +17,11 @@ import com.google.api.client.googleapis.auth.oauth2.AuthorizationCodeFlow;
 import com.google.api.client.auth.oauth2.TokenResponse;
 
 import AWS.AWSHelper;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpStatus;
+import com.amazonaws.services.s3.model.S3Object;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.HttpHeaders;
 
 @RestController
 public class VideoAccountsController {
@@ -126,6 +131,22 @@ public class VideoAccountsController {
             return ResponseEntity.ok();
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
+        }
+    }
+
+    @GetMapping("/videoAccounts/video/download/{bucketName}/{video}")
+    public ResponseEntity<Resource> downloadVideo(@PathVariable("bucketName") String bucketName, @PathVariable("video") String video) {
+        try {
+            S3Object obj = client.getObjectFromBucket(bucketName, video);
+            InputStream inStream = obj.getObjectContent();
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+            headers.setContentDispositionFormData("attachment", fileName);
+
+            return new ResponseEntity<>(new InputStreamResouce(inStream), headers, HttpStatus.Ok);
+        } catch (Exception e) {
+            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
