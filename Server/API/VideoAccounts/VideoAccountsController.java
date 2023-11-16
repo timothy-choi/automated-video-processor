@@ -12,6 +12,10 @@ import api.videoAccounts.VideoAccounts;
 import api.videoProcessing.VideoAccountsRepository;
 import api.WebClientConfig;
 
+import Server.gcp;
+import com.google.api.client.googleapis.auth.oauth2.AuthorizationCodeFlow;
+import com.google.api.client.auth.oauth2.TokenResponse;
+
 @RestController
 public class VideoAccountsController {
     @Autowired
@@ -114,6 +118,37 @@ public class VideoAccountsController {
             _videoAccountsRepository.delete(videoAcct);
 
             return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PostMapping("/videoAccounts/auth") 
+    public ResponseEntity authorizeUserAccount(@RequestBody Map reqInfo) {
+        try {
+            AuthorizationCodeFlow flow = UserAuth.createAuthCodeFlow(reqInfo.get("scopes"));
+
+            if (UserAuth.checkForCredentials(flow, reqInfo.get("id")) == null) {
+                return ResponseEntity.ok(UserAuth.getCredential(flow, reqInfo.get("id")));
+            }
+
+            String url = UserAuthFlow.getAuthUrl(flow);
+            return ResponseEntity.ok(url);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PostMapping("/videoAccounts/authflow")
+    public ResponseEntity initializeUserAuth(@RequestBody Map reqInfo) {
+        try {
+            AuthorizationCodeFlow flow = UserAuth.createAuthCodeFlow(reqInfo.get("scopes"));
+
+            TokenResponse token = UserAuthFlow.sendTokenRequest(reqInfo.get("code"), flow, reqInfo.get("scopes"));
+
+            Credential newCreds = UserAuthFlow.createCredential(token, flow, reqInfo.get("id"));
+
+            return ResponsEntity.ok(newCreds);
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
