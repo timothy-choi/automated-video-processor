@@ -51,6 +51,14 @@ public class AWSHelper {
         }
     }
 
+    public void deleteObjectFromBucket(String bucket, String objKey) {
+        try {
+            client.deleteObject(new DeleteObjectRequest(bucket, objKey));
+        } catch (AmazonS3Exception e) {
+            throw new Exception("Object doesn't exist");
+        }
+    }
+
     public void replaceObjectInBucket(String name, String objKey, MultipartFile video) {
         addObjectIntoBucket(name, objKey, video);
     }

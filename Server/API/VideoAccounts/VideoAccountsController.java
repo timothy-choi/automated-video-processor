@@ -16,10 +16,14 @@ import Server.gcp;
 import com.google.api.client.googleapis.auth.oauth2.AuthorizationCodeFlow;
 import com.google.api.client.auth.oauth2.TokenResponse;
 
+import AWS.AWSHelper;
+
 @RestController
 public class VideoAccountsController {
     @Autowired
     private VideoAccountsRepository _videoAccountsRepository;
+
+    private AWSHelper client;
 
     @GetMapping("/videoAccounts/{userId}/{videoAccountId}/{publicDisplay}")
     public ResponseEntity getVideoAccount(@PathVariable("userId") String userId, @PathVariable("videoAccountId") String videoAccountId, @PathVariable("publicDisplay") bool publicDisplay) {
@@ -86,8 +90,8 @@ public class VideoAccountsController {
         }
     }
 
-    @DeleteMapping("/videoAccounts/{userId}/{videoAccountId}/{video}")
-    public ResponseEntity deleteVideo(@PathVariable("userId") String userId, @PathVariable("videoAccountId") String videoAccountId, @PathVariable("video") String video) {
+    @DeleteMapping("/videoAccounts/{userId}/{videoAccountId}/{bucketName}/{video}")
+    public ResponseEntity deleteVideo(@PathVariable("userId") String userId, @PathVariable("videoAccountId") String videoAccountId, @PathVariable("bucketName") String bucketName, @PathVariable("video") String video) {
         try {
             VideoAccounts videoAcct = WebClientConfig.WebClient().get()
             .uri(uriBuilder -> uriBuilder
@@ -98,6 +102,8 @@ public class VideoAccountsController {
 
             videoAcct.delete(video);
             _videoAccountsRepository.save(videoAcct);
+
+            client.deleteObjectFromBucket(bucketName, video);
 
             return ResponseEntity.ok();
         } catch (Exception e) {
