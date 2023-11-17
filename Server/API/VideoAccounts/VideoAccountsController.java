@@ -204,4 +204,25 @@ public class VideoAccountsController {
             return ResponseEntity.notFound().build();
         }
     }
+
+    @GetMapping("/videoAccounts/youtube/{scopes}/{id}/{videoId}")
+    public ResponseEntity getYoutubeVideo(@PathVariable("scopes") String scopes, @PathVariable("id") String id, @PathVariable("videoId") String videoId) {
+        try {
+            String[] temp = scopes.replaceAll("[\\[\\] ]", "").split(",");
+
+            List<String> allScopes = Arrays.asList(temp);
+
+            AuthorizationCodeFlow flow = UserAuth.createAuthCodeFlow(allScopes);
+
+            Credential userCredential = UserAuth.getCredential(flow, id);
+
+            Youtube service = YoutubeHelper.getService(userCredential);
+
+            Video foundVideo = YoutubeHelper.getVideo(service, videoId);
+
+            return ResponseEntity.ok(foundVideo);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }

@@ -105,7 +105,7 @@ public class YoutubeHelper {
         return response.getId();
     }
 
-    public static Video getVideo(Youtube service, int videoId) {
+    public static Video getVideo(Youtube service, String videoId) {
         Video.List videoRequest = service.videos().list("");
         videoRequest.setId(videoId);
 
