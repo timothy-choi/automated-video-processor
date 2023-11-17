@@ -66,7 +66,7 @@ public class YoutubeHelper {
         return false;
     }
 
-    public static String resumableUpload(Video videoReq) {
+    public static String resumableUpload(Insert videoReq) {
         String error = "";
         Video response = null;
         int retry = 0;

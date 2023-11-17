@@ -13,6 +13,9 @@ import api.videoProcessing.VideoAccountsRepository;
 import api.WebClientConfig;
 
 import Server.gcp;
+import Youtube.YoutubeHelper;
+import com.google.api.services.youtube.model.Video;
+
 import com.google.api.client.googleapis.auth.oauth2.AuthorizationCodeFlow;
 import com.google.api.client.auth.oauth2.TokenResponse;
 
@@ -176,6 +179,27 @@ public class VideoAccountsController {
             Credential newCreds = UserAuthFlow.createCredential(token, flow, reqInfo.get("id"));
 
             return ResponsEntity.ok(newCreds);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+    
+    @PostMapping("/videoAccounts/youtube")
+    public ResponseEntity uploadVideoToYoutube(@RequestBody Map reqInfo) {
+        try {
+            AuthorizationCodeFlow flow = UserAuth.createAuthCodeFlow(reqInfo.get("scopes"));
+
+            Credential userCredential = UserAuth.getCredential(flow, reqInfo.get("id"));
+
+            Youtube service = YoutubeHelper.getService(userCredential);
+
+            Video vid = YoutubeHelper.createVideo(reqInfo.get("title"), reqInfo.get("desc"), reqInfo.get("privacy"), reqInfo.get("tags"));
+
+            Insert uploadRequest = YoutubeHelper.uploadVideo(vid, reqInfo.get("filename"), service);
+
+            String videoId = YoutubeHelper.resumableUpload(uploadRequest);
+
+            return ResponseEntity.ok(videoId);
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
