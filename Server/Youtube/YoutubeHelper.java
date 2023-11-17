@@ -15,6 +15,7 @@ import com.google.api.client.json.jackson2.JacksonFactory;
 import com.google.api.services.youtube.model.Video;
 import com.google.api.services.youtube.model.VideoSnippet;
 import com.google.api.services.youtube.model.VideoStatus;
+import com.google.api.services.youtube.model.VideoListResponse;
 
 import com.google.api.client.http.InputStreamContent;
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
@@ -102,5 +103,19 @@ public class YoutubeHelper {
         }
 
         return response.getId();
+    }
+
+    public static Video getVideo(Youtube service, int videoId) {
+        Video.List videoRequest = service.videos().list("");
+        videoRequest.setId(videoId);
+
+        VideoListResponse res = videoRequest.execute();
+        List<Video> allVideos = res.getItems();
+
+        if (allVideos == null || allVideos.isEmpty()) {
+            return null;
+        }
+
+        return allVideos.get(0);
     }
 }
