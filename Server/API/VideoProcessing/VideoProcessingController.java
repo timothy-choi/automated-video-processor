@@ -22,6 +22,8 @@ import java.nio.file.StandardCopyOption;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.util.MimeTypeUtils;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 
 @RestController
 public class VideoProcessingController {
@@ -364,6 +366,19 @@ public class VideoProcessingController {
             videoProcessObj.replaceAnimation(index, newAnimation);
 
             _videoProcessingRepository.save(videoProcessObj);
+
+            return ResponseEntity.ok();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PostMapping("/messageQueue")
+    public ResponseEntity addVideoProcessingToMQ(@RequestBody Map reqInfo) {
+        try {
+            ObjectMapper objMapper = new ObjectMapper();
+            String msg = objMapper.writeValueAsString(reqInfo);
+            Producer.sendMessage(reqInfo.get("routingKey"), msg);
 
             return ResponseEntity.ok();
         } catch (Exception e) {

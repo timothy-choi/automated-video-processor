@@ -1,6 +1,8 @@
 package api.VideoAccounts;
 
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -25,6 +27,8 @@ import org.springframework.http.HttpStatus;
 import com.amazonaws.services.s3.model.S3Object;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpHeaders;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @RestController
 public class VideoAccountsController {
@@ -221,6 +225,19 @@ public class VideoAccountsController {
             Video foundVideo = YoutubeHelper.getVideo(service, videoId);
 
             return ResponseEntity.ok(foundVideo);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PostMapping("/youtube/messageQueue")
+    public ResponseEntity addVideoProcessingToMQ(@RequestBody Map reqInfo) {
+        try {
+            ObjectMapper objMapper = new ObjectMapper();
+            String msg = objMapper.writeValueAsString(reqInfo);
+            Producer.sendMessage(reqInfo.get("routingKey"), msg);
+
+            return ResponseEntity.ok();
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
