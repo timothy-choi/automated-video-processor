@@ -8,7 +8,9 @@ import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import com.google.api.services.drive.Drive;
 
+import GoogleDrive; 
 import api.VideoAccounts.PrimaryKey;
 import api.videoAccounts.VideoAccounts;
 import api.videoProcessing.VideoAccountsRepository;
@@ -229,6 +231,26 @@ public class VideoAccountsController {
             return ResponseEntity.notFound().build();
         }
     }
+
+     @PostMapping("/videoAccounts/drive")
+     public ResponseEntity uploadVideoToDrive(@RequestBody Map reqInfo) {
+        try {
+             AuthorizationCodeFlow flow = UserAuth.createAuthCodeFlow(reqInfo.get("scopes"));
+
+            Credential userCredential = UserAuth.getCredential(flow, reqInfo.get("id"));
+
+            Drive uploadVid = DriveHelper.getService(userCredential);
+
+            bool videoStatus = DriveHelper.uploadVideo(uploadVid, reqInfo.get("videoFilename"));
+
+            if (videoStatus) {
+                return ResponseEntity.ok();
+            }
+            return ResponseEntity.notFound().build();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+     }
 
     @PostMapping("/youtube/messageQueue")
     public ResponseEntity addVideoProcessingToMQ(@RequestBody Map reqInfo) {
