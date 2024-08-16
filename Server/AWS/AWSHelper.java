@@ -1,5 +1,13 @@
 package AWS;
 
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.List;
+
+import javax.annotation.Resource;
+
 import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3Client;
@@ -70,6 +78,26 @@ public class AWSHelper {
         }
         catch (AmazonS3Exception e) {
             throw new Exception("Object doesn't exist");
+        }
+    }
+    
+    public static Resource downloadLargeFile(String bucketName, String key, File destinationFile) {
+        GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+                .bucket(bucketName)
+                .key(key)
+                .build();
+
+        try (ResponseInputStream<GetObjectResponse> responseInputStream = s3Client.getObject(getObjectRequest);
+             OutputStream outputStream = new BufferedOutputStream(new FileOutputStream(destinationFile))) {
+
+            byte[] buffer = new byte[8 * 1024]; // 8KB buffer
+            int bytesRead;
+            while ((bytesRead = responseInputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, bytesRead);
+            }
+            return new FileSystemResource(destinationFile);
+        } catch (IOException e) {
+            return null;
         }
     }
 
