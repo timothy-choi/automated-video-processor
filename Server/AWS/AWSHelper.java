@@ -2,8 +2,10 @@ package AWS;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 import javax.annotation.Resource;
@@ -102,6 +104,70 @@ public class AWSHelper {
     }
 
     
+public static int uploadLargeVideoFile(String bucketName, String keyName, File videoFile) {
+        final long partSize = 5 * 1024 * 1024; // 5 MB
 
+        try {
+            CreateMultipartUploadRequest createMultipartUploadRequest = CreateMultipartUploadRequest.builder()
+                                                                                                    .bucket(bucketName)
+                                                                                                    .key(keyName)
+                                                                                                    .build();
+            CreateMultipartUploadResponse createMultipartUploadResponse = s3Client.createMultipartUpload(createMultipartUploadRequest);
+            String uploadId = createMultipartUploadResponse.uploadId();
+
+            
+            List<CompletedPart> completedParts = new ArrayList<>();
+            long fileLength = videoFile.length();
+            try (FileInputStream inputStream = new FileInputStream(videoFile)) {
+                byte[] buffer = new byte[(int) partSize];
+                int bytesRead;
+                int partNumber = 1;
+
+                while ((bytesRead = inputStream.read(buffer)) != -1) {
+                    
+                    try (FileInputStream partStream = new FileInputStream(videoFile)) {
+                        partStream.skip(partSize * (partNumber - 1));
+
+                        
+                        long partSizeToUpload = Math.min(partSize, fileLength - partSize * (partNumber - 1));
+
+                        
+                        UploadPartRequest uploadPartRequest = UploadPartRequest.builder()
+                                                                               .bucket(bucketName)
+                                                                               .key(keyName)
+                                                                               .uploadId(uploadId)
+                                                                               .partNumber(partNumber)
+                                                                               .build();
+
+                        UploadPartResponse uploadPartResponse = s3Client.uploadPart(uploadPartRequest,
+                                RequestBody.fromInputStream(partStream, partSizeToUpload));
+                        completedParts.add(CompletedPart.builder()
+                                                        .partNumber(partNumber)
+                                                        .eTag(uploadPartResponse.eTag())
+                                                        .build());
+
+                        System.out.println("Uploaded part " + partNumber + " of " + keyName);
+                        partNumber++;
+                    }
+                }
+            }
+
+            
+            CompleteMultipartUploadRequest completeMultipartUploadRequest = CompleteMultipartUploadRequest.builder()
+                                                                                                          .bucket(bucketName)
+                                                                                                          .key(keyName)
+                                                                                                          .uploadId(uploadId)
+                                                                                                          .multipartUpload(m -> m.parts(completedParts))
+                                                                                                          .build();
+
+            s3Client.completeMultipartUpload(completeMultipartUploadRequest);
+            System.out.println("Large video file uploaded successfully: " + keyName);
+
+            return 0;
+
+        } catch (S3Exception | IOException e) {
+            return 1;
+        }
+    }
     
 }
