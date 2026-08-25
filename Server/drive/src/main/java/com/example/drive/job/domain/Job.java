@@ -97,4 +97,45 @@ public class Job {
 	public List<Operation> getOperations() {
 		return Collections.unmodifiableList(operations);
 	}
+
+	public void markRunningIfQueued(Instant now) {
+		if (status == JobStatus.QUEUED) {
+			status = JobStatus.RUNNING;
+			updatedAt = now;
+		}
+	}
+
+	public void refreshStatusFromOperations(Instant now) {
+		boolean anyFailed = false;
+		boolean anyRunning = false;
+		boolean anyQueued = false;
+		boolean anyCompleted = false;
+		for (Operation operation : operations) {
+			switch (operation.getStatus()) {
+				case FAILED -> anyFailed = true;
+				case RUNNING -> anyRunning = true;
+				case QUEUED -> anyQueued = true;
+				case COMPLETED -> anyCompleted = true;
+				case CANCELLED -> {
+				}
+			}
+		}
+
+		JobStatus next;
+		if (anyFailed) {
+			next = JobStatus.FAILED;
+		}
+		else if (!anyQueued && !anyRunning && anyCompleted) {
+			next = JobStatus.COMPLETED;
+		}
+		else if (anyRunning || anyCompleted) {
+			next = JobStatus.RUNNING;
+		}
+		else {
+			next = JobStatus.QUEUED;
+		}
+
+		status = next;
+		updatedAt = now;
+	}
 }
