@@ -13,8 +13,10 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import com.example.drive.job.IllegalOperationStateException;
 import com.example.drive.job.InvalidJobRequestException;
 import com.example.drive.job.JobNotFoundException;
+import com.example.drive.job.OperationNotFoundException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -28,6 +30,16 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(JobNotFoundException.class)
 	public ResponseEntity<ApiError> handleJobNotFound(JobNotFoundException ex) {
 		return respond(HttpStatus.NOT_FOUND, "JOB_NOT_FOUND", ex.getMessage());
+	}
+
+	@ExceptionHandler(OperationNotFoundException.class)
+	public ResponseEntity<ApiError> handleOperationNotFound(OperationNotFoundException ex) {
+		return respond(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND", ex.getMessage());
+	}
+
+	@ExceptionHandler(IllegalOperationStateException.class)
+	public ResponseEntity<ApiError> handleIllegalOperationState(IllegalOperationStateException ex) {
+		return respond(HttpStatus.CONFLICT, "INVALID_OPERATION_STATE", ex.getMessage());
 	}
 
 	@ExceptionHandler(InvalidJobRequestException.class)

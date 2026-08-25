@@ -1,7 +1,13 @@
 package com.example.drive.job.domain;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
+
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+import com.example.drive.job.IllegalOperationStateException;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -45,6 +51,22 @@ public class Operation {
 	@Column(name = "updated_at", nullable = false)
 	private Instant updatedAt;
 
+	@Column(name = "started_at")
+	private Instant startedAt;
+
+	@Column(name = "completed_at")
+	private Instant completedAt;
+
+	@Column(name = "actual_runtime_ms")
+	private Long actualRuntimeMs;
+
+	@Column(name = "failure_reason")
+	private String failureReason;
+
+	@JdbcTypeCode(SqlTypes.JSON)
+	@Column(name = "result_json")
+	private Map<String, Object> resultJson;
+
 	protected Operation() {
 	}
 
@@ -87,5 +109,73 @@ public class Operation {
 
 	public Instant getUpdatedAt() {
 		return updatedAt;
+	}
+
+	public Instant getStartedAt() {
+		return startedAt;
+	}
+
+	public Instant getCompletedAt() {
+		return completedAt;
+	}
+
+	public Long getActualRuntimeMs() {
+		return actualRuntimeMs;
+	}
+
+	public String getFailureReason() {
+		return failureReason;
+	}
+
+	public Map<String, Object> getResultJson() {
+		return resultJson;
+	}
+
+	public void markRunning(Instant now) {
+		if (status != OperationStatus.QUEUED) {
+			throw new IllegalOperationStateException(
+					id,
+					"Operation " + id + " cannot move from " + status + " to RUNNING"
+			);
+		}
+		status = OperationStatus.RUNNING;
+		startedAt = now;
+		updatedAt = now;
+	}
+
+	public boolean markCompleted(Instant now, long runtimeMs, Map<String, Object> resultJson) {
+		if (status == OperationStatus.COMPLETED) {
+			return false;
+		}
+		if (status != OperationStatus.RUNNING) {
+			throw new IllegalOperationStateException(
+					id,
+					"Operation " + id + " cannot move from " + status + " to COMPLETED"
+			);
+		}
+		status = OperationStatus.COMPLETED;
+		completedAt = now;
+		actualRuntimeMs = runtimeMs;
+		this.resultJson = resultJson;
+		updatedAt = now;
+		return true;
+	}
+
+	public boolean markFailed(Instant now, Long runtimeMs, String reason) {
+		if (status == OperationStatus.FAILED) {
+			return false;
+		}
+		if (status != OperationStatus.RUNNING) {
+			throw new IllegalOperationStateException(
+					id,
+					"Operation " + id + " cannot move from " + status + " to FAILED"
+			);
+		}
+		status = OperationStatus.FAILED;
+		completedAt = now;
+		actualRuntimeMs = runtimeMs;
+		failureReason = reason;
+		updatedAt = now;
+		return true;
 	}
 }

@@ -4,26 +4,32 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-That later architecture (Go scheduler, RabbitMQ, FFmpeg workers, object storage, OpenTelemetry) is **not implemented yet**. This repository is currently at **Phase 2A**.
+That later architecture (Go scheduler, RabbitMQ, FFmpeg workers, object storage, OpenTelemetry) is **not implemented yet**. This repository is currently at **Phase 2B**.
 
-## Current status: Phase 2A — durable job API
+## Current status: Phase 2B — one Go worker, METADATA only
 
-The canonical application is the Maven/Spring Boot project at:
+The canonical Java application is the Maven/Spring Boot project at:
 
 ```text
 Server/drive
 ```
 
-It currently:
+A single Go worker lives at:
 
-- builds and runs automated tests
-- exposes `GET /health`
+```text
+worker/
+```
+
+Phase 2B currently:
+
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL
-- returns jobs in `QUEUED` without executing media work
+- lets one Go worker claim a queued `METADATA` operation over an internal HTTP API
+- runs **real ffprobe** against a local `file://` input
+- records completion or failure, including parsed metadata and runtime
 
-It does **not** schedule work, run FFmpeg, or talk to a message broker.
+It does **not** schedule across workers, run other operation types, use RabbitMQ, or talk to object storage.
 
-Stack: **Java 21**, **Spring Boot 4.1.1**, **Maven**, **PostgreSQL**, **Flyway**, **Spring Data JPA**. The Maven `artifactId` remains `drive`.
+Stack: **Java 21**, **Spring Boot 4.1.1**, **Maven**, **PostgreSQL**, **Flyway**, **Spring Data JPA**, **Go**, **ffprobe**. The Maven `artifactId` remains `drive`.
 
 ## Build
 
@@ -33,7 +39,7 @@ From `Server/drive`:
 ./mvnw clean test
 ```
 
-Requires **Java 21+**. Automated tests use **Testcontainers** and therefore need a running **Docker daemon**. The Maven wrapper (`./mvnw`) is preferred over a system Maven install.
+Requires **Java 21+**. Automated Java tests use **Testcontainers** and therefore need a running **Docker daemon**. Go tests (`cd worker && go test ./...`) do not need Docker. The Maven wrapper (`./mvnw`) is preferred over a system Maven install.
 
 ## Run tests
 
@@ -42,7 +48,13 @@ cd Server/drive
 ./mvnw clean test
 ```
 
-Tests start a temporary PostgreSQL container. They do **not** require the Compose database.
+```bash
+cd worker
+go test ./...
+go vet ./...
+```
+
+Java tests start a temporary PostgreSQL container. They do **not** require the Compose database. One Go test generates a tiny clip with FFmpeg when `ffmpeg`/`ffprobe` are on `PATH`; it is skipped if they are not installed. GitHub Actions does **not** install FFmpeg.
 
 ## Local PostgreSQL
 
@@ -52,7 +64,7 @@ From the repository root:
 docker compose up -d postgres
 ```
 
-This starts PostgreSQL 16 on port **5432** with database/user/password `media_platform`. Those values are **local development defaults**, not production secrets. If port 5432 is already in use, set `POSTGRES_PORT`:
+This starts PostgreSQL 16 on port **5432** with database/user/password `media_platform`. Those values are **local development defaults**, not production secrets. If port 5432 is already in use (including a local Postgres install), set `POSTGRES_PORT`:
 
 ```bash
 POSTGRES_PORT=55432 docker compose up -d postgres
@@ -121,9 +133,55 @@ curl -sS http://localhost:8080/jobs/<job-id>/operations
 
 `priority` defaults to `NORMAL` when omitted. `deadline` is optional. Unknown jobs return **404**. Invalid bodies (missing `inputUri`, empty `operations`, unknown operation type, past deadline) return **400**.
 
-`inputUri` is stored as a URI string. The service does **not** contact S3 or verify that the object exists.
+`inputUri` is stored as a URI string. The public API does **not** contact S3 or verify that the object exists. **Phase 2B claims and executes `file://` URIs only.** A `METADATA` job with `s3://` remains queued; the worker will not pick it up.
 
-Supported operation types: `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`, `TRANSCODE_4K_TO_1080P`, `H264_TO_AV1`.
+Supported operation types for submission: `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`, `TRANSCODE_4K_TO_1080P`, `H264_TO_AV1`.
+
+**Only `METADATA` is executed in Phase 2B.** Other types remain `QUEUED`. A job is not `COMPLETED` while those remain.
+
+## METADATA worker (Phase 2B)
+
+Requirements: Java 21, Docker (PostgreSQL), Go, FFmpeg/ffprobe.
+
+Generate a tiny local clip (do not commit large binaries):
+
+```bash
+ffmpeg -y -f lavfi -i testsrc=duration=2:size=320x240:rate=30 -pix_fmt yuv420p /tmp/sample.mp4
+```
+
+Start PostgreSQL and the control service as above, then submit:
+
+```bash
+curl -sS -X POST http://localhost:8080/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "inputUri": "file:///tmp/sample.mp4",
+    "operations": [{"type": "METADATA"}]
+  }'
+```
+
+The job is `QUEUED` until the worker claims it.
+
+Start the worker from the repository root:
+
+```bash
+cd worker
+CONTROL_SERVICE_URL=http://localhost:8080 POLL_INTERVAL=1s go run ./cmd/worker
+```
+
+`FFPROBE_PATH` defaults to `ffprobe`. Stop the worker with SIGINT/SIGTERM: it stops polling and finishes or reports the in-flight operation.
+
+Then:
+
+```bash
+curl -sS http://localhost:8080/jobs/<job-id>
+```
+
+Successful execution: operation and job become `COMPLETED`, with parsed metadata (`durationSeconds`, `formatName`, `videoCodec`, `width`, `height`, …) and `actualRuntimeMs`.
+
+A missing file (`file:///does/not/exist.mp4`) becomes operation `FAILED` and job `FAILED`, with a persisted `failureReason`.
+
+Internal worker endpoints (`POST /internal/operations/claim`, `.../complete`, `.../fail`) are for **local/trusted development only**. There is no authentication yet.
 
 ## What is inactive
 
@@ -170,7 +228,7 @@ Then:
 
 Do not routinely push feature work directly to `main`.
 
-Pushes to non-`main` branches run **Branch CI**. Pull requests to `main` and pushes/merges to `main` run **PR / Main CI**. Both execute `./mvnw clean test` from `Server/drive` with Java 21.
+Pushes to non-`main` branches run **Branch CI**. Pull requests to `main` and pushes/merges to `main` run **PR / Main CI**. Java CI executes `./mvnw clean test` from `Server/drive`. A second job, **Go tests**, runs `go vet` and `go test` in `worker/`. The existing required-check name **Java tests** is unchanged. After **Go tests** has run once on a pull request, add it as a required check as well.
 
 These workflows are a **build/test gate**. They do not deploy anything. Deployment will be designed later.
 
@@ -178,4 +236,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-Distributed execution, scheduling policies, worker registration, RabbitMQ dispatch, FFmpeg workers, and observability belong to later phases. Do not assume those features exist because the long-term design mentions them.
+Distributed execution, scheduling policies, worker registration, RabbitMQ dispatch, additional FFmpeg operations, object storage, and observability belong to later phases. Do not assume those features exist because the long-term design mentions them.

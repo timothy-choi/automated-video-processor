@@ -37,10 +37,10 @@ Do not push feature work directly to `main`. Open a pull request instead.
 
 | File | Workflow name | When it runs | What it validates |
 | --- | --- | --- | --- |
-| `.github/workflows/branch-ci.yml` | **Branch CI** | Pushes to every branch except `main` | Java 21 + `./mvnw clean test` in `Server/drive` |
-| `.github/workflows/main-ci.yml` | **PR / Main CI** | Pull requests targeting `main`, and pushes/merges to `main` | The same Maven command |
+| `.github/workflows/branch-ci.yml` | **Branch CI** | Pushes to every branch except `main` | **Java tests**: Java 21 + `./mvnw clean test` in `Server/drive`. **Go tests**: `go vet` / `go test` in `worker/` |
+| `.github/workflows/main-ci.yml` | **PR / Main CI** | Pull requests targeting `main`, and pushes/merges to `main` | The same Java and Go jobs |
 
-Both jobs are named **Java tests**. That name is the status check to require on `main`.
+The Java job is still named **Java tests**. That remains the existing required status check on `main`. The new job is named **Go tests**. After it has appeared on a pull request, add it as a required check too. Do not rename **Java tests**; that would break existing branch protection.
 
 `main` pushes do **not** run Branch CI. They run **PR / Main CI** so merged code is validated again.
 
@@ -54,7 +54,16 @@ From `Server/drive`:
 
 CI uses `--batch-mode` and `--no-transfer-progress` so Maven does not prompt and logs stay readable. The lifecycle is still `clean test`.
 
-Phase 2A tests use Testcontainers PostgreSQL. GitHub-hosted `ubuntu-latest` runners already provide Docker, so the existing workflows were not changed. A local `./mvnw clean test` also needs a running Docker daemon.
+Java tests use Testcontainers PostgreSQL. GitHub-hosted `ubuntu-latest` runners already provide Docker. A local `./mvnw clean test` also needs a running Docker daemon.
+
+From `worker/`:
+
+```bash
+go vet ./...
+go test ./...
+```
+
+CI does not install FFmpeg. The Go integration test that generates a tiny clip is skipped when `ffmpeg`/`ffprobe` are missing.
 
 `verify` / `package` is not used: the current POM has no extra verification plugins beyond Flyway/JPA, so `clean test` already compiles the application, applies test schema via Flyway against Testcontainers, and runs all tests.
 
@@ -103,7 +112,7 @@ Those are repository **branch protection** (or ruleset) settings and must be ena
 In the GitHub repository settings, protect `main` with the following intent:
 
 1. **Require a pull request before merging.** Feature work should not land by direct push.
-2. **Require status checks to pass before merging.** After the first pull request has run CI, select the **Java tests** check from the **PR / Main CI** workflow. The UI may show it as `Java tests` or `PR / Main CI / Java tests`.
+2. **Require status checks to pass before merging.** After the first pull request has run CI, select the **Java tests** check from the **PR / Main CI** workflow. The UI may show it as `Java tests` or `PR / Main CI / Java tests`. After **Go tests** has run at least once, require that check as well.
 3. **Do not allow force pushes** to `main`.
 4. **Do not allow deletion** of `main`.
 5. **Require conversation resolution before merging**, so review comments are not skipped.
@@ -121,4 +130,4 @@ Until those settings are enabled, someone with write access can still push direc
 | No secrets | Credentials only when a real deploy exists |
 | `contents: read` only | Write/deploy permissions only when needed |
 
-Do not add PostgreSQL, RabbitMQ, FFmpeg, Go, Docker, or cloud services to CI until those components exist in the active build.
+Do not add RabbitMQ, FFmpeg installation, or cloud services to CI until those components are required by the default test suite. Go unit tests are in CI; real ffprobe execution is skipped on runners without FFmpeg.
