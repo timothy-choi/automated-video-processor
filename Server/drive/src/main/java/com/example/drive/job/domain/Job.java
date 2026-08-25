@@ -106,6 +106,8 @@ public class Job {
 	}
 
 	public void refreshStatusFromOperations(Instant now) {
+		// Callers must hold a row lock on this Job so concurrent terminal
+		// transitions serialize and recompute from the same committed operation set.
 		boolean anyFailed = false;
 		boolean anyRunning = false;
 		boolean anyAssigned = false;

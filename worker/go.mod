@@ -10,6 +10,7 @@ require (
 	github.com/aws/smithy-go v1.27.9
 	github.com/rabbitmq/amqp091-go v1.14.0
 	github.com/testcontainers/testcontainers-go/modules/rabbitmq v0.44.0
+	golang.org/x/sys v0.47.0
 )
 
 require (
@@ -75,6 +76,5 @@ require (
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

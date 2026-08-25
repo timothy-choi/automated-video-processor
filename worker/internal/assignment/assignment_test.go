@@ -30,7 +30,7 @@ func TestParseMalformedJSON(t *testing.T) {
 	}
 }
 
-func TestParseRejectsBadVersionAndType(t *testing.T) {
+func TestParseRejectsBadVersion(t *testing.T) {
 	if _, err := Parse([]byte(`{
 		"schemaVersion": 2,
 		"operationId": "11111111-1111-1111-1111-111111111111",
@@ -41,15 +41,22 @@ func TestParseRejectsBadVersionAndType(t *testing.T) {
 	}`)); err == nil {
 		t.Fatal("expected schemaVersion error")
 	}
-	if _, err := Parse([]byte(`{
+}
+
+func TestParseAcceptsUnknownOperationType(t *testing.T) {
+	got, err := Parse([]byte(`{
 		"schemaVersion": 1,
 		"operationId": "11111111-1111-1111-1111-111111111111",
 		"jobId": "22222222-2222-2222-2222-222222222222",
 		"type": "TRANSCODE_1080P",
 		"inputUri": "s3://media-input/sample.mp4",
 		"dispatchedAt": "2026-08-25T02:00:00Z"
-	}`)); err == nil {
-		t.Fatal("expected unsupported type error")
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != "TRANSCODE_1080P" {
+		t.Fatalf("type=%s", got.Type)
 	}
 }
 

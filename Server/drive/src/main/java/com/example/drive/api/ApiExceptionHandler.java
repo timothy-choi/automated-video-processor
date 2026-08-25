@@ -18,6 +18,8 @@ import com.example.drive.job.IllegalOperationStateException;
 import com.example.drive.job.InvalidJobRequestException;
 import com.example.drive.job.JobNotFoundException;
 import com.example.drive.job.OperationNotFoundException;
+import com.example.drive.worker.InvalidRegistrationException;
+import com.example.drive.worker.WorkerNotFoundException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -41,6 +43,16 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(HttpClaimDisabledException.class)
 	public ResponseEntity<ApiError> handleHttpClaimDisabled(HttpClaimDisabledException ex) {
 		return respond(HttpStatus.NOT_FOUND, "CLAIM_DISABLED", ex.getMessage());
+	}
+
+	@ExceptionHandler(WorkerNotFoundException.class)
+	public ResponseEntity<ApiError> handleWorkerNotFound(WorkerNotFoundException ex) {
+		return respond(HttpStatus.NOT_FOUND, "WORKER_NOT_FOUND", ex.getMessage());
+	}
+
+	@ExceptionHandler(InvalidRegistrationException.class)
+	public ResponseEntity<ApiError> handleInvalidRegistration(InvalidRegistrationException ex) {
+		return respond(HttpStatus.BAD_REQUEST, ex.getCode(), ex.getMessage());
 	}
 
 	@ExceptionHandler(IllegalOperationStateException.class)

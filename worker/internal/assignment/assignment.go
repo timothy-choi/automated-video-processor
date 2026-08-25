@@ -32,11 +32,10 @@ func Parse(body []byte) (Assignment, error) {
 	if strings.TrimSpace(assignment.JobID) == "" {
 		return Assignment{}, fmt.Errorf("jobId is required")
 	}
-	switch assignment.Type {
-	case "METADATA", "THUMBNAIL":
-	default:
-		return Assignment{}, fmt.Errorf("unsupported operation type %s", assignment.Type)
+	if strings.TrimSpace(assignment.Type) == "" {
+		return Assignment{}, fmt.Errorf("type is required")
 	}
+	assignment.Type = strings.TrimSpace(assignment.Type)
 	if strings.TrimSpace(assignment.InputURI) == "" {
 		return Assignment{}, fmt.Errorf("inputUri is required")
 	}

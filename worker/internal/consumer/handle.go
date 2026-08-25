@@ -41,9 +41,23 @@ type Control interface {
 type Executor func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error)
 
 func Handle(ctx context.Context, workerID string, body []byte, ctrl Control, exec Executor) Decision {
+	return HandleWithCapabilities(ctx, workerID, nil, body, ctrl, exec)
+}
+
+func HandleWithCapabilities(ctx context.Context, workerID string, supported []string, body []byte, ctrl Control, exec Executor) Decision {
 	parsed, err := assignment.Parse(body)
 	if err != nil {
 		log.Printf("worker=%s event=malformed_message err=%v decision=%s", workerID, err, NackDrop)
+		return NackDrop
+	}
+	if supported == nil {
+		supported = []string{"METADATA", "THUMBNAIL"}
+	}
+	if !supportsOperation(supported, parsed.Type) {
+		log.Printf(
+			"worker=%s job=%s operation=%s type=%s event=capability_mismatch decision=%s",
+			workerID, parsed.JobID, parsed.OperationID, parsed.Type, NackDrop,
+		)
 		return NackDrop
 	}
 	log.Printf(
@@ -153,4 +167,13 @@ func sleep(ctx context.Context, delay time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
+}
+
+func supportsOperation(supported []string, operationType string) bool {
+	for _, op := range supported {
+		if op == operationType {
+			return true
+		}
+	}
+	return false
 }
