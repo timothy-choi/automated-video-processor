@@ -7,7 +7,6 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
-	"time"
 
 	"github.com/timothy-choi/automated-video-processor/worker/internal/storage"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/worker"
@@ -15,8 +14,10 @@ import (
 
 func main() {
 	cfg := worker.Config{
+		WorkerID:          envOr("WORKER_ID", defaultWorkerID()),
 		ControlServiceURL: envOr("CONTROL_SERVICE_URL", "http://localhost:8080"),
-		PollInterval:      durationEnv("POLL_INTERVAL", time.Second),
+		RabbitMQURL:       envOr("RABBITMQ_URL", defaultRabbitURL()),
+		Prefetch:          intEnv("PREFETCH", 1),
 		FfprobePath:       envOr("FFPROBE_PATH", "ffprobe"),
 		FfmpegPath:        envOr("FFMPEG_PATH", "ffmpeg"),
 		OutputBucket:      envOr("OUTPUT_BUCKET", "media-output"),
@@ -36,12 +37,32 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("object store endpoint=%s region=%s pathStyle=%t outputBucket=%s",
-		cfg.ObjectStore.Endpoint, cfg.ObjectStore.Region, cfg.ObjectStore.ForcePathStyle, cfg.OutputBucket)
+	log.Printf("worker=%s object store endpoint=%s region=%s pathStyle=%t outputBucket=%s",
+		cfg.WorkerID, cfg.ObjectStore.Endpoint, cfg.ObjectStore.Region, cfg.ObjectStore.ForcePathStyle, cfg.OutputBucket)
 
 	if err := worker.New(cfg, store).Run(ctx); err != nil && err != context.Canceled {
 		log.Fatal(err)
 	}
+}
+
+func defaultWorkerID() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		return "worker"
+	}
+	return host
+}
+
+func defaultRabbitURL() string {
+	host := envOr("RABBITMQ_HOST", "localhost")
+	port := envOr("RABBITMQ_PORT", "5672")
+	user := envOr("RABBITMQ_USERNAME", "media_platform")
+	pass := envOr("RABBITMQ_PASSWORD", "media_platform")
+	vhost := envOr("RABBITMQ_VHOST", "/")
+	if vhost == "/" {
+		return "amqp://" + user + ":" + pass + "@" + host + ":" + port + "/"
+	}
+	return "amqp://" + user + ":" + pass + "@" + host + ":" + port + "/" + vhost
 }
 
 func envOr(key, fallback string) string {
@@ -51,14 +72,14 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-func durationEnv(key string, fallback time.Duration) time.Duration {
+func intEnv(key string, fallback int) int {
 	raw := os.Getenv(key)
 	if raw == "" {
 		return fallback
 	}
-	parsed, err := time.ParseDuration(raw)
-	if err != nil {
-		log.Fatalf("invalid %s: %v", key, err)
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		log.Fatalf("invalid %s: %s", key, raw)
 	}
 	return parsed
 }

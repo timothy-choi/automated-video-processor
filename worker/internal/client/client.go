@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,31 @@ import (
 
 	"github.com/timothy-choi/automated-video-processor/worker/internal/model"
 )
+
+type StatusError struct {
+	Status int
+	Body   string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("control service status %d: %s", e.Status, truncate(e.Body, 500))
+}
+
+func IsUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var statusErr *StatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.Status >= 500 || statusErr.Status == 0
+	}
+	return true
+}
+
+func IsConflict(err error) bool {
+	var statusErr *StatusError
+	return errors.As(err, &statusErr) && statusErr.Status == http.StatusConflict
+}
 
 type Client struct {
 	baseURL    string
@@ -60,6 +86,36 @@ func (c *Client) Claim(ctx context.Context) (*model.ClaimedOperation, bool, erro
 	return &claimed, true, nil
 }
 
+func (c *Client) Start(ctx context.Context, operationID string) (model.StartResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/internal/operations/"+operationID+"/start", nil)
+	if err != nil {
+		return model.StartResponse{}, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return model.StartResponse{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return model.StartResponse{}, err
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return model.StartResponse{}, &StatusError{Status: resp.StatusCode, Body: string(body)}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return model.StartResponse{}, &StatusError{Status: resp.StatusCode, Body: string(body)}
+	}
+	var started model.StartResponse
+	if err := json.Unmarshal(body, &started); err != nil {
+		return model.StartResponse{}, fmt.Errorf("start response is invalid JSON: %w", err)
+	}
+	if started.Outcome == "" {
+		return model.StartResponse{}, fmt.Errorf("start response is missing outcome")
+	}
+	return started, nil
+}
+
 func (c *Client) Complete(ctx context.Context, operationID string, request model.CompleteRequest) error {
 	payload, err := json.Marshal(request)
 	if err != nil {
@@ -96,7 +152,7 @@ func (c *Client) postJSON(ctx context.Context, path string, payload []byte) erro
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("request %s failed: status %d: %s", path, resp.StatusCode, truncate(string(body), 500))
+		return &StatusError{Status: resp.StatusCode, Body: string(body)}
 	}
 	return nil
 }

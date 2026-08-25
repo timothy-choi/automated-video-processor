@@ -131,8 +131,19 @@ public class Operation {
 		return resultJson;
 	}
 
-	public void markRunning(Instant now) {
+	public void markAssigned(Instant now) {
 		if (status != OperationStatus.QUEUED) {
+			throw new IllegalOperationStateException(
+					id,
+					"Operation " + id + " cannot move from " + status + " to ASSIGNED"
+			);
+		}
+		status = OperationStatus.ASSIGNED;
+		updatedAt = now;
+	}
+
+	public void markRunning(Instant now) {
+		if (status != OperationStatus.QUEUED && status != OperationStatus.ASSIGNED) {
 			throw new IllegalOperationStateException(
 					id,
 					"Operation " + id + " cannot move from " + status + " to RUNNING"

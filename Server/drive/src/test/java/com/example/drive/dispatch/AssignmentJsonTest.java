@@ -1,0 +1,37 @@
+package com.example.drive.dispatch;
+
+import java.time.Instant;
+import java.util.UUID;
+
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class AssignmentJsonTest {
+
+	@Test
+	void writesVersionedEnvelopeWithoutJpaFields() {
+		UUID operationId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+		UUID jobId = UUID.fromString("22222222-2222-2222-2222-222222222222");
+		Instant dispatchedAt = Instant.parse("2026-08-25T02:00:00Z");
+
+		String json = AssignmentJson.v1(operationId, jobId, "METADATA", "s3://media-input/sample.mp4", dispatchedAt);
+
+		assertThat(json).isEqualTo(
+				"{\"schemaVersion\":1,\"operationId\":\"11111111-1111-1111-1111-111111111111\",\"jobId\":\"22222222-2222-2222-2222-222222222222\",\"type\":\"METADATA\",\"inputUri\":\"s3://media-input/sample.mp4\",\"dispatchedAt\":\"2026-08-25T02:00:00Z\"}"
+		);
+		assertThat(json).doesNotContain("hibernate").doesNotContain("password");
+	}
+
+	@Test
+	void escapesQuotesInInputUri() {
+		String json = AssignmentJson.v1(
+				UUID.fromString("11111111-1111-1111-1111-111111111111"),
+				UUID.fromString("22222222-2222-2222-2222-222222222222"),
+				"THUMBNAIL",
+				"s3://media-input/weird\"name.mp4",
+				Instant.parse("2026-08-25T02:00:00Z")
+		);
+		assertThat(json).contains("\"inputUri\":\"s3://media-input/weird\\\"name.mp4\"");
+	}
+}

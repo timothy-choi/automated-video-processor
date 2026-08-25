@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-That later architecture (Go scheduler, RabbitMQ, additional FFmpeg workers, OpenTelemetry) is **not implemented yet**. This repository is currently at **Phase 2C**.
+That later architecture (Go scheduler policies, worker registration, OpenTelemetry) is **not implemented yet**. This repository is currently at **Phase 3A**.
 
-## Current status: Phase 2C — MinIO + METADATA + THUMBNAIL
+## Current status: Phase 3A — RabbitMQ dispatch + multiple identical workers
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -14,24 +14,57 @@ The canonical Java application is the Maven/Spring Boot project at:
 Server/drive
 ```
 
-A single Go worker lives at:
+Identical Go workers live at:
 
 ```text
 worker/
 ```
 
-Phase 2C currently:
+The assignment JSON contract lives at:
 
-- accepts job submissions and persists `Job` + `Operation` records in PostgreSQL
-- stores media blobs in **MinIO** (S3-compatible), not in PostgreSQL
-- lets one Go worker claim queued `METADATA` or `THUMBNAIL` operations over an internal HTTP API
+```text
+contracts/operation-assignment.v1.schema.json
+```
+
+Phase 3A currently:
+
+- accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write)
+- a **Java dispatcher** (isolated from the public API) selects eligible `QUEUED` `METADATA`/`THUMBNAIL` operations, marks them `ASSIGNED`, and outbox-publishes assignment messages to RabbitMQ
+- multiple Go workers compete as consumers on **one shared queue**
+- workers call `POST /internal/operations/{id}/start` so PostgreSQL stays authoritative about whether work may execute
 - downloads `s3://` inputs (and still accepts `file://`)
 - runs **real ffprobe** and **real FFmpeg**
 - uploads JPEG thumbnails to `s3://media-output/...` and persists `Artifact` metadata
 
-It does **not** schedule across workers, use RabbitMQ, or execute transcode/audio operations.
+RabbitMQ competing consumers are **baseline work distribution**, not the adaptive scheduler. Workers are treated as equivalent. There are no capabilities, heartbeats, leases, or worker-failure reassignment yet.
 
-Stack: **Java 21**, **Spring Boot 4.1.1**, **Maven**, **PostgreSQL**, **Flyway**, **Spring Data JPA**, **Go**, **ffprobe/FFmpeg**, **MinIO**. The Maven `artifactId` remains `drive`.
+```text
+Client
+  |
+  v
+Java Control Service
+  |
+  v
+PostgreSQL  <--- start / complete / fail
+  ^
+  |
+  | outbox dispatcher
+  v
+RabbitMQ
+  |
+  +-------------+-------------+
+  |             |             |
+  v             v             v
+Worker A     Worker B     Worker C
+  |             |             |
+  +-------------+-------------+
+                |
+         ffprobe / FFmpeg
+                |
+              MinIO
+```
+
+Stack: **Java 21**, **Spring Boot 4.1.1**, **Maven**, **PostgreSQL**, **Flyway**, **Spring Data JPA**, **Spring AMQP**, **Go**, **amqp091-go**, **ffprobe/FFmpeg**, **MinIO**, **RabbitMQ**. The Maven `artifactId` remains `drive`.
 
 ## Build
 
@@ -56,14 +89,14 @@ go test ./...
 go vet ./...
 ```
 
-Java tests start a temporary PostgreSQL container. They do **not** require the Compose database or MinIO. Some Go tests generate a tiny clip with FFmpeg when `ffmpeg`/`ffprobe` are on `PATH`; they are skipped if those binaries are missing. GitHub Actions does **not** install FFmpeg or MinIO. Object-storage unit tests use an in-memory fake.
+Java tests start a temporary PostgreSQL container. Dispatcher tests also start RabbitMQ via Testcontainers. They do **not** require the Compose database, MinIO, or Compose RabbitMQ. Some Go tests generate a tiny clip with FFmpeg when `ffmpeg`/`ffprobe` are on `PATH`; they are skipped if those binaries are missing. GitHub Actions does **not** install FFmpeg or MinIO. Object-storage unit tests use an in-memory fake. Go broker tests start RabbitMQ via Testcontainers.
 
 ## Local infrastructure
 
 From the repository root:
 
 ```bash
-docker compose up -d postgres minio minio-init
+docker compose up -d postgres minio minio-init rabbitmq
 ```
 
 This starts:
@@ -71,15 +104,19 @@ This starts:
 - PostgreSQL 16 on port **5432** (database/user/password `media_platform`)
 - MinIO S3 API on port **9000** and console on **9001**
 - a one-shot `minio-init` container that creates buckets `media-input` and `media-output`
+- RabbitMQ 3.13 on port **5672** (AMQP) and management UI on **15672**
 
-Those database and MinIO values are **local development defaults**, not production secrets. MinIO console: [http://localhost:9001](http://localhost:9001). Login with `minioadmin` / `minioadmin` locally only.
+Those database, MinIO, and RabbitMQ values are **local development defaults**, not production secrets. MinIO console: [http://localhost:9001](http://localhost:9001) (`minioadmin` / `minioadmin`). RabbitMQ management: [http://localhost:15672](http://localhost:15672) (`media_platform` / `media_platform`).
 
 If host ports are already in use:
 
 ```bash
-POSTGRES_PORT=55432 MINIO_API_PORT=19000 MINIO_CONSOLE_PORT=19001 docker compose up -d postgres minio minio-init
+POSTGRES_PORT=55432 MINIO_API_PORT=19000 MINIO_CONSOLE_PORT=19001 \
+  RABBITMQ_AMQP_PORT=5673 RABBITMQ_MANAGEMENT_PORT=15673 \
+  docker compose up -d postgres minio minio-init rabbitmq
 DB_URL=jdbc:postgresql://localhost:55432/media_platform
 OBJECT_STORE_ENDPOINT=http://localhost:19000
+RABBITMQ_PORT=5673
 ```
 
 Override Postgres connection settings with:
@@ -93,7 +130,7 @@ DB_PASSWORD     default media_platform
 ## Start the application
 
 ```bash
-docker compose up -d postgres minio minio-init
+docker compose up -d postgres minio minio-init rabbitmq
 cd Server/drive
 ./mvnw spring-boot:run
 ```
@@ -118,7 +155,7 @@ Expected response:
 
 ## Job API
 
-Submit a job. Execution is not started; the job is stored as `QUEUED`.
+Submit a job. Execution is not started inside this request; the job is stored as `QUEUED`. An isolated dispatcher later assigns eligible operations.
 
 ```bash
 curl -sS -X POST http://localhost:8080/jobs \
@@ -145,15 +182,15 @@ curl -sS http://localhost:8080/jobs/<job-id>/artifacts
 
 `priority` defaults to `NORMAL` when omitted. `deadline` is optional. Unknown jobs return **404**. Invalid bodies (missing `inputUri`, empty `operations`, unknown operation type, past deadline) return **400**.
 
-`inputUri` is stored as a URI string. The public API does **not** contact S3 or verify that the object exists. **Phase 2C claims and executes `file://` and `s3://` for `METADATA` and `THUMBNAIL` only.** Other submitted types remain `QUEUED`. A job is not `COMPLETED` while those remain.
+`inputUri` is stored as a URI string. The public API does **not** contact S3 or verify that the object exists. **Phase 3A dispatches and executes `file://` and `s3://` for `METADATA` and `THUMBNAIL` only.** Other submitted types remain `QUEUED`. A job is not `COMPLETED` while those remain.
 
 Supported operation types for submission: `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`, `TRANSCODE_4K_TO_1080P`, `H264_TO_AV1`.
 
-**Only `METADATA` and `THUMBNAIL` are executed in Phase 2C.**
+**Only `METADATA` and `THUMBNAIL` are executed in Phase 3A.**
 
-## Worker (Phase 2C)
+## Workers (Phase 3A)
 
-Requirements: Java 21, Docker (PostgreSQL + MinIO), Go, FFmpeg/ffprobe.
+Requirements: Java 21, Docker (PostgreSQL + MinIO + RabbitMQ), Go, FFmpeg/ffprobe.
 
 Generate a tiny local clip (do not commit large binaries):
 
@@ -177,7 +214,7 @@ docker run --rm --network host -v /tmp/sample.mp4:/sample.mp4 minio/mc \
 
 Canonical object: `s3://media-input/sample.mp4`.
 
-Start PostgreSQL, MinIO, and the control service as above, then submit:
+Start PostgreSQL, MinIO, RabbitMQ, and the control service as above, then submit:
 
 ```bash
 curl -sS -X POST http://localhost:8080/jobs \
@@ -191,14 +228,29 @@ curl -sS -X POST http://localhost:8080/jobs \
   }'
 ```
 
-The job is `QUEUED` until the worker claims operations.
+The job is `QUEUED` until the dispatcher assigns operations (`ASSIGNED`), a worker starts one (`RUNNING`), and results are persisted (`COMPLETED` / `FAILED`).
 
-Start the worker:
+Start two or more identical workers:
 
 ```bash
 cd worker
+
+WORKER_ID=worker-a \
 CONTROL_SERVICE_URL=http://localhost:8080 \
-POLL_INTERVAL=1s \
+RABBITMQ_URL=amqp://media_platform:media_platform@localhost:5672/ \
+PREFETCH=1 \
+OBJECT_STORE_ENDPOINT=http://localhost:9000 \
+OBJECT_STORE_REGION=us-east-1 \
+OBJECT_STORE_ACCESS_KEY=minioadmin \
+OBJECT_STORE_SECRET_KEY=minioadmin \
+OBJECT_STORE_FORCE_PATH_STYLE=true \
+OUTPUT_BUCKET=media-output \
+go run ./cmd/worker
+
+WORKER_ID=worker-b \
+CONTROL_SERVICE_URL=http://localhost:8080 \
+RABBITMQ_URL=amqp://media_platform:media_platform@localhost:5672/ \
+PREFETCH=1 \
 OBJECT_STORE_ENDPOINT=http://localhost:9000 \
 OBJECT_STORE_REGION=us-east-1 \
 OBJECT_STORE_ACCESS_KEY=minioadmin \
@@ -208,7 +260,7 @@ OUTPUT_BUCKET=media-output \
 go run ./cmd/worker
 ```
 
-Those MinIO keys are local development defaults. `FFPROBE_PATH` defaults to `ffprobe`. `FFMPEG_PATH` defaults to `ffmpeg`. Stop the worker with SIGINT/SIGTERM: it stops polling and finishes or reports the in-flight operation.
+Those MinIO and RabbitMQ keys are local development defaults. `WORKER_ID` is for logs only; it is not a registry. `PREFETCH` defaults to `1`. `FFPROBE_PATH` defaults to `ffprobe`. `FFMPEG_PATH` defaults to `ffmpeg`. Stop a worker with SIGINT/SIGTERM: in-flight unacked messages are requeued by RabbitMQ.
 
 Then:
 
@@ -220,8 +272,10 @@ curl -sS http://localhost:8080/jobs/<job-id>/artifacts
 Successful execution:
 
 ```text
-QUEUED -> RUNNING -> COMPLETED
+QUEUED -> ASSIGNED -> RUNNING -> COMPLETED
 ```
+
+Observe worker logs for `worker=`, `job=`, `operation=`, `type=`, `event=received`, `event=execution_start`, `event=execution_completed` / `event=execution_failure`, and `event=ack` / `event=nack_requeue`.
 
 `METADATA` stores parsed probe JSON on the operation. `THUMBNAIL` extracts one JPEG frame (seek ~1s, falling back to the first frame on short clips) and uploads:
 
@@ -235,7 +289,20 @@ s3://media-output/jobs/<jobId>/operations/<operationId>/thumbnail.jpg
 
 A missing object (`s3://media-input/does-not-exist.mp4`) becomes operation `FAILED` and job `FAILED`, with a persisted `failureReason` that does not include credentials.
 
-Internal worker endpoints (`POST /internal/operations/claim`, `.../complete`, `.../fail`) are for **local/trusted development only**. There is no authentication yet.
+Duplicate RabbitMQ delivery cannot rerun completed (or already running) work: `POST /internal/operations/{id}/start` is a conditional `ASSIGNED -> RUNNING` transition. `ALREADY_RUNNING` / `ALREADY_TERMINAL` is acknowledged without executing media again.
+
+Internal worker endpoints (`POST /internal/operations/{id}/start`, `.../complete`, `.../fail`) are for **local/trusted development only**. There is no authentication yet.
+
+`POST /internal/operations/claim` still exists but is **disabled by default** (`drive.dispatch.http-claim-enabled=false`) so it does not compete with RabbitMQ. Existing tests turn it on. Do not run poll-based workers against a dispatcher-enabled control service.
+
+### Phase 3A limitations
+
+- workers are treated as equivalent
+- no worker registration or capabilities
+- no heartbeats or worker-failure reassignment
+- no leases / attempt IDs
+- no FIFO / round-robin / least-loaded / SJF / EDF / adaptive scheduler
+- RabbitMQ competing consumers are not that scheduler
 
 ## What is inactive
 
@@ -245,7 +312,7 @@ The original Automated Video Processor code remains in the repository for histor
 - Google Slides templates
 - In-process JavaCV video composition
 - AWS S3 helpers
-- RabbitMQ prototype
+- the original RabbitMQ prototype under `Server/RabbitMQ`
 - Google Drive and YouTube upload helpers
 - GCP OAuth helpers
 - Go/Kafka notification experiment
@@ -290,4 +357,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-Distributed execution, scheduling policies, worker registration, RabbitMQ dispatch, additional FFmpeg operations, and observability belong to later phases. Do not assume those features exist because the long-term design mentions them.
+Distributed scheduling policies, worker registration and capabilities, heartbeats, leases, additional FFmpeg operations, and observability belong to later phases. RabbitMQ is only the delivery mechanism today.

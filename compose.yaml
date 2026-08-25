@@ -54,6 +54,21 @@ services:
         mc mb --ignore-existing local/media-input
         mc mb --ignore-existing local/media-output
 
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "${RABBITMQ_AMQP_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    environment:
+      # Local development credentials only. Do not use these in production.
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-media_platform}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-media_platform}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
 volumes:
   media_platform_pgdata:
   media_platform_minio:
