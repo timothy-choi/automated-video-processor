@@ -2,6 +2,7 @@ package com.example.drive.worker;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -47,7 +48,7 @@ public class WorkerService {
 		Set<OperationType> operations = normalizeOperations(request.supportedOperations());
 		Set<String> codecs = normalizeCodecs(request.supportedCodecs());
 		String ffmpegVersion = normalizeFfmpegVersion(request.ffmpegVersion());
-		Instant now = clock.instant();
+		Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
 
 		return workerRepository.findById(workerId)
 				.map(existing -> {

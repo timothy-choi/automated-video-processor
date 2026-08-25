@@ -1,5 +1,7 @@
 package com.example.drive.worker;
 
+import java.time.Instant;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -68,11 +70,11 @@ class WorkerApiIntegrationTest {
 						.content(registrationJson("worker-a", "METADATA", "THUMBNAIL", "h264", 8, 17179869184L)))
 				.andExpect(status().isCreated())
 				.andReturn();
-		String registeredAt = JsonPath.read(first.getResponse().getContentAsString(), "$.registeredAt");
+		Instant registeredAt = Instant.parse(JsonPath.read(first.getResponse().getContentAsString(), "$.registeredAt"));
 
 		Thread.sleep(20);
 
-		mockMvc.perform(post("/internal/workers/register")
+		MvcResult updated = mockMvc.perform(post("/internal/workers/register")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
@@ -89,7 +91,14 @@ class WorkerApiIntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.workerId").value("worker-a"))
 				.andExpect(jsonPath("$.status").value("REGISTERED"))
-				.andExpect(jsonPath("$.registeredAt").value(registeredAt));
+				.andReturn();
+
+		Instant preservedRegisteredAt = Instant.parse(
+				JsonPath.read(updated.getResponse().getContentAsString(), "$.registeredAt")
+		);
+		Instant updatedAt = Instant.parse(JsonPath.read(updated.getResponse().getContentAsString(), "$.updatedAt"));
+		assertThat(preservedRegisteredAt).isEqualTo(registeredAt);
+		assertThat(updatedAt).isAfterOrEqualTo(preservedRegisteredAt);
 
 		Integer workerCount = jdbcTemplate.queryForObject("select count(*) from workers where id = 'worker-a'", Integer.class);
 		assertThat(workerCount).isEqualTo(1);
