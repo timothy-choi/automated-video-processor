@@ -6,26 +6,31 @@ import (
 	"time"
 
 	"github.com/timothy-choi/automated-video-processor/worker/internal/client"
-	"github.com/timothy-choi/automated-video-processor/worker/internal/executor"
-	"github.com/timothy-choi/automated-video-processor/worker/internal/inputuri"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/model"
+	"github.com/timothy-choi/automated-video-processor/worker/internal/run"
+	"github.com/timothy-choi/automated-video-processor/worker/internal/storage"
 )
 
 type Config struct {
 	ControlServiceURL string
 	PollInterval      time.Duration
 	FfprobePath       string
+	FfmpegPath        string
+	OutputBucket      string
+	ObjectStore       storage.Config
 }
 
 type Worker struct {
 	cfg    Config
 	client *client.Client
+	deps   run.Deps
 }
 
-func New(cfg Config) *Worker {
+func New(cfg Config, store storage.ObjectStore) *Worker {
 	return &Worker{
 		cfg:    cfg,
 		client: client.New(cfg.ControlServiceURL, 30*time.Second),
+		deps:   run.DefaultDeps(store, cfg.OutputBucket, cfg.FfprobePath, cfg.FfmpegPath),
 	}
 }
 
@@ -61,47 +66,40 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) execute(runCtx context.Context, claimed *model.ClaimedOperation) {
-	start := time.Now()
 	execCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	if claimed.Type != "METADATA" {
-		w.reportFailure(runCtx, claimed.OperationID, time.Since(start), "unsupported operation type "+claimed.Type)
-		return
-	}
-
-	path, err := inputuri.PathFromFileURI(claimed.InputURI)
+	outcome, err := run.Execute(execCtx, claimed, w.deps)
 	if err != nil {
-		w.reportFailure(runCtx, claimed.OperationID, time.Since(start), err.Error())
-		return
-	}
-
-	result, err := executor.ProbeFile(execCtx, w.cfg.FfprobePath, path)
-	runtimeMs := time.Since(start).Milliseconds()
-	if err != nil {
-		w.reportFailure(runCtx, claimed.OperationID, time.Duration(runtimeMs)*time.Millisecond, err.Error())
+		w.reportFailure(claimed.OperationID, outcome.RuntimeMs, err.Error())
 		return
 	}
 
 	reportCtx, reportCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer reportCancel()
-	if err := w.client.Complete(reportCtx, claimed.OperationID, runtimeMs, result); err != nil {
+	complete := model.CompleteRequest{ActualRuntimeMs: outcome.RuntimeMs}
+	if outcome.Metadata != nil {
+		complete.Metadata = outcome.Metadata
+	}
+	if outcome.Artifact != nil {
+		complete.Artifact = outcome.Artifact
+	}
+	if err := w.client.Complete(reportCtx, claimed.OperationID, complete); err != nil {
 		log.Printf("complete report failed for %s: %v", claimed.OperationID, err)
 		return
 	}
-	log.Printf("completed operation %s in %dms", claimed.OperationID, runtimeMs)
+	log.Printf("completed operation %s (%s) in %dms", claimed.OperationID, claimed.Type, outcome.RuntimeMs)
+	_ = runCtx
 }
 
-func (w *Worker) reportFailure(runCtx context.Context, operationID string, runtime time.Duration, reason string) {
+func (w *Worker) reportFailure(operationID string, runtimeMs int64, reason string) {
 	reportCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	ms := runtime.Milliseconds()
-	if err := w.client.Fail(reportCtx, operationID, &ms, reason); err != nil {
+	if err := w.client.Fail(reportCtx, operationID, &runtimeMs, reason); err != nil {
 		log.Printf("fail report failed for %s: %v", operationID, err)
 		return
 	}
 	log.Printf("failed operation %s: %s", operationID, reason)
-	_ = runCtx
 }
 
 func sleep(ctx context.Context, delay time.Duration) bool {

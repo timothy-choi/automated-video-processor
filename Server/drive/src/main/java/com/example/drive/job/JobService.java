@@ -12,8 +12,10 @@ import com.example.drive.job.domain.Job;
 import com.example.drive.job.domain.Operation;
 import com.example.drive.job.dto.CreateJobRequest;
 import com.example.drive.job.dto.CreateOperationRequest;
+import com.example.drive.job.dto.JobArtifactsResponse;
 import com.example.drive.job.dto.JobOperationsResponse;
 import com.example.drive.job.dto.JobResponse;
+import com.example.drive.job.repository.ArtifactRepository;
 import com.example.drive.job.repository.JobRepository;
 import com.example.drive.job.repository.OperationRepository;
 
@@ -22,11 +24,18 @@ public class JobService {
 
 	private final JobRepository jobRepository;
 	private final OperationRepository operationRepository;
+	private final ArtifactRepository artifactRepository;
 	private final Clock clock;
 
-	public JobService(JobRepository jobRepository, OperationRepository operationRepository, Clock clock) {
+	public JobService(
+			JobRepository jobRepository,
+			OperationRepository operationRepository,
+			ArtifactRepository artifactRepository,
+			Clock clock
+	) {
 		this.jobRepository = jobRepository;
 		this.operationRepository = operationRepository;
+		this.artifactRepository = artifactRepository;
 		this.clock = clock;
 	}
 
@@ -67,6 +76,14 @@ public class JobService {
 			throw new JobNotFoundException(jobId);
 		}
 		return JobOperationsResponse.from(jobId, operationRepository.findByJob_IdOrderByOperationOrderAsc(jobId));
+	}
+
+	@Transactional(readOnly = true)
+	public JobArtifactsResponse getArtifacts(UUID jobId) {
+		if (!jobRepository.existsById(jobId)) {
+			throw new JobNotFoundException(jobId);
+		}
+		return JobArtifactsResponse.from(jobId, artifactRepository.findByJobIdOrderByCreatedAtAsc(jobId));
 	}
 
 	private String validateInputUri(String rawInputUri) {

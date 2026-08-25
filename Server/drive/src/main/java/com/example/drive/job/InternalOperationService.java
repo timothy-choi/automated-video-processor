@@ -1,5 +1,6 @@
 package com.example.drive.job;
 
+import java.net.URI;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -11,12 +12,16 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.example.drive.job.domain.Artifact;
+import com.example.drive.job.domain.ArtifactType;
 import com.example.drive.job.domain.Operation;
+import com.example.drive.job.dto.ArtifactCompletionDto;
 import com.example.drive.job.dto.ClaimedOperationResponse;
 import com.example.drive.job.dto.CompleteOperationRequest;
 import com.example.drive.job.dto.FailOperationRequest;
 import com.example.drive.job.dto.MetadataResultDto;
 import com.example.drive.job.dto.OperationResponse;
+import com.example.drive.job.repository.ArtifactRepository;
 import com.example.drive.job.repository.OperationRepository;
 
 import jakarta.persistence.EntityManager;
@@ -26,21 +31,24 @@ public class InternalOperationService {
 
 	private final EntityManager entityManager;
 	private final OperationRepository operationRepository;
+	private final ArtifactRepository artifactRepository;
 	private final Clock clock;
 
 	public InternalOperationService(
 			EntityManager entityManager,
 			OperationRepository operationRepository,
+			ArtifactRepository artifactRepository,
 			Clock clock
 	) {
 		this.entityManager = entityManager;
 		this.operationRepository = operationRepository;
+		this.artifactRepository = artifactRepository;
 		this.clock = clock;
 	}
 
 	@Transactional
-	public Optional<ClaimedOperationResponse> claimNextMetadataOperation() {
-		Optional<UUID> lockedId = lockNextClaimableMetadataId();
+	public Optional<ClaimedOperationResponse> claimNextExecutableOperation() {
+		Optional<UUID> lockedId = lockNextClaimableId();
 		if (lockedId.isEmpty()) {
 			return Optional.empty();
 		}
@@ -58,7 +66,15 @@ public class InternalOperationService {
 		Instant now = clock.instant();
 		Operation operation = operationRepository.findByIdWithJobAndOperations(operationId)
 				.orElseThrow(() -> new OperationNotFoundException(operationId));
-		boolean changed = operation.markCompleted(now, request.actualRuntimeMs(), toResultMap(request.result()));
+
+		boolean changed = switch (operation.getType()) {
+			case METADATA -> completeMetadata(operation, request, now);
+			case THUMBNAIL -> completeThumbnail(operation, request, now);
+			default -> throw new InvalidJobRequestException(
+					"UNSUPPORTED_COMPLETION_TYPE",
+					"Internal completion in this phase supports METADATA and THUMBNAIL only"
+			);
+		};
 		if (changed) {
 			operation.getJob().refreshStatusFromOperations(now);
 		}
@@ -77,15 +93,54 @@ public class InternalOperationService {
 		return OperationResponse.from(operation);
 	}
 
-	private Optional<UUID> lockNextClaimableMetadataId() {
+	private boolean completeMetadata(Operation operation, CompleteOperationRequest request, Instant now) {
+		if (request.metadata() == null) {
+			throw new InvalidJobRequestException("VALIDATION_FAILED", "metadata is required for METADATA completion");
+		}
+		if (request.artifact() != null) {
+			throw new InvalidJobRequestException("VALIDATION_FAILED", "artifact is not allowed for METADATA completion");
+		}
+		return operation.markCompleted(now, request.actualRuntimeMs(), toResultMap(request.metadata()));
+	}
+
+	private boolean completeThumbnail(Operation operation, CompleteOperationRequest request, Instant now) {
+		if (request.artifact() == null) {
+			throw new InvalidJobRequestException("VALIDATION_FAILED", "artifact is required for THUMBNAIL completion");
+		}
+		if (request.metadata() != null) {
+			throw new InvalidJobRequestException("VALIDATION_FAILED", "metadata is not allowed for THUMBNAIL completion");
+		}
+		ArtifactCompletionDto artifact = request.artifact();
+		validateThumbnailObjectUri(artifact.objectUri());
+		boolean changed = operation.markCompleted(now, request.actualRuntimeMs(), null);
+		if (changed && !artifactRepository.existsByOperationId(operation.getId())) {
+			artifactRepository.save(new Artifact(
+					UUID.randomUUID(),
+					operation.getJob().getId(),
+					operation.getId(),
+					ArtifactType.THUMBNAIL,
+					artifact.objectUri().trim(),
+					artifact.contentType().trim(),
+					artifact.sizeBytes(),
+					artifact.checksum().trim(),
+					now
+			));
+		}
+		return changed;
+	}
+
+	private Optional<UUID> lockNextClaimableId() {
 		@SuppressWarnings("unchecked")
 		List<Object> rows = entityManager.createNativeQuery("""
 				SELECT o.id
 				FROM operations o
 				JOIN jobs j ON j.id = o.job_id
 				WHERE o.status = 'QUEUED'
-				  AND o.operation_type = 'METADATA'
-				  AND j.input_uri LIKE 'file:%'
+				  AND o.operation_type IN ('METADATA', 'THUMBNAIL')
+				  AND (
+				    LOWER(j.input_uri) LIKE 'file:%'
+				    OR LOWER(j.input_uri) LIKE 's3:%'
+				  )
 				ORDER BY o.created_at ASC, o.operation_order ASC
 				FOR UPDATE OF o SKIP LOCKED
 				LIMIT 1
@@ -94,6 +149,23 @@ public class InternalOperationService {
 			return Optional.empty();
 		}
 		return Optional.of(toUuid(rows.getFirst()));
+	}
+
+	private static void validateThumbnailObjectUri(String raw) {
+		URI uri;
+		try {
+			uri = URI.create(raw.trim());
+		}
+		catch (IllegalArgumentException ex) {
+			throw new InvalidJobRequestException("VALIDATION_FAILED", "artifact objectUri is not a valid URI");
+		}
+		if (!"s3".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null || uri.getHost().isBlank()) {
+			throw new InvalidJobRequestException("VALIDATION_FAILED", "artifact objectUri must be s3://bucket/key");
+		}
+		String path = uri.getPath() == null ? "" : uri.getPath().replaceFirst("^/", "");
+		if (path.isBlank()) {
+			throw new InvalidJobRequestException("VALIDATION_FAILED", "artifact objectUri must include an object key");
+		}
 	}
 
 	private static UUID toUuid(Object value) {

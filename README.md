@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-That later architecture (Go scheduler, RabbitMQ, FFmpeg workers, object storage, OpenTelemetry) is **not implemented yet**. This repository is currently at **Phase 2B**.
+That later architecture (Go scheduler, RabbitMQ, additional FFmpeg workers, OpenTelemetry) is **not implemented yet**. This repository is currently at **Phase 2C**.
 
-## Current status: Phase 2B — one Go worker, METADATA only
+## Current status: Phase 2C — MinIO + METADATA + THUMBNAIL
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -20,16 +20,18 @@ A single Go worker lives at:
 worker/
 ```
 
-Phase 2B currently:
+Phase 2C currently:
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL
-- lets one Go worker claim a queued `METADATA` operation over an internal HTTP API
-- runs **real ffprobe** against a local `file://` input
-- records completion or failure, including parsed metadata and runtime
+- stores media blobs in **MinIO** (S3-compatible), not in PostgreSQL
+- lets one Go worker claim queued `METADATA` or `THUMBNAIL` operations over an internal HTTP API
+- downloads `s3://` inputs (and still accepts `file://`)
+- runs **real ffprobe** and **real FFmpeg**
+- uploads JPEG thumbnails to `s3://media-output/...` and persists `Artifact` metadata
 
-It does **not** schedule across workers, run other operation types, use RabbitMQ, or talk to object storage.
+It does **not** schedule across workers, use RabbitMQ, or execute transcode/audio operations.
 
-Stack: **Java 21**, **Spring Boot 4.1.1**, **Maven**, **PostgreSQL**, **Flyway**, **Spring Data JPA**, **Go**, **ffprobe**. The Maven `artifactId` remains `drive`.
+Stack: **Java 21**, **Spring Boot 4.1.1**, **Maven**, **PostgreSQL**, **Flyway**, **Spring Data JPA**, **Go**, **ffprobe/FFmpeg**, **MinIO**. The Maven `artifactId` remains `drive`.
 
 ## Build
 
@@ -54,24 +56,33 @@ go test ./...
 go vet ./...
 ```
 
-Java tests start a temporary PostgreSQL container. They do **not** require the Compose database. One Go test generates a tiny clip with FFmpeg when `ffmpeg`/`ffprobe` are on `PATH`; it is skipped if they are not installed. GitHub Actions does **not** install FFmpeg.
+Java tests start a temporary PostgreSQL container. They do **not** require the Compose database or MinIO. Some Go tests generate a tiny clip with FFmpeg when `ffmpeg`/`ffprobe` are on `PATH`; they are skipped if those binaries are missing. GitHub Actions does **not** install FFmpeg or MinIO. Object-storage unit tests use an in-memory fake.
 
-## Local PostgreSQL
+## Local infrastructure
 
 From the repository root:
 
 ```bash
-docker compose up -d postgres
+docker compose up -d postgres minio minio-init
 ```
 
-This starts PostgreSQL 16 on port **5432** with database/user/password `media_platform`. Those values are **local development defaults**, not production secrets. If port 5432 is already in use (including a local Postgres install), set `POSTGRES_PORT`:
+This starts:
+
+- PostgreSQL 16 on port **5432** (database/user/password `media_platform`)
+- MinIO S3 API on port **9000** and console on **9001**
+- a one-shot `minio-init` container that creates buckets `media-input` and `media-output`
+
+Those database and MinIO values are **local development defaults**, not production secrets. MinIO console: [http://localhost:9001](http://localhost:9001). Login with `minioadmin` / `minioadmin` locally only.
+
+If host ports are already in use:
 
 ```bash
-POSTGRES_PORT=55432 docker compose up -d postgres
+POSTGRES_PORT=55432 MINIO_API_PORT=19000 MINIO_CONSOLE_PORT=19001 docker compose up -d postgres minio minio-init
 DB_URL=jdbc:postgresql://localhost:55432/media_platform
+OBJECT_STORE_ENDPOINT=http://localhost:19000
 ```
 
-Override connection settings with:
+Override Postgres connection settings with:
 
 ```text
 DB_URL          default jdbc:postgresql://localhost:5432/media_platform
@@ -82,7 +93,7 @@ DB_PASSWORD     default media_platform
 ## Start the application
 
 ```bash
-docker compose up -d postgres
+docker compose up -d postgres minio minio-init
 cd Server/drive
 ./mvnw spring-boot:run
 ```
@@ -129,19 +140,20 @@ Expected: **202 Accepted**, with `id`, `status: "QUEUED"`, timestamps, and the c
 ```bash
 curl -sS http://localhost:8080/jobs/<job-id>
 curl -sS http://localhost:8080/jobs/<job-id>/operations
+curl -sS http://localhost:8080/jobs/<job-id>/artifacts
 ```
 
 `priority` defaults to `NORMAL` when omitted. `deadline` is optional. Unknown jobs return **404**. Invalid bodies (missing `inputUri`, empty `operations`, unknown operation type, past deadline) return **400**.
 
-`inputUri` is stored as a URI string. The public API does **not** contact S3 or verify that the object exists. **Phase 2B claims and executes `file://` URIs only.** A `METADATA` job with `s3://` remains queued; the worker will not pick it up.
+`inputUri` is stored as a URI string. The public API does **not** contact S3 or verify that the object exists. **Phase 2C claims and executes `file://` and `s3://` for `METADATA` and `THUMBNAIL` only.** Other submitted types remain `QUEUED`. A job is not `COMPLETED` while those remain.
 
 Supported operation types for submission: `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`, `TRANSCODE_4K_TO_1080P`, `H264_TO_AV1`.
 
-**Only `METADATA` is executed in Phase 2B.** Other types remain `QUEUED`. A job is not `COMPLETED` while those remain.
+**Only `METADATA` and `THUMBNAIL` are executed in Phase 2C.**
 
-## METADATA worker (Phase 2B)
+## Worker (Phase 2C)
 
-Requirements: Java 21, Docker (PostgreSQL), Go, FFmpeg/ffprobe.
+Requirements: Java 21, Docker (PostgreSQL + MinIO), Go, FFmpeg/ffprobe.
 
 Generate a tiny local clip (do not commit large binaries):
 
@@ -149,37 +161,79 @@ Generate a tiny local clip (do not commit large binaries):
 ffmpeg -y -f lavfi -i testsrc=duration=2:size=320x240:rate=30 -pix_fmt yuv420p /tmp/sample.mp4
 ```
 
-Start PostgreSQL and the control service as above, then submit:
+Upload it to MinIO. With the AWS CLI:
+
+```bash
+AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin \
+  aws --endpoint-url http://localhost:9000 s3 cp /tmp/sample.mp4 s3://media-input/sample.mp4
+```
+
+Or with the MinIO client in Docker:
+
+```bash
+docker run --rm --network host -v /tmp/sample.mp4:/sample.mp4 minio/mc \
+  sh -c 'mc alias set local http://localhost:9000 minioadmin minioadmin && mc cp /sample.mp4 local/media-input/sample.mp4'
+```
+
+Canonical object: `s3://media-input/sample.mp4`.
+
+Start PostgreSQL, MinIO, and the control service as above, then submit:
 
 ```bash
 curl -sS -X POST http://localhost:8080/jobs \
   -H 'Content-Type: application/json' \
   -d '{
-    "inputUri": "file:///tmp/sample.mp4",
-    "operations": [{"type": "METADATA"}]
+    "inputUri": "s3://media-input/sample.mp4",
+    "operations": [
+      {"type": "METADATA"},
+      {"type": "THUMBNAIL"}
+    ]
   }'
 ```
 
-The job is `QUEUED` until the worker claims it.
+The job is `QUEUED` until the worker claims operations.
 
-Start the worker from the repository root:
+Start the worker:
 
 ```bash
 cd worker
-CONTROL_SERVICE_URL=http://localhost:8080 POLL_INTERVAL=1s go run ./cmd/worker
+CONTROL_SERVICE_URL=http://localhost:8080 \
+POLL_INTERVAL=1s \
+OBJECT_STORE_ENDPOINT=http://localhost:9000 \
+OBJECT_STORE_REGION=us-east-1 \
+OBJECT_STORE_ACCESS_KEY=minioadmin \
+OBJECT_STORE_SECRET_KEY=minioadmin \
+OBJECT_STORE_FORCE_PATH_STYLE=true \
+OUTPUT_BUCKET=media-output \
+go run ./cmd/worker
 ```
 
-`FFPROBE_PATH` defaults to `ffprobe`. Stop the worker with SIGINT/SIGTERM: it stops polling and finishes or reports the in-flight operation.
+Those MinIO keys are local development defaults. `FFPROBE_PATH` defaults to `ffprobe`. `FFMPEG_PATH` defaults to `ffmpeg`. Stop the worker with SIGINT/SIGTERM: it stops polling and finishes or reports the in-flight operation.
 
 Then:
 
 ```bash
 curl -sS http://localhost:8080/jobs/<job-id>
+curl -sS http://localhost:8080/jobs/<job-id>/artifacts
 ```
 
-Successful execution: operation and job become `COMPLETED`, with parsed metadata (`durationSeconds`, `formatName`, `videoCodec`, `width`, `height`, …) and `actualRuntimeMs`.
+Successful execution:
 
-A missing file (`file:///does/not/exist.mp4`) becomes operation `FAILED` and job `FAILED`, with a persisted `failureReason`.
+```text
+QUEUED -> RUNNING -> COMPLETED
+```
+
+`METADATA` stores parsed probe JSON on the operation. `THUMBNAIL` extracts one JPEG frame (seek ~1s, falling back to the first frame on short clips) and uploads:
+
+```text
+s3://media-output/jobs/<jobId>/operations/<operationId>/thumbnail.jpg
+```
+
+`GET /jobs/{id}/artifacts` returns type, object URI, content type, size, and SHA-256 checksum. Image bytes stay in MinIO.
+
+`file://` inputs still work for both operations. Thumbnail output is always stored in the output bucket.
+
+A missing object (`s3://media-input/does-not-exist.mp4`) becomes operation `FAILED` and job `FAILED`, with a persisted `failureReason` that does not include credentials.
 
 Internal worker endpoints (`POST /internal/operations/claim`, `.../complete`, `.../fail`) are for **local/trusted development only**. There is no authentication yet.
 
@@ -236,4 +290,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-Distributed execution, scheduling policies, worker registration, RabbitMQ dispatch, additional FFmpeg operations, object storage, and observability belong to later phases. Do not assume those features exist because the long-term design mentions them.
+Distributed execution, scheduling policies, worker registration, RabbitMQ dispatch, additional FFmpeg operations, and observability belong to later phases. Do not assume those features exist because the long-term design mentions them.

@@ -31,6 +31,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ControlServiceTest
 class InternalOperationApiIntegrationTest {
 
+	private static final String SHA256 =
+			"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
 	@Autowired
 	private MockMvc mockMvc;
 
@@ -42,6 +45,7 @@ class InternalOperationApiIntegrationTest {
 
 	@BeforeEach
 	void clearTables() {
+		jdbcTemplate.update("delete from artifacts");
 		jdbcTemplate.update("delete from operations");
 		jdbcTemplate.update("delete from jobs");
 	}
@@ -80,6 +84,54 @@ class InternalOperationApiIntegrationTest {
 	}
 
 	@Test
+	void claimAcceptsMetadataWithS3Uri() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "s3://media-input/video.mp4",
+				  "operations": [{"type": "METADATA"}]
+				}
+				""");
+
+		mockMvc.perform(post("/internal/operations/claim"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.jobId").value(jobId.toString()))
+				.andExpect(jsonPath("$.type").value("METADATA"))
+				.andExpect(jsonPath("$.inputUri").value("s3://media-input/video.mp4"))
+				.andExpect(jsonPath("$.status").value("RUNNING"));
+	}
+
+	@Test
+	void claimAcceptsThumbnailWithFileUri() throws Exception {
+		createJob("""
+				{
+				  "inputUri": "file:///tmp/thumb.mp4",
+				  "operations": [{"type": "THUMBNAIL"}]
+				}
+				""");
+
+		mockMvc.perform(post("/internal/operations/claim"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.type").value("THUMBNAIL"))
+				.andExpect(jsonPath("$.inputUri").value("file:///tmp/thumb.mp4"))
+				.andExpect(jsonPath("$.status").value("RUNNING"));
+	}
+
+	@Test
+	void claimAcceptsThumbnailWithS3Uri() throws Exception {
+		createJob("""
+				{
+				  "inputUri": "s3://media-input/video.mp4",
+				  "operations": [{"type": "THUMBNAIL"}]
+				}
+				""");
+
+		mockMvc.perform(post("/internal/operations/claim"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.type").value("THUMBNAIL"))
+				.andExpect(jsonPath("$.inputUri").value("s3://media-input/video.mp4"));
+	}
+
+	@Test
 	void claimReturns204WhenNoWork() throws Exception {
 		mockMvc.perform(post("/internal/operations/claim"))
 				.andExpect(status().isNoContent());
@@ -89,21 +141,8 @@ class InternalOperationApiIntegrationTest {
 	void claimIgnoresUnsupportedQueuedOperations() throws Exception {
 		createJob("""
 				{
-				  "inputUri": "file:///tmp/thumb.mp4",
-				  "operations": [{"type": "THUMBNAIL"}]
-				}
-				""");
-
-		mockMvc.perform(post("/internal/operations/claim"))
-				.andExpect(status().isNoContent());
-	}
-
-	@Test
-	void claimIgnoresMetadataWithNonFileUri() throws Exception {
-		createJob("""
-				{
-				  "inputUri": "s3://media-input/video.mp4",
-				  "operations": [{"type": "METADATA"}]
+				  "inputUri": "file:///tmp/transcode.mp4",
+				  "operations": [{"type": "TRANSCODE_1080P"}]
 				}
 				""");
 
@@ -126,7 +165,7 @@ class InternalOperationApiIntegrationTest {
 			for (int i = 0; i < 2; i++) {
 				futures.add(pool.submit(() -> {
 					start.await(5, TimeUnit.SECONDS);
-					return internalOperationService.claimNextMetadataOperation();
+					return internalOperationService.claimNextExecutableOperation();
 				}));
 			}
 			start.countDown();
@@ -160,7 +199,7 @@ class InternalOperationApiIntegrationTest {
 						.content("""
 								{
 								  "actualRuntimeMs": 42,
-								  "result": {
+								  "metadata": {
 								    "durationSeconds": 2.0,
 								    "formatName": "mov,mp4,m4a,3gp,3g2,mj2",
 								    "sizeBytes": 1234,
@@ -188,6 +227,52 @@ class InternalOperationApiIntegrationTest {
 				operationId
 		);
 		assertThat(stored).isEqualTo(1);
+	}
+
+	@Test
+	void completeThumbnailPersistsArtifactAndCompletesJob() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "s3://media-input/video.mp4",
+				  "operations": [{"type": "THUMBNAIL"}]
+				}
+				""");
+		UUID operationId = claimOperationId();
+		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + operationId + "/thumbnail.jpg";
+
+		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(thumbnailCompleteJson(objectUri, 1234)))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("COMPLETED"))
+				.andExpect(jsonPath("$.actualRuntimeMs").value(20))
+				.andExpect(jsonPath("$.result").doesNotExist());
+
+		mockMvc.perform(get("/jobs/" + jobId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("COMPLETED"));
+
+		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.artifacts.length()").value(1))
+				.andExpect(jsonPath("$.artifacts[0].operationId").value(operationId.toString()))
+				.andExpect(jsonPath("$.artifacts[0].type").value("THUMBNAIL"))
+				.andExpect(jsonPath("$.artifacts[0].objectUri").value(objectUri))
+				.andExpect(jsonPath("$.artifacts[0].contentType").value("image/jpeg"))
+				.andExpect(jsonPath("$.artifacts[0].sizeBytes").value(1234))
+				.andExpect(jsonPath("$.artifacts[0].checksum").value(SHA256));
+
+		UUID storedJobId = UUID.fromString(jdbcTemplate.queryForObject(
+				"select job_id from artifacts where operation_id = ?",
+				String.class,
+				operationId
+		));
+		assertThat(storedJobId).isEqualTo(jobId);
+		Integer blobColumns = jdbcTemplate.queryForObject(
+				"select count(*) from information_schema.columns where table_name = 'artifacts' and data_type in ('bytea', 'oid')",
+				Integer.class
+		);
+		assertThat(blobColumns).isZero();
 	}
 
 	@Test
@@ -219,6 +304,34 @@ class InternalOperationApiIntegrationTest {
 	}
 
 	@Test
+	void failedThumbnailMarksJobFailed() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "s3://media-input/video.mp4",
+				  "operations": [
+				    {"type": "METADATA"},
+				    {"type": "THUMBNAIL"}
+				  ]
+				}
+				""");
+		UUID metadataId = claimOperationId();
+		completeMetadata(metadataId);
+		UUID thumbnailId = claimOperationId();
+
+		mockMvc.perform(post("/internal/operations/" + thumbnailId + "/fail")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"reason": "ffmpeg failed: no video stream"}
+								"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("FAILED"));
+
+		mockMvc.perform(get("/jobs/" + jobId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("FAILED"));
+	}
+
+	@Test
 	void completingQueuedOperationIsRejected() throws Exception {
 		UUID jobId = createJob("""
 				{
@@ -237,7 +350,7 @@ class InternalOperationApiIntegrationTest {
 						.content("""
 								{
 								  "actualRuntimeMs": 1,
-								  "result": {"formatName": "mp4"}
+								  "metadata": {"formatName": "mp4"}
 								}
 								"""))
 				.andExpect(status().isConflict())
@@ -256,7 +369,7 @@ class InternalOperationApiIntegrationTest {
 		String body = """
 				{
 				  "actualRuntimeMs": 10,
-				  "result": {"formatName": "mp4", "width": 320}
+				  "metadata": {"formatName": "mp4", "width": 320}
 				}
 				""";
 
@@ -272,6 +385,36 @@ class InternalOperationApiIntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"))
 				.andExpect(jsonPath("$.result.width").value(320));
+	}
+
+	@Test
+	void duplicateThumbnailCompletionDoesNotCreateSecondArtifact() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "file:///tmp/thumb-idempotent.mp4",
+				  "operations": [{"type": "THUMBNAIL"}]
+				}
+				""");
+		UUID operationId = claimOperationId();
+		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + operationId + "/thumbnail.jpg";
+		String body = thumbnailCompleteJson(objectUri, 99);
+
+		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(body))
+				.andExpect(status().isOk());
+		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(body))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("COMPLETED"));
+
+		Integer count = jdbcTemplate.queryForObject(
+				"select count(*) from artifacts where operation_id = ?",
+				Integer.class,
+				operationId
+		);
+		assertThat(count).isEqualTo(1);
 	}
 
 	@Test
@@ -295,11 +438,45 @@ class InternalOperationApiIntegrationTest {
 						.content("""
 								{
 								  "actualRuntimeMs": 1,
-								  "result": {"formatName": "mp4"}
+								  "metadata": {"formatName": "mp4"}
 								}
 								"""))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("INVALID_OPERATION_STATE"));
+	}
+
+	@Test
+	void metadataAndThumbnailCompleteJob() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "s3://media-input/mixed.mp4",
+				  "operations": [
+				    {"type": "METADATA"},
+				    {"type": "THUMBNAIL"}
+				  ]
+				}
+				""");
+		UUID metadataId = claimOperationId();
+		completeMetadata(metadataId);
+
+		mockMvc.perform(get("/jobs/" + jobId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("RUNNING"));
+
+		UUID thumbnailId = claimOperationId();
+		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + thumbnailId + "/thumbnail.jpg";
+		mockMvc.perform(post("/internal/operations/" + thumbnailId + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(thumbnailCompleteJson(objectUri, 50)))
+				.andExpect(status().isOk());
+
+		mockMvc.perform(get("/jobs/" + jobId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("COMPLETED"));
+		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.artifacts.length()").value(1))
+				.andExpect(jsonPath("$.artifacts[0].operationId").value(thumbnailId.toString()));
 	}
 
 	@Test
@@ -309,22 +486,12 @@ class InternalOperationApiIntegrationTest {
 				  "inputUri": "file:///tmp/mixed.mp4",
 				  "operations": [
 				    {"type": "METADATA"},
-				    {"type": "THUMBNAIL"}
+				    {"type": "TRANSCODE_1080P"}
 				  ]
 				}
 				""");
 		UUID operationId = claimOperationId();
-
-		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
-						.contentType(MediaType.APPLICATION_JSON)
-						.content("""
-								{
-								  "actualRuntimeMs": 8,
-								  "result": {"formatName": "mp4"}
-								}
-								"""))
-				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.status").value("COMPLETED"));
+		completeMetadata(operationId);
 
 		mockMvc.perform(get("/jobs/" + jobId))
 				.andExpect(status().isOk())
@@ -358,5 +525,31 @@ class InternalOperationApiIntegrationTest {
 				.andExpect(status().isOk())
 				.andReturn();
 		return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.operationId"));
+	}
+
+	private void completeMetadata(UUID operationId) throws Exception {
+		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{
+								  "actualRuntimeMs": 8,
+								  "metadata": {"formatName": "mp4"}
+								}
+								"""))
+				.andExpect(status().isOk());
+	}
+
+	private static String thumbnailCompleteJson(String objectUri, int sizeBytes) {
+		return """
+				{
+				  "actualRuntimeMs": 20,
+				  "artifact": {
+				    "objectUri": "%s",
+				    "contentType": "image/jpeg",
+				    "sizeBytes": %d,
+				    "checksum": "%s"
+				  }
+				}
+				""".formatted(objectUri, sizeBytes, SHA256);
 	}
 }
