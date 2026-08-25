@@ -1,9 +1,10 @@
 package com.example.drive;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest
+import com.example.drive.support.ControlServiceTest;
+
+@ControlServiceTest
 class DriveApplicationTests {
 
 	@Test

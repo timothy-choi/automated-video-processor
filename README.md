@@ -4,11 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-That later architecture (Go scheduler, RabbitMQ, FFmpeg workers, object storage, OpenTelemetry) is **not implemented yet**. This repository is currently at **Phase 1**.
+That later architecture (Go scheduler, RabbitMQ, FFmpeg workers, object storage, OpenTelemetry) is **not implemented yet**. This repository is currently at **Phase 2A**.
 
-## Current status: Phase 1 baseline
-
-Phase 1 stabilizes the existing project into a trustworthy Java/Spring Boot control-service starting point.
+## Current status: Phase 2A — durable job API
 
 The canonical application is the Maven/Spring Boot project at:
 
@@ -18,12 +16,14 @@ Server/drive
 
 It currently:
 
-- builds
-- runs automated tests
-- starts locally without AWS, RabbitMQ, Google APIs, or other external infrastructure
+- builds and runs automated tests
 - exposes `GET /health`
+- accepts job submissions and persists `Job` + `Operation` records in PostgreSQL
+- returns jobs in `QUEUED` without executing media work
 
-It does **not** yet submit jobs, schedule work, run FFmpeg, or talk to a message broker.
+It does **not** schedule work, run FFmpeg, or talk to a message broker.
+
+Stack: **Java 21**, **Spring Boot 4.1.1**, **Maven**, **PostgreSQL**, **Flyway**, **Spring Data JPA**. The Maven `artifactId` remains `drive`.
 
 ## Build
 
@@ -33,20 +33,44 @@ From `Server/drive`:
 ./mvnw clean test
 ```
 
-Requires **Java 21+**. The Maven wrapper (`./mvnw`) is preferred over a system Maven install.
-
-Phase 1 stack: **Java 21**, **Spring Boot 4.1.1**, **Maven**. The Maven `artifactId` remains `drive` so the existing project location is unchanged.
+Requires **Java 21+**. Automated tests use **Testcontainers** and therefore need a running **Docker daemon**. The Maven wrapper (`./mvnw`) is preferred over a system Maven install.
 
 ## Run tests
 
 ```bash
 cd Server/drive
-./mvnw test
+./mvnw clean test
+```
+
+Tests start a temporary PostgreSQL container. They do **not** require the Compose database.
+
+## Local PostgreSQL
+
+From the repository root:
+
+```bash
+docker compose up -d postgres
+```
+
+This starts PostgreSQL 16 on port **5432** with database/user/password `media_platform`. Those values are **local development defaults**, not production secrets. If port 5432 is already in use, set `POSTGRES_PORT`:
+
+```bash
+POSTGRES_PORT=55432 docker compose up -d postgres
+DB_URL=jdbc:postgresql://localhost:55432/media_platform
+```
+
+Override connection settings with:
+
+```text
+DB_URL          default jdbc:postgresql://localhost:5432/media_platform
+DB_USERNAME     default media_platform
+DB_PASSWORD     default media_platform
 ```
 
 ## Start the application
 
 ```bash
+docker compose up -d postgres
 cd Server/drive
 ./mvnw spring-boot:run
 ```
@@ -68,6 +92,38 @@ Expected response:
 ```json
 {"status":"UP"}
 ```
+
+## Job API
+
+Submit a job. Execution is not started; the job is stored as `QUEUED`.
+
+```bash
+curl -sS -X POST http://localhost:8080/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "inputUri": "s3://media-input/video.mp4",
+    "operations": [
+      {"type": "METADATA"},
+      {"type": "THUMBNAIL"},
+      {"type": "TRANSCODE_1080P"}
+    ],
+    "priority": "HIGH",
+    "deadline": "2099-09-01T12:00:00Z"
+  }'
+```
+
+Expected: **202 Accepted**, with `id`, `status: "QUEUED"`, timestamps, and the created operations.
+
+```bash
+curl -sS http://localhost:8080/jobs/<job-id>
+curl -sS http://localhost:8080/jobs/<job-id>/operations
+```
+
+`priority` defaults to `NORMAL` when omitted. `deadline` is optional. Unknown jobs return **404**. Invalid bodies (missing `inputUri`, empty `operations`, unknown operation type, past deadline) return **400**.
+
+`inputUri` is stored as a URI string. The service does **not** contact S3 or verify that the object exists.
+
+Supported operation types: `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`, `TRANSCODE_4K_TO_1080P`, `H264_TO_AV1`.
 
 ## What is inactive
 

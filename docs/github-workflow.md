@@ -54,7 +54,9 @@ From `Server/drive`:
 
 CI uses `--batch-mode` and `--no-transfer-progress` so Maven does not prompt and logs stay readable. The lifecycle is still `clean test`.
 
-`verify` / `package` is not used: the current POM has no extra verification plugins, so `clean test` already compiles the application and runs all tests.
+Phase 2A tests use Testcontainers PostgreSQL. GitHub-hosted `ubuntu-latest` runners already provide Docker, so the existing workflows were not changed. A local `./mvnw clean test` also needs a running Docker daemon.
+
+`verify` / `package` is not used: the current POM has no extra verification plugins beyond Flyway/JPA, so `clean test` already compiles the application, applies test schema via Flyway against Testcontainers, and runs all tests.
 
 ## Starting new work
 

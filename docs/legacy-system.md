@@ -218,7 +218,9 @@ Classifications:
 
 ## Persistence note
 
-The original design mixed **MongoDB** (Accounts) and **DynamoDB** (Templates, VideoAccounts, VideoProcessing) and never connected either to a running, compiling application. Phase 1’s control service has **no datastore**. Choosing PostgreSQL vs DynamoDB is deferred.
+The original design mixed **MongoDB** (Accounts) and **DynamoDB** (Templates, VideoAccounts, VideoProcessing) and never connected either to a running, compiling application. Phase 1’s control service had no datastore.
+
+**Phase 2A** chose **PostgreSQL** as the control-plane state store, with Flyway owning the schema. Legacy DynamoDB/MongoDB code was not restored. The active tables are `jobs` and `operations` only.
 
 ---
 
