@@ -11,6 +11,24 @@ type ClaimedOperation struct {
 	Status      string    `json:"status"`
 }
 
+type RegisterWorkerRequest struct {
+	WorkerID            string   `json:"workerId"`
+	Hostname            string   `json:"hostname"`
+	SupportedOperations []string `json:"supportedOperations"`
+	SupportedCodecs     []string `json:"supportedCodecs"`
+	CPUArchitecture     string   `json:"cpuArchitecture"`
+	CPUCores            int      `json:"cpuCores"`
+	MemoryBytes         int64    `json:"memoryBytes"`
+	FFmpegVersion       string   `json:"ffmpegVersion,omitempty"`
+}
+
+type RegisterWorkerResponse struct {
+	WorkerID     string    `json:"workerId"`
+	Status       string    `json:"status"`
+	RegisteredAt time.Time `json:"registeredAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
 type MetadataResult struct {
 	DurationSeconds *float64 `json:"durationSeconds,omitempty"`
 	FormatName      *string  `json:"formatName,omitempty"`

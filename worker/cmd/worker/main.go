@@ -8,19 +8,35 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/timothy-choi/automated-video-processor/worker/internal/capability"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/storage"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/worker"
 )
 
 func main() {
+	workerID := os.Getenv("WORKER_ID")
+	if workerID == "" {
+		log.Fatal("WORKER_ID is required")
+	}
+	restrict, err := capability.ParseSupportedOperationsEnv(os.Getenv("SUPPORTED_OPERATIONS"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	hostname := os.Getenv("WORKER_HOSTNAME")
+	if hostname == "" {
+		hostname, _ = os.Hostname()
+	}
+
 	cfg := worker.Config{
-		WorkerID:          envOr("WORKER_ID", defaultWorkerID()),
-		ControlServiceURL: envOr("CONTROL_SERVICE_URL", "http://localhost:8080"),
-		RabbitMQURL:       envOr("RABBITMQ_URL", defaultRabbitURL()),
-		Prefetch:          intEnv("PREFETCH", 1),
-		FfprobePath:       envOr("FFPROBE_PATH", "ffprobe"),
-		FfmpegPath:        envOr("FFMPEG_PATH", "ffmpeg"),
-		OutputBucket:      envOr("OUTPUT_BUCKET", "media-output"),
+		WorkerID:            workerID,
+		Hostname:            hostname,
+		ControlServiceURL:   envOr("CONTROL_SERVICE_URL", "http://localhost:8080"),
+		RabbitMQURL:         envOr("RABBITMQ_URL", defaultRabbitURL()),
+		Prefetch:            intEnv("PREFETCH", 1),
+		FfprobePath:         envOr("FFPROBE_PATH", "ffprobe"),
+		FfmpegPath:          envOr("FFMPEG_PATH", "ffmpeg"),
+		OutputBucket:        envOr("OUTPUT_BUCKET", "media-output"),
+		SupportedOperations: restrict,
 		ObjectStore: storage.Config{
 			Endpoint:       envOr("OBJECT_STORE_ENDPOINT", "http://localhost:9000"),
 			Region:         envOr("OBJECT_STORE_REGION", "us-east-1"),
@@ -43,14 +59,6 @@ func main() {
 	if err := worker.New(cfg, store).Run(ctx); err != nil && err != context.Canceled {
 		log.Fatal(err)
 	}
-}
-
-func defaultWorkerID() string {
-	host, err := os.Hostname()
-	if err != nil || host == "" {
-		return "worker"
-	}
-	return host
 }
 
 func defaultRabbitURL() string {

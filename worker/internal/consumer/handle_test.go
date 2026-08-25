@@ -105,6 +105,25 @@ func TestHandleDropsMalformedAndInvalidState(t *testing.T) {
 	}
 }
 
+func TestHandleDropsCapabilityMismatchWithoutExecuting(t *testing.T) {
+	body := []byte(`{
+		"schemaVersion": 1,
+		"operationId": "11111111-1111-1111-1111-111111111111",
+		"jobId": "22222222-2222-2222-2222-222222222222",
+		"type": "TRANSCODE_1080P",
+		"inputUri": "s3://media-input/sample.mp4",
+		"dispatchedAt": "2026-08-25T02:00:00Z"
+	}`)
+	ctrl := &fakeControl{start: model.StartResponse{Outcome: model.StartStarted, Status: "RUNNING"}}
+	decision := HandleWithCapabilities(context.Background(), "worker-a", []string{"METADATA", "THUMBNAIL"}, body, ctrl, unexpectedExec(t))
+	if decision != NackDrop {
+		t.Fatalf("decision=%s", decision)
+	}
+	if ctrl.completes != 0 || ctrl.fails != 0 || ctrl.starts != 0 {
+		t.Fatalf("completes=%d fails=%d starts=%d", ctrl.completes, ctrl.fails, ctrl.starts)
+	}
+}
+
 func TestHandleRequeuesWhenStartUnavailable(t *testing.T) {
 	ctrl := &fakeControl{startErr: errors.New("dial tcp: connection refused")}
 	if got := Handle(context.Background(), "worker-a", []byte(validAssignment), ctrl, unexpectedExec(t)); got != NackRequeue {
@@ -140,9 +159,11 @@ type fakeControl struct {
 	failErrs     []error
 	completes    int
 	fails        int
+	starts       int
 }
 
 func (f *fakeControl) Start(ctx context.Context, operationID string) (model.StartResponse, error) {
+	f.starts++
 	if f.startErr != nil {
 		return model.StartResponse{}, f.startErr
 	}

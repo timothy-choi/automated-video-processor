@@ -142,3 +142,88 @@ func TestStartNotFoundIsStatusError(t *testing.T) {
 		t.Fatalf("404 should not be unavailable: %v", err)
 	}
 }
+
+func TestRegisterWorkerSuccess(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/workers/register" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("content-type=%s", r.Header.Get("Content-Type"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{
+			"workerId": "worker-a",
+			"status": "REGISTERED",
+			"registeredAt": "2026-08-25T20:00:00Z",
+			"updatedAt": "2026-08-25T20:00:00Z"
+		}`)
+	}))
+	defer server.Close()
+
+	resp, err := New(server.URL, 5*time.Second).RegisterWorker(context.Background(), model.RegisterWorkerRequest{
+		WorkerID:            "worker-a",
+		Hostname:            "mac-worker-a",
+		SupportedOperations: []string{"METADATA", "THUMBNAIL"},
+		SupportedCodecs:     []string{"h264"},
+		CPUArchitecture:     "arm64",
+		CPUCores:            8,
+		MemoryBytes:         17179869184,
+		FFmpegVersion:       "7.1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.WorkerID != "worker-a" || resp.Status != "REGISTERED" {
+		t.Fatalf("resp=%+v", resp)
+	}
+	if gotBody["workerId"] != "worker-a" {
+		t.Fatalf("body=%v", gotBody)
+	}
+	ops, _ := gotBody["supportedOperations"].([]any)
+	if len(ops) != 2 {
+		t.Fatalf("operations=%v", gotBody["supportedOperations"])
+	}
+}
+
+func TestRegisterWorkerUpdateIsOK(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{
+			"workerId": "worker-a",
+			"status": "REGISTERED",
+			"registeredAt": "2026-08-25T20:00:00Z",
+			"updatedAt": "2026-08-25T21:00:00Z"
+		}`)
+	}))
+	defer server.Close()
+	resp, err := New(server.URL, 5*time.Second).RegisterWorker(context.Background(), model.RegisterWorkerRequest{WorkerID: "worker-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.WorkerID != "worker-a" {
+		t.Fatalf("resp=%+v", resp)
+	}
+}
+
+func TestRegisterWorkerFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"code":"INVALID_REGISTRATION"}`)
+	}))
+	defer server.Close()
+	_, err := New(server.URL, 5*time.Second).RegisterWorker(context.Background(), model.RegisterWorkerRequest{WorkerID: "worker-a"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var statusErr *StatusError
+	if !errors.As(err, &statusErr) || statusErr.Status != http.StatusBadRequest {
+		t.Fatalf("err=%v", err)
+	}
+}

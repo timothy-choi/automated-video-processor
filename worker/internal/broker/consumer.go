@@ -12,9 +12,10 @@ import (
 )
 
 type Config struct {
-	URL      string
-	WorkerID string
-	Prefetch int
+	URL                 string
+	WorkerID            string
+	Prefetch            int
+	SupportedOperations []string
 }
 
 type Consumer struct {
@@ -116,7 +117,7 @@ func (c *Consumer) consumeSession(ctx context.Context) error {
 func (c *Consumer) handleDelivery(ctx context.Context, delivery *amqp.Delivery) {
 	workCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	decision := consumer.Handle(workCtx, c.cfg.WorkerID, delivery.Body, c.ctrl, c.exec)
+	decision := consumer.HandleWithCapabilities(workCtx, c.cfg.WorkerID, c.cfg.SupportedOperations, delivery.Body, c.ctrl, c.exec)
 	switch decision {
 	case consumer.Ack:
 		if err := delivery.Ack(false); err != nil {

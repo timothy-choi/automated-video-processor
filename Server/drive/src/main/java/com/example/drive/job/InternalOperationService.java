@@ -50,7 +50,7 @@ public class InternalOperationService {
 
 	@Transactional
 	public StartOperationResponse start(UUID operationId) {
-		lockOperation(operationId);
+		lockJobForOperation(operationId);
 		Instant now = clock.instant();
 		Operation operation = operationRepository.findByIdWithJobAndOperations(operationId)
 				.orElseThrow(() -> new OperationNotFoundException(operationId));
@@ -83,6 +83,7 @@ public class InternalOperationService {
 
 	@Transactional
 	public OperationResponse complete(UUID operationId, CompleteOperationRequest request) {
+		lockJobForOperation(operationId);
 		Instant now = clock.instant();
 		Operation operation = operationRepository.findByIdWithJobAndOperations(operationId)
 				.orElseThrow(() -> new OperationNotFoundException(operationId));
@@ -103,6 +104,7 @@ public class InternalOperationService {
 
 	@Transactional
 	public OperationResponse fail(UUID operationId, FailOperationRequest request) {
+		lockJobForOperation(operationId);
 		Instant now = clock.instant();
 		Operation operation = operationRepository.findByIdWithJobAndOperations(operationId)
 				.orElseThrow(() -> new OperationNotFoundException(operationId));
@@ -149,13 +151,14 @@ public class InternalOperationService {
 		return changed;
 	}
 
-	private void lockOperation(UUID operationId) {
+	private void lockJobForOperation(UUID operationId) {
 		@SuppressWarnings("unchecked")
 		List<Object> rows = entityManager.createNativeQuery("""
-				SELECT id
-				FROM operations
-				WHERE id = :id
-				FOR UPDATE
+				SELECT j.id
+				FROM jobs j
+				JOIN operations o ON o.job_id = j.id
+				WHERE o.id = :id
+				FOR UPDATE OF j
 				""")
 				.setParameter("id", operationId)
 				.getResultList();

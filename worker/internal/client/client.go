@@ -135,6 +135,38 @@ func (c *Client) Fail(ctx context.Context, operationID string, runtimeMs *int64,
 	return c.postJSON(ctx, "/internal/operations/"+operationID+"/fail", payload)
 }
 
+func (c *Client) RegisterWorker(ctx context.Context, request model.RegisterWorkerRequest) (model.RegisterWorkerResponse, error) {
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return model.RegisterWorkerResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/internal/workers/register", bytes.NewReader(payload))
+	if err != nil {
+		return model.RegisterWorkerResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return model.RegisterWorkerResponse{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return model.RegisterWorkerResponse{}, err
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return model.RegisterWorkerResponse{}, &StatusError{Status: resp.StatusCode, Body: string(body)}
+	}
+	var registered model.RegisterWorkerResponse
+	if err := json.Unmarshal(body, &registered); err != nil {
+		return model.RegisterWorkerResponse{}, fmt.Errorf("register response is invalid JSON: %w", err)
+	}
+	if registered.WorkerID == "" {
+		return model.RegisterWorkerResponse{}, fmt.Errorf("register response is missing workerId")
+	}
+	return registered, nil
+}
+
 func (c *Client) postJSON(ctx context.Context, path string, payload []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
 	if err != nil {

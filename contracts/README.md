@@ -15,7 +15,7 @@ Published to RabbitMQ as persistent JSON. Java dispatcher and Go workers must ke
 }
 ```
 
-`type` is `METADATA` or `THUMBNAIL`. Unknown extra fields must be ignored so later `attemptId` / `workerId` / `leaseToken` / trace context can be added without a breaking change.
+`type` is typically `METADATA` or `THUMBNAIL` today. Unknown extra fields must be ignored so later `attemptId` / `workerId` / `leaseToken` / trace context can be added without a breaking change. A worker that receives a type it did not register (for example `TRANSCODE_1080P`) must not execute it; it dead-letters the message.
 
 ## RabbitMQ topology (Phase 3A)
 
