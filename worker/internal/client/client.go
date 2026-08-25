@@ -60,11 +60,8 @@ func (c *Client) Claim(ctx context.Context) (*model.ClaimedOperation, bool, erro
 	return &claimed, true, nil
 }
 
-func (c *Client) Complete(ctx context.Context, operationID string, runtimeMs int64, result model.MetadataResult) error {
-	payload, err := json.Marshal(model.CompleteRequest{
-		ActualRuntimeMs: runtimeMs,
-		Result:          result,
-	})
+func (c *Client) Complete(ctx context.Context, operationID string, request model.CompleteRequest) error {
+	payload, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}

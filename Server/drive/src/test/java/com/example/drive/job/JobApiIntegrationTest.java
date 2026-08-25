@@ -201,6 +201,25 @@ class JobApiIntegrationTest {
 		mockMvc.perform(get("/jobs/" + missingId + "/operations"))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
+
+		mockMvc.perform(get("/jobs/" + missingId + "/artifacts"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
+	}
+
+	@Test
+	void getArtifactsReturnsEmptyListWhenNoneExist() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "s3://media-input/clip.mov",
+				  "operations": [{"type": "METADATA"}]
+				}
+				""");
+
+		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.jobId").value(jobId.toString()))
+				.andExpect(jsonPath("$.artifacts.length()").value(0));
 	}
 
 	private UUID createJob(String json) throws Exception {

@@ -28,7 +28,7 @@ public class InternalOperationController {
 
 	@PostMapping("/claim")
 	public ResponseEntity<ClaimedOperationResponse> claim() {
-		return internalOperationService.claimNextMetadataOperation()
+		return internalOperationService.claimNextExecutableOperation()
 				.map(ResponseEntity::ok)
 				.orElseGet(() -> ResponseEntity.noContent().build());
 	}

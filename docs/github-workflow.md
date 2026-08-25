@@ -63,7 +63,7 @@ go vet ./...
 go test ./...
 ```
 
-CI does not install FFmpeg. The Go integration test that generates a tiny clip is skipped when `ffmpeg`/`ffprobe` are missing.
+CI does not install FFmpeg or MinIO. Go tests that generate a tiny clip are skipped when `ffmpeg`/`ffprobe` are missing. Object-storage tests use an in-memory fake, not a MinIO container.
 
 `verify` / `package` is not used: the current POM has no extra verification plugins beyond Flyway/JPA, so `clean test` already compiles the application, applies test schema via Flyway against Testcontainers, and runs all tests.
 
@@ -130,4 +130,4 @@ Until those settings are enabled, someone with write access can still push direc
 | No secrets | Credentials only when a real deploy exists |
 | `contents: read` only | Write/deploy permissions only when needed |
 
-Do not add RabbitMQ, FFmpeg installation, or cloud services to CI until those components are required by the default test suite. Go unit tests are in CI; real ffprobe execution is skipped on runners without FFmpeg.
+Do not add RabbitMQ, FFmpeg installation, MinIO, or cloud services to CI until those components are required by the default test suite. Go unit tests are in CI; real ffprobe/FFmpeg execution is skipped on runners without those binaries.

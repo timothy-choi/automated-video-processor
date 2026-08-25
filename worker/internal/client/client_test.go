@@ -74,14 +74,21 @@ func TestCompleteSendsPayload(t *testing.T) {
 		if body["actualRuntimeMs"].(float64) != 12 {
 			t.Fatalf("runtime = %v", body["actualRuntimeMs"])
 		}
+		metadata, ok := body["metadata"].(map[string]any)
+		if !ok || metadata["formatName"] != "mp4" {
+			t.Fatalf("metadata = %v", body["metadata"])
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, `{"status":"COMPLETED"}`)
 	}))
 	defer server.Close()
 
 	format := "mp4"
-	err := New(server.URL, 5*time.Second).Complete(context.Background(), "op-1", 12, model.MetadataResult{
-		FormatName: &format,
+	err := New(server.URL, 5*time.Second).Complete(context.Background(), "op-1", model.CompleteRequest{
+		ActualRuntimeMs: 12,
+		Metadata: &model.MetadataResult{
+			FormatName: &format,
+		},
 	})
 	if err != nil {
 		t.Fatal(err)

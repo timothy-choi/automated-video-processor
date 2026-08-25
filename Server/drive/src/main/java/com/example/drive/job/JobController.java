@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.example.drive.job.dto.CreateJobRequest;
+import com.example.drive.job.dto.JobArtifactsResponse;
 import com.example.drive.job.dto.JobOperationsResponse;
 import com.example.drive.job.dto.JobResponse;
 
@@ -40,5 +41,10 @@ public class JobController {
 	@GetMapping("/{id}/operations")
 	public JobOperationsResponse getOperations(@PathVariable("id") UUID id) {
 		return jobService.getOperations(id);
+	}
+
+	@GetMapping("/{id}/artifacts")
+	public JobArtifactsResponse getArtifacts(@PathVariable("id") UUID id) {
+		return jobService.getArtifacts(id);
 	}
 }

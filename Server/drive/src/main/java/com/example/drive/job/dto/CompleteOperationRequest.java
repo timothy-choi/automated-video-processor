@@ -9,8 +9,10 @@ public record CompleteOperationRequest(
 		@Min(value = 0, message = "actualRuntimeMs must be zero or positive")
 		Long actualRuntimeMs,
 
-		@NotNull(message = "result is required")
 		@Valid
-		MetadataResultDto result
+		MetadataResultDto metadata,
+
+		@Valid
+		ArtifactCompletionDto artifact
 ) {
 }
