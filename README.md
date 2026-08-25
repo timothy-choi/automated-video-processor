@@ -85,6 +85,41 @@ The original Automated Video Processor code remains in the repository for histor
 
 See [docs/legacy-system.md](docs/legacy-system.md) for the per-subsystem classification (KEEP / KEEP + MODIFY / REFACTOR / REPLACE / RETIRE).
 
+## Development workflow
+
+New work should happen on a feature or phase branch, not on `main`.
+
+```bash
+git checkout main
+git pull
+
+git checkout -b phase-2a-job-api
+
+# make changes
+
+git add .
+git commit -m "Add durable job API"
+
+git push -u origin phase-2a-job-api
+```
+
+Names such as `phase-2a-job-api`, `feature/job-persistence`, or `fix/job-validation` are examples only.
+
+Then:
+
+1. Open a pull request into `main`.
+2. Wait for required CI checks.
+3. Review the changes.
+4. Merge only when CI is green.
+
+Do not routinely push feature work directly to `main`.
+
+Pushes to non-`main` branches run **Branch CI**. Pull requests to `main` and pushes/merges to `main` run **PR / Main CI**. Both execute `./mvnw clean test` from `Server/drive` with Java 21.
+
+These workflows are a **build/test gate**. They do not deploy anything. Deployment will be designed later.
+
+See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the local CI equivalent, and the recommended GitHub settings to protect `main` (requiring a PR, requiring **Java tests**, blocking force pushes). Creating the YAML files does not enable those settings by itself.
+
 ## What comes later
 
 Distributed execution, scheduling policies, worker registration, RabbitMQ dispatch, FFmpeg workers, and observability belong to later phases. Do not assume those features exist because the long-term design mentions them.
