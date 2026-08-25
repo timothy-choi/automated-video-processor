@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -92,5 +93,52 @@ func TestCompleteSendsPayload(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStartParsesOutcome(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/operations/op-9/start" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"outcome": "STARTED",
+			"operationId": "op-9",
+			"jobId": "job-9",
+			"type": "METADATA",
+			"inputUri": "s3://media-input/sample.mp4",
+			"status": "RUNNING"
+		}`)
+	}))
+	defer server.Close()
+
+	started, err := New(server.URL, 5*time.Second).Start(context.Background(), "op-9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.Outcome != model.StartStarted {
+		t.Fatalf("outcome=%s", started.Outcome)
+	}
+}
+
+func TestStartNotFoundIsStatusError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"code":"OPERATION_NOT_FOUND"}`)
+	}))
+	defer server.Close()
+
+	_, err := New(server.URL, 5*time.Second).Start(context.Background(), "missing")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !IsUnavailable(err) {
+		var statusErr *StatusError
+		if !errors.As(err, &statusErr) || statusErr.Status != http.StatusNotFound {
+			t.Fatalf("err=%v", err)
+		}
+	} else {
+		t.Fatalf("404 should not be unavailable: %v", err)
 	}
 }

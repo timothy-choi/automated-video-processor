@@ -9,10 +9,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.example.drive.dispatch.DispatchProperties;
 import com.example.drive.job.dto.ClaimedOperationResponse;
 import com.example.drive.job.dto.CompleteOperationRequest;
 import com.example.drive.job.dto.FailOperationRequest;
 import com.example.drive.job.dto.OperationResponse;
+import com.example.drive.job.dto.StartOperationResponse;
 
 import jakarta.validation.Valid;
 
@@ -21,16 +23,29 @@ import jakarta.validation.Valid;
 public class InternalOperationController {
 
 	private final InternalOperationService internalOperationService;
+	private final DispatchProperties dispatchProperties;
 
-	public InternalOperationController(InternalOperationService internalOperationService) {
+	public InternalOperationController(
+			InternalOperationService internalOperationService,
+			DispatchProperties dispatchProperties
+	) {
 		this.internalOperationService = internalOperationService;
+		this.dispatchProperties = dispatchProperties;
 	}
 
 	@PostMapping("/claim")
 	public ResponseEntity<ClaimedOperationResponse> claim() {
+		if (!dispatchProperties.isHttpClaimEnabled()) {
+			throw new HttpClaimDisabledException();
+		}
 		return internalOperationService.claimNextExecutableOperation()
 				.map(ResponseEntity::ok)
 				.orElseGet(() -> ResponseEntity.noContent().build());
+	}
+
+	@PostMapping("/{operationId}/start")
+	public StartOperationResponse start(@PathVariable("operationId") UUID operationId) {
+		return internalOperationService.start(operationId);
 	}
 
 	@PostMapping("/{operationId}/complete")

@@ -21,6 +21,8 @@ import com.example.drive.job.dto.CompleteOperationRequest;
 import com.example.drive.job.dto.FailOperationRequest;
 import com.example.drive.job.dto.MetadataResultDto;
 import com.example.drive.job.dto.OperationResponse;
+import com.example.drive.job.dto.StartOperationResponse;
+import com.example.drive.job.dto.StartOutcome;
 import com.example.drive.job.repository.ArtifactRepository;
 import com.example.drive.job.repository.OperationRepository;
 
@@ -44,6 +46,24 @@ public class InternalOperationService {
 		this.operationRepository = operationRepository;
 		this.artifactRepository = artifactRepository;
 		this.clock = clock;
+	}
+
+	@Transactional
+	public StartOperationResponse start(UUID operationId) {
+		lockOperation(operationId);
+		Instant now = clock.instant();
+		Operation operation = operationRepository.findByIdWithJobAndOperations(operationId)
+				.orElseThrow(() -> new OperationNotFoundException(operationId));
+		return switch (operation.getStatus()) {
+			case ASSIGNED -> {
+				operation.markRunning(now);
+				operation.getJob().refreshStatusFromOperations(now);
+				yield StartOperationResponse.from(StartOutcome.STARTED, operation);
+			}
+			case RUNNING -> StartOperationResponse.from(StartOutcome.ALREADY_RUNNING, operation);
+			case COMPLETED, FAILED, CANCELLED -> StartOperationResponse.from(StartOutcome.ALREADY_TERMINAL, operation);
+			case QUEUED -> StartOperationResponse.from(StartOutcome.INVALID_STATE, operation);
+		};
 	}
 
 	@Transactional
@@ -127,6 +147,21 @@ public class InternalOperationService {
 			));
 		}
 		return changed;
+	}
+
+	private void lockOperation(UUID operationId) {
+		@SuppressWarnings("unchecked")
+		List<Object> rows = entityManager.createNativeQuery("""
+				SELECT id
+				FROM operations
+				WHERE id = :id
+				FOR UPDATE
+				""")
+				.setParameter("id", operationId)
+				.getResultList();
+		if (rows.isEmpty()) {
+			throw new OperationNotFoundException(operationId);
+		}
 	}
 
 	private Optional<UUID> lockNextClaimableId() {

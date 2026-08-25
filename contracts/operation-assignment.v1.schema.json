@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/timothy-choi/automated-video-processor/contracts/operation-assignment.v1.schema.json",
+  "title": "OperationAssignmentV1",
+  "description": "RabbitMQ assignment envelope published by the control-service dispatcher. Workers consume this JSON. Additional fields may be added later (attemptId, workerId, leaseToken, trace context) and must be ignored by v1 consumers.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schemaVersion", "operationId", "jobId", "type", "inputUri", "dispatchedAt"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "operationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "jobId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["METADATA", "THUMBNAIL"]
+    },
+    "inputUri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dispatchedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

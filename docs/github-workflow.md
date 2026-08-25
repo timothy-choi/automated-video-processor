@@ -54,7 +54,7 @@ From `Server/drive`:
 
 CI uses `--batch-mode` and `--no-transfer-progress` so Maven does not prompt and logs stay readable. The lifecycle is still `clean test`.
 
-Java tests use Testcontainers PostgreSQL. GitHub-hosted `ubuntu-latest` runners already provide Docker. A local `./mvnw clean test` also needs a running Docker daemon.
+Java tests use Testcontainers PostgreSQL. GitHub-hosted `ubuntu-latest` runners already provide Docker. A local `./mvnw clean test` also needs a running Docker daemon. Phase 3A Java tests also start a RabbitMQ Testcontainers broker for dispatch integration tests. Existing job/claim tests disable the dispatcher and do not require RabbitMQ.
 
 From `worker/`:
 
@@ -63,7 +63,7 @@ go vet ./...
 go test ./...
 ```
 
-CI does not install FFmpeg or MinIO. Go tests that generate a tiny clip are skipped when `ffmpeg`/`ffprobe` are missing. Object-storage tests use an in-memory fake, not a MinIO container.
+CI does not install FFmpeg or MinIO. Go tests that generate a tiny clip are skipped when `ffmpeg`/`ffprobe` are missing. Object-storage tests use an in-memory fake, not a MinIO container. Go broker tests start RabbitMQ via Testcontainers and therefore also need Docker.
 
 `verify` / `package` is not used: the current POM has no extra verification plugins beyond Flyway/JPA, so `clean test` already compiles the application, applies test schema via Flyway against Testcontainers, and runs all tests.
 

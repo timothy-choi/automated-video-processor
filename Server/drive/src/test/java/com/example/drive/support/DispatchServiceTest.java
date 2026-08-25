@@ -12,13 +12,13 @@ import org.springframework.context.annotation.Import;
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 @SpringBootTest(properties = {
-		"drive.dispatch.enabled=false",
+		"drive.dispatch.enabled=true",
 		"drive.dispatch.scheduling-enabled=false",
 		"drive.dispatch.publisher-enabled=false",
-		"drive.dispatch.http-claim-enabled=true",
+		"drive.dispatch.http-claim-enabled=false",
 		"spring.autoconfigure.exclude=org.springframework.boot.amqp.autoconfigure.RabbitAutoConfiguration"
 })
 @AutoConfigureMockMvc
 @Import(PostgresTestcontainersConfig.class)
-public @interface ControlServiceTest {
+public @interface DispatchServiceTest {
 }

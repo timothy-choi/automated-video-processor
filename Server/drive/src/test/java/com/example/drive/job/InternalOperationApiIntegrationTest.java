@@ -511,6 +511,41 @@ class InternalOperationApiIntegrationTest {
 				.andExpect(jsonPath("$.code").value("OPERATION_NOT_FOUND"));
 	}
 
+	@Test
+	void startFromAssignedIsConditionalAndDuplicateSafe() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "file:///tmp/start.mp4",
+				  "operations": [{"type": "METADATA"}]
+				}
+				""");
+		UUID operationId = UUID.fromString(jdbcTemplate.queryForObject(
+				"select id from operations where job_id = ?",
+				String.class,
+				jobId
+		));
+		jdbcTemplate.update("update operations set status = 'ASSIGNED' where id = ?", operationId);
+
+		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.outcome").value("STARTED"))
+				.andExpect(jsonPath("$.status").value("RUNNING"));
+		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.outcome").value("ALREADY_RUNNING"));
+
+		completeMetadata(operationId);
+		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+				.andExpect(jsonPath("$.outcome").value("ALREADY_TERMINAL"));
+	}
+
+	@Test
+	void startUnknownOperationReturns404() throws Exception {
+		mockMvc.perform(post("/internal/operations/" + UUID.randomUUID() + "/start"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("OPERATION_NOT_FOUND"));
+	}
+
 	private UUID createJob(String json) throws Exception {
 		MvcResult result = mockMvc.perform(post("/jobs")
 						.contentType(MediaType.APPLICATION_JSON)

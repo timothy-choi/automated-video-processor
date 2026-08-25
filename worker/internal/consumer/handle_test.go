@@ -1,0 +1,170 @@
+package consumer
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/timothy-choi/automated-video-processor/worker/internal/client"
+	"github.com/timothy-choi/automated-video-processor/worker/internal/model"
+	"github.com/timothy-choi/automated-video-processor/worker/internal/run"
+)
+
+const validAssignment = `{
+	"schemaVersion": 1,
+	"operationId": "11111111-1111-1111-1111-111111111111",
+	"jobId": "22222222-2222-2222-2222-222222222222",
+	"type": "METADATA",
+	"inputUri": "s3://media-input/sample.mp4",
+	"dispatchedAt": "2026-08-25T02:00:00Z"
+}`
+
+func TestHandleAcksAfterSuccessfulComplete(t *testing.T) {
+	ctrl := &fakeControl{start: model.StartResponse{Outcome: model.StartStarted, Status: "RUNNING"}}
+	executed := 0
+	decision := Handle(context.Background(), "worker-a", []byte(validAssignment), ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+		executed++
+		if claimed.OperationID != "11111111-1111-1111-1111-111111111111" {
+			t.Fatalf("operation=%s", claimed.OperationID)
+		}
+		format := "mp4"
+		return run.Result{RuntimeMs: 12, Metadata: &model.MetadataResult{FormatName: &format}}, nil
+	})
+	if decision != Ack {
+		t.Fatalf("decision=%s", decision)
+	}
+	if executed != 1 || ctrl.completes != 1 || ctrl.fails != 0 {
+		t.Fatalf("executed=%d completes=%d fails=%d", executed, ctrl.completes, ctrl.fails)
+	}
+}
+
+func TestHandleNacksWhenCompleteUnavailable(t *testing.T) {
+	ctrl := &fakeControl{
+		start:        model.StartResponse{Outcome: model.StartStarted, Status: "RUNNING"},
+		completeErrs: []error{errors.New("connection refused"), errors.New("connection refused"), errors.New("connection refused")},
+	}
+	decision := Handle(context.Background(), "worker-a", []byte(validAssignment), ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+		return run.Result{RuntimeMs: 5}, nil
+	})
+	if decision != NackRequeue {
+		t.Fatalf("decision=%s", decision)
+	}
+}
+
+func TestHandleAcksFailedMediaAfterPersistingFailure(t *testing.T) {
+	ctrl := &fakeControl{start: model.StartResponse{Outcome: model.StartStarted, Status: "RUNNING"}}
+	decision := Handle(context.Background(), "worker-b", []byte(validAssignment), ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+		return run.Result{RuntimeMs: 8}, errors.New("ffprobe failed")
+	})
+	if decision != Ack {
+		t.Fatalf("decision=%s", decision)
+	}
+	if ctrl.fails != 1 || ctrl.completes != 0 {
+		t.Fatalf("fails=%d completes=%d", ctrl.fails, ctrl.completes)
+	}
+}
+
+func TestHandleNacksWhenFailReportUnavailable(t *testing.T) {
+	ctrl := &fakeControl{
+		start:    model.StartResponse{Outcome: model.StartStarted, Status: "RUNNING"},
+		failErrs: []error{errors.New("control down"), errors.New("control down"), errors.New("control down")},
+	}
+	decision := Handle(context.Background(), "worker-a", []byte(validAssignment), ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+		return run.Result{RuntimeMs: 3}, errors.New("object not found")
+	})
+	if decision != NackRequeue {
+		t.Fatalf("decision=%s", decision)
+	}
+}
+
+func TestHandleDoesNotExecuteDuplicateOrTerminal(t *testing.T) {
+	for _, outcome := range []string{model.StartAlreadyRunning, model.StartAlreadyTerminal} {
+		ctrl := &fakeControl{start: model.StartResponse{Outcome: outcome, Status: "COMPLETED"}}
+		executed := 0
+		decision := Handle(context.Background(), "worker-c", []byte(validAssignment), ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+			executed++
+			return run.Result{}, nil
+		})
+		if decision != Ack {
+			t.Fatalf("outcome=%s decision=%s", outcome, decision)
+		}
+		if executed != 0 {
+			t.Fatalf("outcome=%s executed duplicate work", outcome)
+		}
+	}
+}
+
+func TestHandleDropsMalformedAndInvalidState(t *testing.T) {
+	ctrl := &fakeControl{start: model.StartResponse{Outcome: model.StartInvalidState, Status: "QUEUED"}}
+	if got := Handle(context.Background(), "worker-a", []byte("{nope"), ctrl, unexpectedExec(t)); got != NackDrop {
+		t.Fatalf("malformed decision=%s", got)
+	}
+	if got := Handle(context.Background(), "worker-a", []byte(validAssignment), ctrl, unexpectedExec(t)); got != NackDrop {
+		t.Fatalf("invalid state decision=%s", got)
+	}
+}
+
+func TestHandleRequeuesWhenStartUnavailable(t *testing.T) {
+	ctrl := &fakeControl{startErr: errors.New("dial tcp: connection refused")}
+	if got := Handle(context.Background(), "worker-a", []byte(validAssignment), ctrl, unexpectedExec(t)); got != NackRequeue {
+		t.Fatalf("decision=%s", got)
+	}
+}
+
+func TestHandleDropsWhenOperationMissing(t *testing.T) {
+	ctrl := &fakeControl{startErr: &client.StatusError{Status: 404, Body: "OPERATION_NOT_FOUND"}}
+	if got := Handle(context.Background(), "worker-a", []byte(validAssignment), ctrl, unexpectedExec(t)); got != NackDrop {
+		t.Fatalf("decision=%s", got)
+	}
+}
+
+func TestWorkerIDConfig(t *testing.T) {
+	if !strings.Contains(Ack.String(), "ack") {
+		t.Fatal(Ack)
+	}
+}
+
+func unexpectedExec(t *testing.T) Executor {
+	t.Helper()
+	return func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+		t.Fatal("executor should not run")
+		return run.Result{}, nil
+	}
+}
+
+type fakeControl struct {
+	start        model.StartResponse
+	startErr     error
+	completeErrs []error
+	failErrs     []error
+	completes    int
+	fails        int
+}
+
+func (f *fakeControl) Start(ctx context.Context, operationID string) (model.StartResponse, error) {
+	if f.startErr != nil {
+		return model.StartResponse{}, f.startErr
+	}
+	return f.start, nil
+}
+
+func (f *fakeControl) Complete(ctx context.Context, operationID string, request model.CompleteRequest) error {
+	f.completes++
+	if len(f.completeErrs) > 0 {
+		err := f.completeErrs[0]
+		f.completeErrs = f.completeErrs[1:]
+		return err
+	}
+	return nil
+}
+
+func (f *fakeControl) Fail(ctx context.Context, operationID string, runtimeMs *int64, reason string) error {
+	f.fails++
+	if len(f.failErrs) > 0 {
+		err := f.failErrs[0]
+		f.failErrs = f.failErrs[1:]
+		return err
+	}
+	return nil
+}

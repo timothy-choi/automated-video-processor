@@ -108,12 +108,14 @@ public class Job {
 	public void refreshStatusFromOperations(Instant now) {
 		boolean anyFailed = false;
 		boolean anyRunning = false;
+		boolean anyAssigned = false;
 		boolean anyQueued = false;
 		boolean anyCompleted = false;
 		for (Operation operation : operations) {
 			switch (operation.getStatus()) {
 				case FAILED -> anyFailed = true;
 				case RUNNING -> anyRunning = true;
+				case ASSIGNED -> anyAssigned = true;
 				case QUEUED -> anyQueued = true;
 				case COMPLETED -> anyCompleted = true;
 				case CANCELLED -> {
@@ -125,11 +127,14 @@ public class Job {
 		if (anyFailed) {
 			next = JobStatus.FAILED;
 		}
-		else if (!anyQueued && !anyRunning && anyCompleted) {
+		else if (!anyQueued && !anyAssigned && !anyRunning && anyCompleted) {
 			next = JobStatus.COMPLETED;
 		}
 		else if (anyRunning || anyCompleted) {
 			next = JobStatus.RUNNING;
+		}
+		else if (anyAssigned) {
+			next = JobStatus.ASSIGNED;
 		}
 		else {
 			next = JobStatus.QUEUED;

@@ -39,3 +39,19 @@ type FailRequest struct {
 	ActualRuntimeMs *int64 `json:"actualRuntimeMs,omitempty"`
 	Reason          string `json:"reason"`
 }
+
+type StartResponse struct {
+	Outcome     string `json:"outcome"`
+	OperationID string `json:"operationId"`
+	JobID       string `json:"jobId"`
+	Type        string `json:"type"`
+	InputURI    string `json:"inputUri"`
+	Status      string `json:"status"`
+}
+
+const (
+	StartStarted         = "STARTED"
+	StartAlreadyRunning  = "ALREADY_RUNNING"
+	StartAlreadyTerminal = "ALREADY_TERMINAL"
+	StartInvalidState    = "INVALID_STATE"
+)

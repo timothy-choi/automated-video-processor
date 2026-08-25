@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import com.example.drive.job.HttpClaimDisabledException;
 import com.example.drive.job.IllegalOperationStateException;
 import com.example.drive.job.InvalidJobRequestException;
 import com.example.drive.job.JobNotFoundException;
@@ -35,6 +36,11 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(OperationNotFoundException.class)
 	public ResponseEntity<ApiError> handleOperationNotFound(OperationNotFoundException ex) {
 		return respond(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND", ex.getMessage());
+	}
+
+	@ExceptionHandler(HttpClaimDisabledException.class)
+	public ResponseEntity<ApiError> handleHttpClaimDisabled(HttpClaimDisabledException ex) {
+		return respond(HttpStatus.NOT_FOUND, "CLAIM_DISABLED", ex.getMessage());
 	}
 
 	@ExceptionHandler(IllegalOperationStateException.class)
