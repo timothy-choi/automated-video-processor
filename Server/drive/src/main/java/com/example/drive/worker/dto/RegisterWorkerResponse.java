@@ -8,6 +8,7 @@ import com.example.drive.worker.domain.WorkerStatus;
 public record RegisterWorkerResponse(
 		String workerId,
 		WorkerStatus status,
+		Instant lastHeartbeat,
 		Instant registeredAt,
 		Instant updatedAt
 ) {
@@ -15,6 +16,7 @@ public record RegisterWorkerResponse(
 		return new RegisterWorkerResponse(
 				worker.getId(),
 				worker.getStatus(),
+				worker.getLastHeartbeat(),
 				worker.getRegisteredAt(),
 				worker.getUpdatedAt()
 		);

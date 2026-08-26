@@ -23,10 +23,17 @@ type RegisterWorkerRequest struct {
 }
 
 type RegisterWorkerResponse struct {
-	WorkerID     string    `json:"workerId"`
-	Status       string    `json:"status"`
-	RegisteredAt time.Time `json:"registeredAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	WorkerID      string    `json:"workerId"`
+	Status        string    `json:"status"`
+	LastHeartbeat time.Time `json:"lastHeartbeat"`
+	RegisteredAt  time.Time `json:"registeredAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+type HeartbeatResponse struct {
+	WorkerID      string    `json:"workerId"`
+	Status        string    `json:"status"`
+	LastHeartbeat time.Time `json:"lastHeartbeat"`
 }
 
 type MetadataResult struct {

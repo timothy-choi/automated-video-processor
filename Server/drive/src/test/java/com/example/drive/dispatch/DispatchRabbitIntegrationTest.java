@@ -33,7 +33,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 		"drive.dispatch.enabled=true",
 		"drive.dispatch.scheduling-enabled=false",
 		"drive.dispatch.publisher-enabled=true",
-		"drive.dispatch.http-claim-enabled=false"
+		"drive.dispatch.http-claim-enabled=false",
+		"drive.worker.heartbeat-sweep-enabled=false"
 })
 @ImportAutoConfiguration(RabbitAutoConfiguration.class)
 @AutoConfigureMockMvc

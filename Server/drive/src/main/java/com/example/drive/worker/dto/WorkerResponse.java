@@ -18,6 +18,7 @@ public record WorkerResponse(
 		int cpuCores,
 		long memoryBytes,
 		String ffmpegVersion,
+		Instant lastHeartbeat,
 		Instant registeredAt,
 		Instant updatedAt
 ) {
@@ -38,6 +39,7 @@ public record WorkerResponse(
 				worker.getCpuCores(),
 				worker.getMemoryBytes(),
 				worker.getFfmpegVersion(),
+				worker.getLastHeartbeat(),
 				worker.getRegisteredAt(),
 				worker.getUpdatedAt()
 		);

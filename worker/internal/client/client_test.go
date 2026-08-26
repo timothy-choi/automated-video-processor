@@ -159,7 +159,8 @@ func TestRegisterWorkerSuccess(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = io.WriteString(w, `{
 			"workerId": "worker-a",
-			"status": "REGISTERED",
+			"status": "AVAILABLE",
+			"lastHeartbeat": "2026-08-25T20:00:00Z",
 			"registeredAt": "2026-08-25T20:00:00Z",
 			"updatedAt": "2026-08-25T20:00:00Z"
 		}`)
@@ -179,7 +180,7 @@ func TestRegisterWorkerSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.WorkerID != "worker-a" || resp.Status != "REGISTERED" {
+	if resp.WorkerID != "worker-a" || resp.Status != "AVAILABLE" {
 		t.Fatalf("resp=%+v", resp)
 	}
 	if gotBody["workerId"] != "worker-a" {
@@ -197,7 +198,8 @@ func TestRegisterWorkerUpdateIsOK(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, `{
 			"workerId": "worker-a",
-			"status": "REGISTERED",
+			"status": "AVAILABLE",
+			"lastHeartbeat": "2026-08-25T21:00:00Z",
 			"registeredAt": "2026-08-25T20:00:00Z",
 			"updatedAt": "2026-08-25T21:00:00Z"
 		}`)
@@ -224,6 +226,55 @@ func TestRegisterWorkerFailure(t *testing.T) {
 	}
 	var statusErr *StatusError
 	if !errors.As(err, &statusErr) || statusErr.Status != http.StatusBadRequest {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestHeartbeatSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/workers/worker-a/heartbeat" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.ContentLength > 0 {
+			t.Fatalf("expected empty body, content-length=%d", r.ContentLength)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"workerId": "worker-a",
+			"status": "AVAILABLE",
+			"lastHeartbeat": "2026-08-25T22:00:00Z"
+		}`)
+	}))
+	defer server.Close()
+
+	resp, err := New(server.URL, 5*time.Second).Heartbeat(context.Background(), "worker-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.WorkerID != "worker-a" || resp.Status != "AVAILABLE" {
+		t.Fatalf("resp=%+v", resp)
+	}
+	if resp.LastHeartbeat.IsZero() {
+		t.Fatal("expected lastHeartbeat")
+	}
+}
+
+func TestHeartbeatUnknownWorker(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/workers/missing/heartbeat" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"code":"WORKER_NOT_FOUND"}`)
+	}))
+	defer server.Close()
+
+	_, err := New(server.URL, 5*time.Second).Heartbeat(context.Background(), "missing")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var statusErr *StatusError
+	if !errors.As(err, &statusErr) || statusErr.Status != http.StatusNotFound {
 		t.Fatalf("err=%v", err)
 	}
 }
