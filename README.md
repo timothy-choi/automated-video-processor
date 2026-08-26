@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 4B**: FIFO still chooses the next operation. Worker placement can be lexicographic (Phase 4A baseline) or Round Robin among currently eligible workers. RabbitMQ only transports that decision. Least Loaded, SJF, EDF, and adaptive scoring are not implemented.
+This repository is currently at **Phase 4C**: FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded (fewest `RUNNING` execution attempts). RabbitMQ only transports that decision. SJF, EDF, and adaptive scoring are not implemented.
 
-## Current status: Phase 4B — FIFO operations + Round Robin worker placement
+## Current status: Phase 4C — FIFO operations + Least Loaded worker placement
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,11 +34,11 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
-Phase 4B currently:
+Phase 4C currently:
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write and does **not** publish RabbitMQ)
-- a **Go scheduler** polls `GET /internal/scheduler/snapshot`, selects the oldest eligible operation (**FIFO**), then chooses a worker with **LEXICOGRAPHIC** or **ROUND_ROBIN** placement
-- Java revalidates the decision in one transaction: operation still `QUEUED`, worker `AVAILABLE`, worker advertises the type, and the proposed worker matches the current placement rule (including RR cursor), then `QUEUED -> ASSIGNED`, writes a `scheduling_decisions` row (`operationPolicy=FIFO`, `workerPolicy=...`), and creates a **worker-targeted** outbox row
+- a **Go scheduler** polls `GET /internal/scheduler/snapshot`, selects the oldest eligible operation (**FIFO**), then chooses a worker with **LEXICOGRAPHIC**, **ROUND_ROBIN**, or **LEAST_LOADED** placement
+- Java revalidates correctness in one transaction: operation still `QUEUED`, worker `AVAILABLE`, worker advertises the type (and Round Robin cursor when that policy is used), then `QUEUED -> ASSIGNED`, writes a `scheduling_decisions` row (`operationPolicy=FIFO`, `workerPolicy=...`), and creates a **worker-targeted** outbox row. Least Loaded is **not** re-checked for optimality at commit.
 - the Java outbox publisher sends that assignment to RabbitMQ with routing key `worker.{workerId}`
 - Go workers declare durable per-worker queues before they register, consume only their queue, and reject a v3 assignment whose `workerId` does not match
 - workers send **periodic heartbeats**; the control service marks them `AVAILABLE` or `UNAVAILABLE`
@@ -60,9 +60,16 @@ Worker placement is a separate dimension:
 ```text
 LEXICOGRAPHIC  (default)  first eligible worker ID
 ROUND_ROBIN               rotate among currently eligible workers per operation type
+LEAST_LOADED              fewest RUNNING attempts, then workerId ASC
 ```
 
-Round Robin is baseline fairness, not load balancing. It does not claim better throughput or latency.
+Least Loaded is a baseline that reacts to current executing work. It is not a throughput or latency claim. Round Robin ignores current work and rotates. Lexicographic is the deterministic Phase 4A baseline.
+
+| Operation policy | Worker policy |
+| ---------------- | ------------- |
+| FIFO             | LEXICOGRAPHIC |
+| FIFO             | ROUND_ROBIN   |
+| FIFO             | LEAST_LOADED  |
 
 ```text
 Client
@@ -104,7 +111,7 @@ RabbitMQ  media.operations
 
 Go Scheduler (placement authority)
   |
-  +--> snapshot --> FIFO operation --> LEXICOGRAPHIC or ROUND_ROBIN worker --> assign
+  +--> snapshot --> FIFO operation --> LEXICOGRAPHIC / ROUND_ROBIN / LEAST_LOADED worker --> assign
 ```
 
 Stack: **Java 21**, **Spring Boot 4.1.1**, **Maven**, **PostgreSQL**, **Flyway**, **Spring Data JPA**, **Spring AMQP**, **Go**, **amqp091-go**, **ffprobe/FFmpeg**, **MinIO**, **RabbitMQ**. The Maven `artifactId` remains `drive`.
@@ -193,11 +200,11 @@ cd scheduler
 CONTROL_SERVICE_URL=http://localhost:8080 \
 SCHEDULER_POLL_INTERVAL=500ms \
 OPERATION_POLICY=FIFO \
-WORKER_PLACEMENT_POLICY=ROUND_ROBIN \
+WORKER_PLACEMENT_POLICY=LEAST_LOADED \
 go run ./cmd/scheduler
 ```
 
-`OPERATION_POLICY` must be `FIFO`. `WORKER_PLACEMENT_POLICY` is `LEXICOGRAPHIC` (default, Phase 4A baseline) or `ROUND_ROBIN`. Unknown values fail startup. `SCHEDULING_POLICY=FIFO` is still accepted as an alias for operation ordering only; it does **not** enable Round Robin. Then start workers (see below).
+`OPERATION_POLICY` must be `FIFO`. `WORKER_PLACEMENT_POLICY` is `LEXICOGRAPHIC` (default), `ROUND_ROBIN`, or `LEAST_LOADED`. Unknown values fail startup. `SCHEDULING_POLICY=FIFO` is still accepted as an alias for operation ordering only. Then start workers (see below).
 
 Override the control-service port with `SERVER_PORT`:
 
@@ -260,7 +267,7 @@ The scheduler decides **placement**. RabbitMQ **transports** that placement. The
 ```text
 queued operation
       ↓
-Go scheduler (FIFO operation + LEXICOGRAPHIC or ROUND_ROBIN worker)
+Go scheduler (FIFO operation + LEXICOGRAPHIC, ROUND_ROBIN, or LEAST_LOADED worker)
       ↓
 POST /internal/scheduler/assign
       ↓
@@ -291,7 +298,21 @@ After FIFO picks the operation, placement considers only workers that are `AVAIL
 
 **ROUND_ROBIN**: among that eligible set, take the next ID after the last **committed** Round Robin decision for the same operation type, wrapping to the first. If there is no previous RR decision, start at the lexicographically first eligible worker.
 
-Eligibility sets differ by type. `METADATA` and `THUMBNAIL` rotate independently. A metadata-only worker is never selected for `THUMBNAIL`. `UNAVAILABLE` workers are dropped from the current rotation and may rejoin later; there is no downtime-compensation credit.
+**LEAST_LOADED**: among currently eligible workers, choose the fewest `RUNNING` `ExecutionAttempt` rows. Tie-break is `workerId ASC`. `ASSIGNED` operations that have not started are **not** load. Completed, failed, and interrupted attempts are not load. Counts come from PostgreSQL (`COUNT` of attempts with `status = RUNNING` grouped by `worker_id`), not from a worker-reported counter.
+
+CPU/memory utilization is **not** used. Instantaneous cross-platform CPU percentage is easy to fake and hard to measure truthfully; static `cpuCores` / `memoryBytes` are capacity, not load. A simple authoritative `activeOperations` count is the Phase 4C baseline. Weighted or utilization scoring is later work.
+
+Example: worker-a active=2, worker-b active=0, worker-c active=1 → worker-b. Tie of active=1 between worker-a and worker-b → worker-a.
+
+The scheduler snapshot includes `activeOperations` per worker. Public `GET /workers` does not. Java does **not** reject a Least Loaded proposal because another worker became slightly less loaded between snapshot and commit. That would thrash. Java still requires `QUEUED`, `AVAILABLE`, and capability.
+
+Concurrent scheduler instances can both snapshot two idle workers and assign different operations to the same worker before either starts. That is accepted for this baseline: load is current `RUNNING` work, not a reservation of `ASSIGNED` work. Do not expect `a,b,a,b` under concurrent scheduling; that is Round Robin-like reservation behavior.
+
+Eligibility is always `AVAILABLE` + capable, for every placement policy. A metadata-only worker is never selected for `THUMBNAIL` even if it is idle. An `UNAVAILABLE` worker is never selected even if `activeOperations` is 0.
+
+Round Robin: `METADATA` and `THUMBNAIL` rotate independently using committed RR history. `UNAVAILABLE` workers leave the current rotation and may rejoin later; there is no downtime-compensation credit. Round Robin ignores current executing work.
+
+Least Loaded does not rotate and does not use the RR cursor. It compares current `RUNNING` counts among the eligible set. After lease or assignment-timeout recovery requeues work, the next tick places it among currently eligible workers using the same rule.
 
 Cursor state is the latest `scheduling_decisions` row with `worker_policy=ROUND_ROBIN` for that type. Scheduler restarts keep rotating; they do not reset to `worker-a`. Failed or missing assignments do not advance the cursor. Java serializes RR commits with a transaction-scoped advisory lock and rejects a proposal that is not the current next worker (`409 WORKER_PLACEMENT_CONFLICT`).
 
@@ -779,11 +800,12 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 
 `GET /jobs/{jobId}/operations/{operationId}/attempts` is a read-only history API (no lease internals).
 
-### Phase 4B limitations
+### Phase 4C limitations
 
 - only FIFO operation ordering; no SJF, EDF, or adaptive scoring
-- worker placement is LEXICOGRAPHIC or ROUND_ROBIN; not Least Loaded or load-aware
-- Round Robin is not a throughput or latency claim
+- worker placement is LEXICOGRAPHIC, ROUND_ROBIN, or LEAST_LOADED; not weighted or adaptive
+- Least Loaded counts RUNNING attempts only; ASSIGNED-not-started work is not reserved
+- Least Loaded and Round Robin are not throughput or latency claims
 - FIFO ignores persisted priority and deadline
 - no runtime estimator, queue-wait prediction, or utilization telemetry
 - no CPU/memory scoring even though static cores/memory are registered
@@ -845,4 +867,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next milestone is **Round Robin worker placement** on the same scheduler boundary (Phase 4B). FIFO operation ordering stays; only the worker-selection rule changes. Least Loaded, SJF, EDF, runtime estimation, utilization telemetry, and OpenTelemetry remain later still.
+The smallest next milestone is a **baseline scheduling benchmark harness** comparing LEXICOGRAPHIC, ROUND_ROBIN, and LEAST_LOADED on the same FIFO operation stream. SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.

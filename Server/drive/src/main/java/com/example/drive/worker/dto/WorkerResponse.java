@@ -7,6 +7,7 @@ import java.util.List;
 import com.example.drive.job.domain.OperationType;
 import com.example.drive.worker.domain.Worker;
 import com.example.drive.worker.domain.WorkerStatus;
+import com.fasterxml.jackson.annotation.JsonInclude;
 
 public record WorkerResponse(
 		String id,
@@ -20,9 +21,15 @@ public record WorkerResponse(
 		String ffmpegVersion,
 		Instant lastHeartbeat,
 		Instant registeredAt,
-		Instant updatedAt
+		Instant updatedAt,
+		@JsonInclude(JsonInclude.Include.NON_NULL)
+		Integer activeOperations
 ) {
 	public static WorkerResponse from(Worker worker) {
+		return from(worker, null);
+	}
+
+	public static WorkerResponse from(Worker worker, Integer activeOperations) {
 		List<OperationType> operations = worker.getSupportedOperations().stream()
 				.sorted(Comparator.comparingInt(Enum::ordinal))
 				.toList();
@@ -41,7 +48,8 @@ public record WorkerResponse(
 				worker.getFfmpegVersion(),
 				worker.getLastHeartbeat(),
 				worker.getRegisteredAt(),
-				worker.getUpdatedAt()
+				worker.getUpdatedAt(),
+				activeOperations
 		);
 	}
 }

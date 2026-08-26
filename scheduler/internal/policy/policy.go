@@ -11,6 +11,7 @@ const (
 	FIFO          = "FIFO"
 	Lexicographic = "LEXICOGRAPHIC"
 	RoundRobin    = "ROUND_ROBIN"
+	LeastLoaded   = "LEAST_LOADED"
 )
 
 type Selector struct {
@@ -31,9 +32,9 @@ func New(operationPolicy, workerPolicy string) (Selector, error) {
 		worker = Lexicographic
 	}
 	switch worker {
-	case Lexicographic, RoundRobin:
+	case Lexicographic, RoundRobin, LeastLoaded:
 	default:
-		return Selector{}, fmt.Errorf("unsupported worker placement policy %q; implemented: LEXICOGRAPHIC, ROUND_ROBIN", strings.TrimSpace(workerPolicy))
+		return Selector{}, fmt.Errorf("unsupported worker placement policy %q; implemented: LEXICOGRAPHIC, ROUND_ROBIN, LEAST_LOADED", strings.TrimSpace(workerPolicy))
 	}
 	return Selector{OperationPolicy: FIFO, WorkerPolicy: worker}, nil
 }
@@ -59,11 +60,20 @@ func (s Selector) Select(snapshot model.Snapshot) (model.Placement, bool) {
 	if s.WorkerPolicy == RoundRobin && snapshot.RoundRobinCursors != nil {
 		last = snapshot.RoundRobinCursors[op.Type]
 	}
-	workerID := NextWorker(s.WorkerPolicy, workerIDs(eligible), last)
+	var workerID string
+	active := 0
+	if s.WorkerPolicy == LeastLoaded {
+		chosen := nextLeastLoaded(eligible)
+		workerID = chosen.ID
+		active = chosen.ActiveOperations
+	} else {
+		workerID = NextWorker(s.WorkerPolicy, workerIDs(eligible), last)
+	}
 	return model.Placement{
-		OperationID:     op.OperationID,
-		WorkerID:        workerID,
-		OperationPolicy: s.OperationPolicy,
-		WorkerPolicy:    s.WorkerPolicy,
+		OperationID:      op.OperationID,
+		WorkerID:         workerID,
+		OperationPolicy:  s.OperationPolicy,
+		WorkerPolicy:     s.WorkerPolicy,
+		ActiveOperations: active,
 	}, true
 }

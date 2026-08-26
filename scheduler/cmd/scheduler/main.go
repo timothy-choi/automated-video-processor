@@ -64,7 +64,7 @@ func loadConfig() (config, error) {
 		} else if strings.EqualFold(strings.TrimSpace(legacy), policy.FIFO) {
 			operationPolicy = policy.FIFO
 		} else {
-			return config{}, fmt.Errorf("SCHEDULING_POLICY is operation ordering only; implemented: FIFO. Use WORKER_PLACEMENT_POLICY=ROUND_ROBIN for worker rotation")
+			return config{}, fmt.Errorf("SCHEDULING_POLICY is operation ordering only; implemented: FIFO. Use WORKER_PLACEMENT_POLICY=LEAST_LOADED or ROUND_ROBIN")
 		}
 	}
 	if workerPolicy == "" {

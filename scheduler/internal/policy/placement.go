@@ -29,6 +29,20 @@ func nextRoundRobin(eligibleSorted []string, lastWorkerID string) string {
 	return eligibleSorted[0]
 }
 
+func nextLeastLoaded(eligible []model.Worker) model.Worker {
+	best := eligible[0]
+	for _, worker := range eligible[1:] {
+		if worker.ActiveOperations < best.ActiveOperations {
+			best = worker
+			continue
+		}
+		if worker.ActiveOperations == best.ActiveOperations && worker.ID < best.ID {
+			best = worker
+		}
+	}
+	return best
+}
+
 func eligibleWorkers(operationType string, workers []model.Worker) []model.Worker {
 	var out []model.Worker
 	for _, worker := range workers {

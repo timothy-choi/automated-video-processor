@@ -42,7 +42,7 @@
     },
     "workerPolicy": {
       "type": "string",
-      "enum": ["LEXICOGRAPHIC", "ROUND_ROBIN"],
+      "enum": ["LEXICOGRAPHIC", "ROUND_ROBIN", "LEAST_LOADED"],
       "description": "Worker placement policy. Extra v3 field ignored by workers; PostgreSQL assignment identity is still assignmentId."
     },
     "assignmentId": {

@@ -140,6 +140,7 @@ class WorkerApiIntegrationTest {
 				.andExpect(jsonPath("$.workers[0].memoryBytes").value(17179869184L))
 				.andExpect(jsonPath("$.workers[0].ffmpegVersion").value("7.1"))
 				.andExpect(jsonPath("$.workers[0].lastHeartbeat").isString())
+				.andExpect(jsonPath("$.workers[0].activeOperations").doesNotExist())
 				.andExpect(jsonPath("$.workers[1].id").value("worker-b"));
 	}
 
