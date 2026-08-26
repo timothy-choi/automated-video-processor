@@ -10,13 +10,13 @@ import (
 
 func TestImplementedOperations(t *testing.T) {
 	got := ImplementedOperations()
-	if strings.Join(got, ",") != "METADATA,THUMBNAIL,AUDIO_EXTRACTION" {
+	if strings.Join(got, ",") != "METADATA,THUMBNAIL,AUDIO_EXTRACTION,TRANSCODE_1080P" {
 		t.Fatalf("implemented=%v", got)
 	}
 }
 
 func TestRestrictOperationsCannotAddUnsupported(t *testing.T) {
-	if _, err := RestrictOperations(ImplementedOperations(), []string{"TRANSCODE_1080P"}); err == nil {
+	if _, err := RestrictOperations(ImplementedOperations(), []string{"H264_TO_AV1"}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -46,7 +46,14 @@ func TestParseSupportedOperationsEnv(t *testing.T) {
 	if strings.Join(got, ",") != "AUDIO_EXTRACTION" {
 		t.Fatalf("got=%v", got)
 	}
-	if _, err := ParseSupportedOperationsEnv("TRANSCODE_1080P"); err == nil {
+	got, err = ParseSupportedOperationsEnv("METADATA,TRANSCODE_1080P")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "METADATA,TRANSCODE_1080P" {
+		t.Fatalf("got=%v", got)
+	}
+	if _, err := ParseSupportedOperationsEnv("H264_TO_AV1"); err == nil {
 		t.Fatal("expected unimplemented error")
 	}
 }
@@ -78,6 +85,19 @@ Encoders:
 	got := ParseSupportedCodecs(output)
 	if strings.Join(got, ",") != "av1,h264,hevc,vp9" {
 		t.Fatalf("got=%v", got)
+	}
+}
+
+func TestHasEncoderRequiresExactEncoderName(t *testing.T) {
+	output := " V..... libx264              H.264 / AVC\n V..... h264_videotoolbox    VideoToolbox H.264 Encoder\n"
+	if !HasEncoder(output, "libx264") {
+		t.Fatal("expected libx264")
+	}
+	if HasEncoder(output, "libx265") {
+		t.Fatal("did not expect libx265")
+	}
+	if HasEncoder(" V..... h264_videotoolbox\n", "libx264") {
+		t.Fatal("videotoolbox is not libx264")
 	}
 }
 
@@ -130,7 +150,7 @@ func TestDetectAdvertisesBothWhenBinariesAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(snap.SupportedOperations, ",") != "METADATA,THUMBNAIL,AUDIO_EXTRACTION" {
+	if strings.Join(snap.SupportedOperations, ",") != "METADATA,THUMBNAIL,AUDIO_EXTRACTION,TRANSCODE_1080P" {
 		t.Fatalf("operations=%v", snap.SupportedOperations)
 	}
 }
@@ -202,11 +222,56 @@ func TestDetectRejectsUnsupportedConfiguredOperation(t *testing.T) {
 		Arch:               "amd64",
 		Cores:              2,
 		MemoryBytes:        1024,
-		RestrictOperations: []string{"TRANSCODE_1080P"},
+		RestrictOperations: []string{"H264_TO_AV1"},
 		Command:            fakeBinaries(true, true, ""),
 	})
 	if err == nil || !strings.Contains(err.Error(), "unimplemented") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestDetectFailsWhenLibx264MissingForTranscode(t *testing.T) {
+	_, err := Detect(context.Background(), Probe{
+		Hostname:           "host",
+		Arch:               "amd64",
+		Cores:              2,
+		MemoryBytes:        1024,
+		RestrictOperations: []string{"TRANSCODE_1080P"},
+		Command:            fakeBinaries(true, true, " V..... mpeg4\n V..... h264_videotoolbox\n"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "TRANSCODE_1080P requires H.264 encoder (libx264)") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestDetectFailsWhenFFmpegMissingForTranscode(t *testing.T) {
+	_, err := Detect(context.Background(), Probe{
+		Hostname:           "host",
+		Arch:               "amd64",
+		Cores:              2,
+		MemoryBytes:        1024,
+		RestrictOperations: []string{"TRANSCODE_1080P"},
+		Command:            fakeBinaries(true, false, ""),
+	})
+	if err == nil || !strings.Contains(err.Error(), "TRANSCODE_1080P requires ffmpeg") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestDetectAdvertisesTranscodeWhenLibx264Present(t *testing.T) {
+	snap, err := Detect(context.Background(), Probe{
+		Hostname:           "host",
+		Arch:               "arm64",
+		Cores:              4,
+		MemoryBytes:        1024,
+		RestrictOperations: []string{"METADATA", "TRANSCODE_1080P"},
+		Command:            fakeBinaries(true, true, " V..... libx264\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(snap.SupportedOperations, ",") != "METADATA,TRANSCODE_1080P" {
+		t.Fatalf("operations=%v", snap.SupportedOperations)
 	}
 }
 

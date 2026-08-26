@@ -36,6 +36,19 @@ func ParseFFmpegVersion(output string) string {
 	return ""
 }
 
+func HasEncoder(output, encoder string) bool {
+	want := strings.ToLower(strings.TrimSpace(encoder))
+	if want == "" {
+		return false
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if strings.ToLower(encoderName(line)) == want {
+			return true
+		}
+	}
+	return false
+}
+
 func ParseSupportedCodecs(output string) []string {
 	found := map[string]struct{}{}
 	for _, line := range strings.Split(output, "\n") {

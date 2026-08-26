@@ -56,8 +56,8 @@ class ExecutionAttemptIntegrationTest {
 		jdbcTemplate.execute("delete from worker_supported_codecs");
 		jdbcTemplate.execute("delete from worker_supported_operations");
 		jdbcTemplate.execute("delete from workers");
-		WorkerTestSupport.register(mockMvc, "worker-a", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION");
-		WorkerTestSupport.register(mockMvc, "worker-b", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION");
+		WorkerTestSupport.register(mockMvc, "worker-a", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P");
+		WorkerTestSupport.register(mockMvc, "worker-b", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P");
 	}
 
 	@Test
@@ -374,6 +374,51 @@ class ExecutionAttemptIntegrationTest {
 	}
 
 	@Test
+	void staleTranscodeCompletionDoesNotWriteArtifact() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "s3://media-input/video.mp4",
+				  "operations": [{"type": "TRANSCODE_1080P"}]
+				}
+				""");
+		enqueueService.enqueueDispatchableOperations();
+		UUID operationId = operationId(jobId);
+		UUID attempt1 = start(operationId, "worker-a");
+		expireLease(attempt1);
+		markUnavailable("worker-a");
+		internalOperationService.reclaimExpiredAttempts();
+		enqueueService.enqueueDispatchableOperations();
+		UUID attempt2 = start(operationId, "worker-b");
+
+		String staleUri = "s3://media-output/jobs/" + jobId + "/operations/" + operationId + "/stale.mp4";
+		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(transcodeJson(attempt1, staleUri)))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("STALE_EXECUTION_ATTEMPT"));
+		Integer artifacts = jdbcTemplate.queryForObject(
+				"select count(*) from artifacts where operation_id = ?",
+				Integer.class,
+				operationId
+		);
+		assertThat(artifacts).isZero();
+
+		String liveUri = "s3://media-output/jobs/" + jobId + "/operations/" + operationId + "/video-1080p.mp4";
+		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(transcodeJson(attempt2, liveUri)))
+				.andExpect(status().isOk());
+		Integer stored = jdbcTemplate.queryForObject(
+				"select count(*) from artifacts where operation_id = ? and object_uri = ? and artifact_type = 'TRANSCODE_1080P'",
+				Integer.class,
+				operationId,
+				liveUri
+		);
+		assertThat(stored).isEqualTo(1);
+		assertThat(jobStatus(jobId)).isEqualTo("COMPLETED");
+	}
+
+	@Test
 	void staleFailureIsRejected() throws Exception {
 		Started first = assignAndStart("worker-a");
 		expireLease(first.attemptId());
@@ -566,6 +611,21 @@ class ExecutionAttemptIntegrationTest {
 				  "artifact": {
 				    "objectUri": "%s",
 				    "contentType": "audio/mp4",
+				    "sizeBytes": 50,
+				    "checksum": "%s"
+				  }
+				}
+				""".formatted(attemptId, objectUri, SHA256);
+	}
+
+	private static String transcodeJson(UUID attemptId, String objectUri) {
+		return """
+				{
+				  "attemptId": "%s",
+				  "actualRuntimeMs": 20,
+				  "artifact": {
+				    "objectUri": "%s",
+				    "contentType": "video/mp4",
 				    "sizeBytes": 50,
 				    "checksum": "%s"
 				  }

@@ -190,9 +190,10 @@ public class InternalOperationService {
 			case METADATA -> completeMetadata(operation, attempt, request, now);
 			case THUMBNAIL -> completeArtifact(operation, attempt, request, now, ArtifactType.THUMBNAIL);
 			case AUDIO_EXTRACTION -> completeArtifact(operation, attempt, request, now, ArtifactType.AUDIO);
+			case TRANSCODE_1080P -> completeArtifact(operation, attempt, request, now, ArtifactType.TRANSCODE_1080P);
 			default -> throw new InvalidJobRequestException(
 					"UNSUPPORTED_COMPLETION_TYPE",
-					"Internal completion in this phase supports METADATA, THUMBNAIL, and AUDIO_EXTRACTION only"
+					"Internal completion in this phase supports METADATA, THUMBNAIL, AUDIO_EXTRACTION, and TRANSCODE_1080P only"
 			);
 		};
 		if (changed) {
@@ -501,7 +502,7 @@ public class InternalOperationService {
 				FROM operations o
 				JOIN jobs j ON j.id = o.job_id
 				WHERE o.status = 'QUEUED'
-				  AND o.operation_type IN ('METADATA', 'THUMBNAIL', 'AUDIO_EXTRACTION')
+				  AND o.operation_type IN ('METADATA', 'THUMBNAIL', 'AUDIO_EXTRACTION', 'TRANSCODE_1080P')
 				  AND (
 				    LOWER(j.input_uri) LIKE 'file:%'
 				    OR LOWER(j.input_uri) LIKE 's3:%'

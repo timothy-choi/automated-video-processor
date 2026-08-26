@@ -119,7 +119,7 @@ class DispatchEnqueueIntegrationTest {
 				  "inputUri": "file:///tmp/mixed.mp4",
 				  "operations": [
 				    {"type": "METADATA"},
-				    {"type": "TRANSCODE_1080P"}
+				    {"type": "H264_TO_AV1"}
 				  ]
 				}
 				""");
@@ -136,7 +136,7 @@ class DispatchEnqueueIntegrationTest {
 				"""
 						select count(*) from dispatch_outbox o
 						join operations op on op.id = o.operation_id
-						where op.operation_type = 'TRANSCODE_1080P'
+						where op.operation_type = 'H264_TO_AV1'
 						""",
 				Integer.class
 		);

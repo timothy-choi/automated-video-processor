@@ -15,6 +15,10 @@ func AudioObjectKey(jobID, operationID string) string {
 	return "jobs/" + jobID + "/operations/" + operationID + "/audio.m4a"
 }
 
+func Transcode1080pObjectKey(jobID, operationID string) string {
+	return "jobs/" + jobID + "/operations/" + operationID + "/video-1080p.mp4"
+}
+
 func ObjectURI(bucket, key string) string {
 	return "s3://" + bucket + "/" + key
 }

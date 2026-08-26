@@ -9,6 +9,6 @@ public enum OperationType {
 	H264_TO_AV1;
 
 	public boolean isExecutable() {
-		return this == METADATA || this == THUMBNAIL || this == AUDIO_EXTRACTION;
+		return this == METADATA || this == THUMBNAIL || this == AUDIO_EXTRACTION || this == TRANSCODE_1080P;
 	}
 }

@@ -2,6 +2,8 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -174,6 +176,267 @@ func TestExtractAudioFailsWhenInputHasNoAudio(t *testing.T) {
 			t.Fatal("should not leave a successful audio artifact")
 		}
 	}
+}
+
+func TestTranscodeArgsAreH264Mp4WithOptionalAudio(t *testing.T) {
+	args := TranscodeArgs("/tmp/in.mp4", "/tmp/out.mp4")
+	if !containsAll(args, "-i", "/tmp/in.mp4", "-map", "0:v:0", "0:a?", "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", "/tmp/out.mp4") {
+		t.Fatalf("args=%v", args)
+	}
+	if !containsAll(args, "-vf", ScaleFilter1080p) {
+		t.Fatalf("missing scale filter in %v", args)
+	}
+	if !strings.Contains(ScaleFilter1080p, "min(iw,1920)") || !strings.Contains(ScaleFilter1080p, "min(ih,1080)") {
+		t.Fatalf("scale must cap without upscaling: %s", ScaleFilter1080p)
+	}
+	if !strings.Contains(ScaleFilter1080p, "force_original_aspect_ratio=decrease") {
+		t.Fatalf("scale must preserve aspect ratio: %s", ScaleFilter1080p)
+	}
+	if !strings.Contains(ScaleFilter1080p, "force_divisible_by=2") {
+		t.Fatalf("scale must produce even dimensions: %s", ScaleFilter1080p)
+	}
+}
+
+func TestWrapTranscodeErrorNoVideo(t *testing.T) {
+	err := wrapTranscodeError(fmt.Errorf("ffmpeg failed: Stream map '0:v:0' matches no streams."))
+	if err == nil || err.Error() != "input has no video stream" {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestTranscodeDownscalesAbove1080p(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+
+	dir := t.TempDir()
+	sample := filepath.Join(dir, "1440p.mp4")
+	generateSample(t, sample, "testsrc=duration=0.5:size=2560x1440:rate=10", true)
+	output := filepath.Join(dir, "out.mp4")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := Transcode1080p(ctx, "ffmpeg", sample, output); err != nil {
+		t.Fatal(err)
+	}
+	w, h, vcodec, acodec, vstreams, astreams := probeMedia(t, output)
+	if vcodec != "h264" {
+		t.Fatalf("codec=%s", vcodec)
+	}
+	if w > 1920 || h > 1080 {
+		t.Fatalf("output %dx%d exceeds 1920x1080", w, h)
+	}
+	if w != 1920 || h != 1080 {
+		t.Fatalf("expected 1920x1080 from 16:9 1440p, got %dx%d", w, h)
+	}
+	if vstreams != 1 || astreams != 1 || acodec != "aac" {
+		t.Fatalf("streams video=%d audio=%d acodec=%s", vstreams, astreams, acodec)
+	}
+	info, err := os.Stat(output)
+	if err != nil || info.Size() == 0 {
+		t.Fatalf("empty output: %v", err)
+	}
+}
+
+func TestTranscodeDoesNotUpscale720p(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+
+	dir := t.TempDir()
+	sample := filepath.Join(dir, "720p.mp4")
+	generateSample(t, sample, "testsrc=duration=0.5:size=1280x720:rate=10", true)
+	output := filepath.Join(dir, "out.mp4")
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	if err := Transcode1080p(ctx, "ffmpeg", sample, output); err != nil {
+		t.Fatal(err)
+	}
+	w, h, vcodec, _, _, _ := probeMedia(t, output)
+	if vcodec != "h264" {
+		t.Fatalf("codec=%s", vcodec)
+	}
+	if w != 1280 || h != 720 {
+		t.Fatalf("720p must not be upscaled, got %dx%d", w, h)
+	}
+}
+
+func TestTranscodePreserves43AspectAndEvenDimensions(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+
+	dir := t.TempDir()
+	sample := filepath.Join(dir, "4by3.mp4")
+	generateSample(t, sample, "testsrc=duration=0.5:size=1920x1440:rate=10", false)
+	output := filepath.Join(dir, "out.mp4")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := Transcode1080p(ctx, "ffmpeg", sample, output); err != nil {
+		t.Fatal(err)
+	}
+	w, h, _, _, _, astreams := probeMedia(t, output)
+	if w != 1440 || h != 1080 {
+		t.Fatalf("expected 1440x1080 from 1920x1440, got %dx%d", w, h)
+	}
+	if w%2 != 0 || h%2 != 0 {
+		t.Fatalf("odd dimensions %dx%d", w, h)
+	}
+	if astreams != 0 {
+		t.Fatal("no-audio input should produce video-only output")
+	}
+
+	odd := filepath.Join(dir, "odd.mp4")
+	generateOddSource(t, odd)
+	oddOut := filepath.Join(dir, "odd-out.mp4")
+	if err := Transcode1080p(ctx, "ffmpeg", odd, oddOut); err != nil {
+		t.Fatal(err)
+	}
+	ow, oh, _, _, _, _ := probeMedia(t, oddOut)
+	if ow%2 != 0 || oh%2 != 0 {
+		t.Fatalf("odd input produced odd output %dx%d", ow, oh)
+	}
+	if ow > 1920 || oh > 1080 {
+		t.Fatalf("odd output %dx%d exceeds 1080p box", ow, oh)
+	}
+}
+
+func TestTranscodeSucceedsWithoutAudio(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+
+	dir := t.TempDir()
+	sample := filepath.Join(dir, "silent.mp4")
+	generateSample(t, sample, "testsrc=duration=0.5:size=320x240:rate=10", false)
+	output := filepath.Join(dir, "out.mp4")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := Transcode1080p(ctx, "ffmpeg", sample, output); err != nil {
+		t.Fatal(err)
+	}
+	_, _, vcodec, _, vstreams, astreams := probeMedia(t, output)
+	if vcodec != "h264" || vstreams != 1 || astreams != 0 {
+		t.Fatalf("expected video-only h264, video=%d audio=%d codec=%s", vstreams, astreams, vcodec)
+	}
+}
+
+func TestTranscodeFailsWhenInputHasNoVideo(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+
+	dir := t.TempDir()
+	sample := filepath.Join(dir, "audio-only.m4a")
+	generate := exec.Command(
+		"ffmpeg",
+		"-y",
+		"-f", "lavfi",
+		"-i", "sine=frequency=440:duration=0.5",
+		"-c:a", "aac",
+		sample,
+	)
+	if out, err := generate.CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg generate failed: %v\n%s", err, out)
+	}
+
+	output := filepath.Join(dir, "out.mp4")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	err := Transcode1080p(ctx, "ffmpeg", sample, output)
+	if err == nil {
+		t.Fatal("expected no-video failure")
+	}
+	if !strings.Contains(err.Error(), "no video stream") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func generateSample(t *testing.T, path, videoSpec string, withAudio bool) {
+	t.Helper()
+	args := []string{"-y", "-f", "lavfi", "-i", videoSpec}
+	if withAudio {
+		args = append(args, "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5")
+	}
+	args = append(args, "-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast")
+	if withAudio {
+		args = append(args, "-c:a", "aac", "-shortest")
+	} else {
+		args = append(args, "-an")
+	}
+	args = append(args, path)
+	cmd := exec.Command("ffmpeg", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg generate failed: %v\n%s", err, out)
+	}
+}
+
+func generateOddSource(t *testing.T, path string) {
+	t.Helper()
+	cmd := exec.Command(
+		"ffmpeg",
+		"-y",
+		"-f", "lavfi",
+		"-i", "testsrc=duration=0.4:size=641x481:rate=10",
+		"-pix_fmt", "yuv444p",
+		"-c:v", "libx264",
+		"-preset", "ultrafast",
+		"-an",
+		path,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg odd generate failed: %v\n%s", err, out)
+	}
+}
+
+func probeMedia(t *testing.T, path string) (width, height int, videoCodec, audioCodec string, videoStreams, audioStreams int) {
+	t.Helper()
+	cmd := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-show_entries", "stream=codec_type,codec_name,width,height",
+		"-of", "json",
+		path,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("ffprobe failed: %v\n%s", err, out)
+	}
+	var parsed struct {
+		Streams []struct {
+			CodecType string `json:"codec_type"`
+			CodecName string `json:"codec_name"`
+			Width     int    `json:"width"`
+			Height    int    `json:"height"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("ffprobe json: %v\n%s", err, out)
+	}
+	for _, stream := range parsed.Streams {
+		switch stream.CodecType {
+		case "video":
+			videoStreams++
+			videoCodec = stream.CodecName
+			width = stream.Width
+			height = stream.Height
+		case "audio":
+			audioStreams++
+			audioCodec = stream.CodecName
+		}
+	}
+	return
 }
 
 func containsAll(args []string, want ...string) bool {

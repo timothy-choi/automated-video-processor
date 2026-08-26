@@ -21,6 +21,7 @@ type Deps struct {
 	Probe        func(ctx context.Context, ffprobePath, inputPath string) (model.MetadataResult, error)
 	Thumbnail    func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error
 	Audio        func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error
+	Transcode    func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error
 	NewWorkspace func(operationID string) (*workspace.Workspace, error)
 }
 
@@ -39,6 +40,7 @@ func DefaultDeps(store storage.ObjectStore, outputBucket, ffprobePath, ffmpegPat
 		Probe:        executor.ProbeFile,
 		Thumbnail:    executor.ExtractThumbnail,
 		Audio:        executor.ExtractAudio,
+		Transcode:    executor.Transcode1080p,
 		NewWorkspace: workspace.New,
 	}
 }
@@ -80,6 +82,15 @@ func Execute(ctx context.Context, claimed *model.ClaimedOperation, deps Deps) (R
 			return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
 		}
 		return finishArtifact(ctx, claimed, deps, outputPath, storage.AudioObjectKey(claimed.JobID, claimed.OperationID), executor.AudioContentType, start)
+	case "TRANSCODE_1080P":
+		outputPath := ws.File("video-1080p.mp4")
+		if deps.Transcode == nil {
+			return Result{RuntimeMs: time.Since(start).Milliseconds()}, fmt.Errorf("transcode is not configured")
+		}
+		if err := deps.Transcode(ctx, deps.FfmpegPath, inputPath, outputPath); err != nil {
+			return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
+		}
+		return finishArtifact(ctx, claimed, deps, outputPath, storage.Transcode1080pObjectKey(claimed.JobID, claimed.OperationID), executor.TranscodeContentType, start)
 	default:
 		return Result{RuntimeMs: time.Since(start).Milliseconds()}, fmt.Errorf("unsupported operation type %s", claimed.Type)
 	}

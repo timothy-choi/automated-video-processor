@@ -26,6 +26,14 @@ func TestAudioObjectKey(t *testing.T) {
 	}
 }
 
+func TestTranscode1080pObjectKey(t *testing.T) {
+	got := Transcode1080pObjectKey("job-1", "op-2")
+	want := "jobs/job-1/operations/op-2/video-1080p.mp4"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
 func TestObjectURI(t *testing.T) {
 	got := ObjectURI("media-output", "jobs/job-1/operations/op-2/thumbnail.jpg")
 	want := "s3://media-output/jobs/job-1/operations/op-2/thumbnail.jpg"

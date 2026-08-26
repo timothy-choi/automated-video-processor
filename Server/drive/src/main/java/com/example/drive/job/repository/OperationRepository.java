@@ -28,7 +28,8 @@ public interface OperationRepository extends JpaRepository<Operation, UUID> {
 			  and o.type in (
 			    com.example.drive.job.domain.OperationType.METADATA,
 			    com.example.drive.job.domain.OperationType.THUMBNAIL,
-			    com.example.drive.job.domain.OperationType.AUDIO_EXTRACTION
+			    com.example.drive.job.domain.OperationType.AUDIO_EXTRACTION,
+			    com.example.drive.job.domain.OperationType.TRANSCODE_1080P
 			  )
 			  and (
 			    lower(j.inputUri) like 'file:%'
