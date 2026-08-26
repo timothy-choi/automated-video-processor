@@ -20,6 +20,9 @@ func TestNewDefaultsPrefetch(t *testing.T) {
 	if w.cfg.Prefetch != 1 {
 		t.Fatalf("prefetch=%d", w.cfg.Prefetch)
 	}
+	if w.cfg.HeartbeatInterval != DefaultHeartbeatInterval {
+		t.Fatalf("heartbeat interval=%s", w.cfg.HeartbeatInterval)
+	}
 }
 
 func TestNewKeepsExplicitWorkerID(t *testing.T) {
@@ -30,9 +33,17 @@ func TestNewKeepsExplicitWorkerID(t *testing.T) {
 }
 
 func TestRunRequiresWorkerID(t *testing.T) {
+	heartbeats := 0
 	w := New(Config{ControlServiceURL: "http://localhost:8080"}, storage.NewMemoryStore())
+	w.heartbeat = func(ctx context.Context) error {
+		heartbeats++
+		return nil
+	}
 	if err := w.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "WORKER_ID") {
 		t.Fatalf("err=%v", err)
+	}
+	if heartbeats != 0 {
+		t.Fatalf("heartbeats=%d", heartbeats)
 	}
 }
 
@@ -51,8 +62,9 @@ func TestRunRegistersBeforeConsume(t *testing.T) {
 		if strings.Join(req.SupportedOperations, ",") != "METADATA,THUMBNAIL" {
 			t.Fatalf("operations=%v", req.SupportedOperations)
 		}
-		return model.RegisterWorkerResponse{WorkerID: "worker-a", Status: "REGISTERED"}, nil
+		return model.RegisterWorkerResponse{WorkerID: "worker-a", Status: "AVAILABLE"}, nil
 	}
+	w.heartbeat = func(ctx context.Context) error { return nil }
 	w.consume = func(ctx context.Context, supported []string) error {
 		order = append(order, "consume")
 		if strings.Join(supported, ",") != "METADATA,THUMBNAIL" {
@@ -79,6 +91,10 @@ func TestRunDoesNotRegisterOrConsumeWhenDetectFails(t *testing.T) {
 		registered = true
 		return model.RegisterWorkerResponse{}, nil
 	}
+	w.heartbeat = func(ctx context.Context) error {
+		t.Fatal("heartbeat must not start when detect fails")
+		return nil
+	}
 	w.consume = func(ctx context.Context, supported []string) error {
 		consumed = true
 		return nil
@@ -99,6 +115,10 @@ func TestRunDoesNotConsumeWhenRegistrationFails(t *testing.T) {
 	}
 	w.register = func(ctx context.Context, req model.RegisterWorkerRequest) (model.RegisterWorkerResponse, error) {
 		return model.RegisterWorkerResponse{}, &client.StatusError{Status: 400, Body: "INVALID_REGISTRATION"}
+	}
+	w.heartbeat = func(ctx context.Context) error {
+		t.Fatal("heartbeat must not start after registration failure")
+		return nil
 	}
 	w.consume = func(ctx context.Context, supported []string) error {
 		consumed = true
@@ -124,8 +144,9 @@ func TestRunRetriesRetryableRegistrationThenConsumes(t *testing.T) {
 		if attempts < 2 {
 			return model.RegisterWorkerResponse{}, errors.New("connection refused")
 		}
-		return model.RegisterWorkerResponse{WorkerID: "worker-a", Status: "REGISTERED"}, nil
+		return model.RegisterWorkerResponse{WorkerID: "worker-a", Status: "AVAILABLE"}, nil
 	}
+	w.heartbeat = func(ctx context.Context) error { return nil }
 	w.consume = func(ctx context.Context, supported []string) error {
 		consumed = true
 		return nil

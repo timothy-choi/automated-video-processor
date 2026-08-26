@@ -44,6 +44,9 @@ public class Worker {
 	@Column(name = "ffmpeg_version", length = 64)
 	private String ffmpegVersion;
 
+	@Column(name = "last_heartbeat")
+	private Instant lastHeartbeat;
+
 	@Column(name = "registered_at", nullable = false)
 	private Instant registeredAt;
 
@@ -75,11 +78,12 @@ public class Worker {
 	) {
 		this.id = id;
 		this.hostname = hostname;
-		this.status = WorkerStatus.REGISTERED;
+		this.status = WorkerStatus.AVAILABLE;
 		this.cpuArchitecture = cpuArchitecture;
 		this.cpuCores = cpuCores;
 		this.memoryBytes = memoryBytes;
 		this.ffmpegVersion = ffmpegVersion;
+		this.lastHeartbeat = now;
 		this.registeredAt = now;
 		this.updatedAt = now;
 	}
@@ -93,11 +97,18 @@ public class Worker {
 			Instant now
 	) {
 		this.hostname = hostname;
-		this.status = WorkerStatus.REGISTERED;
+		this.status = WorkerStatus.AVAILABLE;
 		this.cpuArchitecture = cpuArchitecture;
 		this.cpuCores = cpuCores;
 		this.memoryBytes = memoryBytes;
 		this.ffmpegVersion = ffmpegVersion;
+		this.lastHeartbeat = now;
+		this.updatedAt = now;
+	}
+
+	public void recordHeartbeat(Instant now) {
+		this.lastHeartbeat = now;
+		this.status = WorkerStatus.AVAILABLE;
 		this.updatedAt = now;
 	}
 
@@ -134,6 +145,10 @@ public class Worker {
 
 	public String getFfmpegVersion() {
 		return ffmpegVersion;
+	}
+
+	public Instant getLastHeartbeat() {
+		return lastHeartbeat;
 	}
 
 	public Instant getRegisteredAt() {

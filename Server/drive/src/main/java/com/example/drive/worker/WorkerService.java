@@ -9,11 +9,15 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.example.drive.job.domain.OperationType;
 import com.example.drive.worker.domain.Worker;
+import com.example.drive.worker.domain.WorkerStatus;
+import com.example.drive.worker.dto.HeartbeatResponse;
 import com.example.drive.worker.dto.RegisterWorkerRequest;
 import com.example.drive.worker.dto.RegistrationResult;
 import com.example.drive.worker.dto.WorkerResponse;
@@ -23,15 +27,22 @@ import com.example.drive.worker.repository.WorkerRepository;
 @Service
 public class WorkerService {
 
+	private static final Logger log = LoggerFactory.getLogger(WorkerService.class);
 	private static final Pattern WORKER_ID_PATTERN = Pattern.compile("^[A-Za-z0-9._-]{1,64}$");
 	private static final Pattern CODEC_PATTERN = Pattern.compile("^[a-z0-9][a-z0-9._-]{0,31}$");
 	private static final Set<String> CANONICAL_CODECS = Set.of("h264", "hevc", "av1", "vp9");
 
 	private final WorkerRepository workerRepository;
+	private final WorkerHeartbeatProperties heartbeatProperties;
 	private final Clock clock;
 
-	public WorkerService(WorkerRepository workerRepository, Clock clock) {
+	public WorkerService(
+			WorkerRepository workerRepository,
+			WorkerHeartbeatProperties heartbeatProperties,
+			Clock clock
+	) {
 		this.workerRepository = workerRepository;
+		this.heartbeatProperties = heartbeatProperties;
 		this.clock = clock;
 	}
 
@@ -52,8 +63,10 @@ public class WorkerService {
 
 		return workerRepository.findById(workerId)
 				.map(existing -> {
+					WorkerStatus previous = existing.getStatus();
 					existing.refreshRegistration(hostname, cpuArchitecture, cpuCores, memoryBytes, ffmpegVersion, now);
 					existing.replaceCapabilities(operations, codecs);
+					logTransition(workerId, previous, existing.getStatus());
 					return RegistrationResult.updated(existing);
 				})
 				.orElseGet(() -> {
@@ -71,6 +84,39 @@ public class WorkerService {
 				});
 	}
 
+	@Transactional
+	public HeartbeatResponse heartbeat(String workerId) {
+		Worker worker = workerRepository.findById(workerId)
+				.orElseThrow(() -> new WorkerNotFoundException(workerId));
+		Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+		WorkerStatus previous = worker.getStatus();
+		worker.recordHeartbeat(now);
+		logTransition(workerId, previous, worker.getStatus());
+		return HeartbeatResponse.from(worker);
+	}
+
+	@Transactional
+	public int markStaleWorkers() {
+		Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+		Instant cutoff = now.minus(heartbeatProperties.getHeartbeatTimeout());
+		List<String> staleIds = workerRepository.findStaleAvailableIds(WorkerStatus.AVAILABLE, cutoff);
+		int marked = 0;
+		for (String workerId : staleIds) {
+			int updated = workerRepository.markUnavailableIfStale(
+					workerId,
+					WorkerStatus.AVAILABLE,
+					WorkerStatus.UNAVAILABLE,
+					cutoff,
+					now
+			);
+			if (updated == 1) {
+				logTransition(workerId, WorkerStatus.AVAILABLE, WorkerStatus.UNAVAILABLE);
+				marked++;
+			}
+		}
+		return marked;
+	}
+
 	@Transactional(readOnly = true)
 	public WorkersResponse listWorkers() {
 		return new WorkersResponse(
@@ -85,6 +131,12 @@ public class WorkerService {
 		return workerRepository.findById(workerId)
 				.map(WorkerResponse::from)
 				.orElseThrow(() -> new WorkerNotFoundException(workerId));
+	}
+
+	private static void logTransition(String workerId, WorkerStatus from, WorkerStatus to) {
+		if (from != to) {
+			log.info("worker_id={} event=status_transition from={} to={}", workerId, from, to);
+		}
 	}
 
 	private static String requireWorkerId(String workerId) {

@@ -42,12 +42,13 @@ class WorkerApiIntegrationTest {
 						.content(registrationJson("worker-a", "METADATA", "THUMBNAIL", "h264", 8, 17179869184L)))
 				.andExpect(status().isCreated())
 				.andExpect(jsonPath("$.workerId").value("worker-a"))
-				.andExpect(jsonPath("$.status").value("REGISTERED"))
+				.andExpect(jsonPath("$.status").value("AVAILABLE"))
 				.andExpect(jsonPath("$.registeredAt").isString())
-				.andExpect(jsonPath("$.updatedAt").isString());
+				.andExpect(jsonPath("$.updatedAt").isString())
+				.andExpect(jsonPath("$.lastHeartbeat").isString());
 
 		Integer workerCount = jdbcTemplate.queryForObject(
-				"select count(*) from workers where id = 'worker-a' and status = 'REGISTERED'",
+				"select count(*) from workers where id = 'worker-a' and status = 'AVAILABLE' and last_heartbeat is not null",
 				Integer.class
 		);
 		Integer operationCount = jdbcTemplate.queryForObject(
@@ -90,7 +91,7 @@ class WorkerApiIntegrationTest {
 								"""))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.workerId").value("worker-a"))
-				.andExpect(jsonPath("$.status").value("REGISTERED"))
+				.andExpect(jsonPath("$.status").value("AVAILABLE"))
 				.andReturn();
 
 		Instant preservedRegisteredAt = Instant.parse(
@@ -128,7 +129,7 @@ class WorkerApiIntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.workers.length()").value(2))
 				.andExpect(jsonPath("$.workers[0].id").value("worker-a"))
-				.andExpect(jsonPath("$.workers[0].status").value("REGISTERED"))
+				.andExpect(jsonPath("$.workers[0].status").value("AVAILABLE"))
 				.andExpect(jsonPath("$.workers[0].hostname").value("mac-worker-a"))
 				.andExpect(jsonPath("$.workers[0].supportedOperations[0]").value("METADATA"))
 				.andExpect(jsonPath("$.workers[0].supportedOperations[1]").value("THUMBNAIL"))
@@ -137,6 +138,7 @@ class WorkerApiIntegrationTest {
 				.andExpect(jsonPath("$.workers[0].cpuCores").value(8))
 				.andExpect(jsonPath("$.workers[0].memoryBytes").value(17179869184L))
 				.andExpect(jsonPath("$.workers[0].ffmpegVersion").value("7.1"))
+				.andExpect(jsonPath("$.workers[0].lastHeartbeat").isString())
 				.andExpect(jsonPath("$.workers[1].id").value("worker-b"));
 	}
 
@@ -147,7 +149,8 @@ class WorkerApiIntegrationTest {
 		mockMvc.perform(get("/workers/worker-a"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.id").value("worker-a"))
-				.andExpect(jsonPath("$.status").value("REGISTERED"));
+				.andExpect(jsonPath("$.status").value("AVAILABLE"))
+				.andExpect(jsonPath("$.lastHeartbeat").isString());
 
 		mockMvc.perform(get("/workers/missing-worker"))
 				.andExpect(status().isNotFound())
@@ -262,6 +265,51 @@ class WorkerApiIntegrationTest {
 								"""))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("INVALID_WORKER_CAPABILITY"));
+	}
+
+	@Test
+	void heartbeatRefreshesLiveness() throws Exception {
+		MvcResult created = mockMvc.perform(post("/internal/workers/register")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(registrationJson("worker-a", "METADATA", "THUMBNAIL", "h264", 8, 17179869184L)))
+				.andExpect(status().isCreated())
+				.andReturn();
+		Instant registeredHeartbeat = Instant.parse(
+				JsonPath.read(created.getResponse().getContentAsString(), "$.lastHeartbeat")
+		);
+		Instant registeredUpdatedAt = Instant.parse(
+				JsonPath.read(created.getResponse().getContentAsString(), "$.updatedAt")
+		);
+
+		Thread.sleep(20);
+
+		MvcResult heartbeat = mockMvc.perform(post("/internal/workers/worker-a/heartbeat"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.workerId").value("worker-a"))
+				.andExpect(jsonPath("$.status").value("AVAILABLE"))
+				.andReturn();
+		Instant lastHeartbeat = Instant.parse(
+				JsonPath.read(heartbeat.getResponse().getContentAsString(), "$.lastHeartbeat")
+		);
+		assertThat(lastHeartbeat).isAfterOrEqualTo(registeredHeartbeat);
+
+		MvcResult detail = mockMvc.perform(get("/workers/worker-a"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("AVAILABLE"))
+				.andReturn();
+		Instant updatedAt = Instant.parse(JsonPath.read(detail.getResponse().getContentAsString(), "$.updatedAt"));
+		Instant persistedHeartbeat = Instant.parse(
+				JsonPath.read(detail.getResponse().getContentAsString(), "$.lastHeartbeat")
+		);
+		assertThat(persistedHeartbeat).isEqualTo(lastHeartbeat);
+		assertThat(updatedAt).isAfterOrEqualTo(registeredUpdatedAt);
+	}
+
+	@Test
+	void heartbeatOfUnknownWorkerReturns404() throws Exception {
+		mockMvc.perform(post("/internal/workers/missing-worker/heartbeat"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("WORKER_NOT_FOUND"));
 	}
 
 	private void register(String workerId) throws Exception {

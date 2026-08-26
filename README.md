@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-That later architecture (Go scheduler policies, heartbeats, OpenTelemetry) is **not implemented yet**. This repository is currently at **Phase 3B**.
+That later architecture (Go scheduler policies, leases, OpenTelemetry) is **not implemented yet**. This repository is currently at **Phase 3C**.
 
-## Current status: Phase 3B — durable worker registration + capabilities
+## Current status: Phase 3C — worker heartbeats + availability
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -26,19 +26,20 @@ The assignment JSON contract lives at:
 contracts/operation-assignment.v1.schema.json
 ```
 
-Phase 3B currently:
+Phase 3C currently:
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write)
 - a **Java dispatcher** (isolated from the public API) selects eligible `QUEUED` `METADATA`/`THUMBNAIL` operations, marks them `ASSIGNED`, and outbox-publishes assignment messages to RabbitMQ
 - Go workers **probe local capabilities and register** with the control service before consuming work
-- `GET /workers` lists registered workers and their static capabilities
-- multiple Go workers compete as consumers on **one shared queue** (registration is not placement yet)
+- workers send **periodic heartbeats**; the control service marks them `AVAILABLE` or `UNAVAILABLE`
+- `GET /workers` lists workers, static capabilities, `status`, and `lastHeartbeat`
+- multiple Go workers compete as consumers on **one shared queue** (availability is not placement yet)
 - workers call `POST /internal/operations/{id}/start` so PostgreSQL stays authoritative about whether work may execute
 - downloads `s3://` inputs (and still accepts `file://`)
 - runs **real ffprobe** and **real FFmpeg**
 - uploads JPEG thumbnails to `s3://media-output/...` and persists `Artifact` metadata
 
-RabbitMQ competing consumers are **baseline work distribution**, not the adaptive scheduler. Registration is control-plane inventory: which workers exist and what they can run. It is **not** a heartbeat, liveness check, or scheduler.
+RabbitMQ competing consumers are **baseline work distribution**, not the adaptive scheduler. Registration is control-plane inventory. Heartbeats are control-plane liveness. Neither is worker placement or job recovery.
 
 ```text
 Client
@@ -46,10 +47,14 @@ Client
   v
 Java Control Service
   |              \
-  |               +--> GET /workers
+  |               +--> GET /workers  (AVAILABLE / UNAVAILABLE)
   v
 PostgreSQL  <--- worker registration (upsert by WORKER_ID)
+  ^              <--- POST /internal/workers/{id}/heartbeat
   ^              <--- start / complete / fail
+  |
+  | stale-heartbeat sweeper
+  |   AVAILABLE -> UNAVAILABLE when lastHeartbeat is older than timeout
   |
   | outbox dispatcher (still shared-queue publish)
   v
@@ -60,7 +65,7 @@ RabbitMQ
   v             v             v
 Worker A     Worker B     Worker C
   |             |             |
-  +------ register/refresh ---+
+  +------ register + heartbeat loop ------+
   |             |             |
   +-------------+-------------+
                 |
@@ -235,12 +240,13 @@ curl -sS -X POST http://localhost:8080/jobs \
 
 The job is `QUEUED` until the dispatcher assigns operations (`ASSIGNED`), a worker starts one (`RUNNING`), and results are persisted (`COMPLETED` / `FAILED`).
 
-`WORKER_ID` is **required** (stable identity such as `worker-a`). The worker probes local executables and machine info, registers, and only then consumes RabbitMQ. `supportedOperations` means the worker has an implemented executor **and** the required local binary is available (`METADATA` needs ffprobe, `THUMBNAIL` needs FFmpeg). Optional `SUPPORTED_OPERATIONS` may **restrict** that set; it cannot add unimplemented types. If a requested operation's executable is missing, startup fails: the worker does not register and does not consume. Metadata-only workers (`SUPPORTED_OPERATIONS=METADATA`) do not require FFmpeg; encoder `supportedCodecs` stay empty in that case.
+`WORKER_ID` is **required** (stable identity such as `worker-a`). The worker probes local executables and machine info, registers, starts a heartbeat loop, and only then consumes RabbitMQ. `supportedOperations` means the worker has an implemented executor **and** the required local binary is available (`METADATA` needs ffprobe, `THUMBNAIL` needs FFmpeg). Optional `SUPPORTED_OPERATIONS` may **restrict** that set; it cannot add unimplemented types. If a requested operation's executable is missing, startup fails: the worker does not register, does not heartbeat, and does not consume. Metadata-only workers (`SUPPORTED_OPERATIONS=METADATA`) do not require FFmpeg; encoder `supportedCodecs` stay empty in that case.
 
 ```bash
 cd worker
 
 WORKER_ID=worker-a \
+HEARTBEAT_INTERVAL=5s \
 CONTROL_SERVICE_URL=http://localhost:8080 \
 RABBITMQ_URL=amqp://media_platform:media_platform@localhost:5672/ \
 PREFETCH=1 \
@@ -253,6 +259,7 @@ OUTPUT_BUCKET=media-output \
 go run ./cmd/worker
 
 WORKER_ID=worker-b \
+HEARTBEAT_INTERVAL=5s \
 CONTROL_SERVICE_URL=http://localhost:8080 \
 RABBITMQ_URL=amqp://media_platform:media_platform@localhost:5672/ \
 PREFETCH=1 \
@@ -271,7 +278,7 @@ Heterogeneous registry demo (still the same binary; restriction only):
 SUPPORTED_OPERATIONS=METADATA WORKER_ID=worker-b ... go run ./cmd/worker
 ```
 
-Those MinIO and RabbitMQ keys are local development defaults. `PREFETCH` defaults to `1`. `FFPROBE_PATH` defaults to `ffprobe`. `FFMPEG_PATH` defaults to `ffmpeg`. `WORKER_HOSTNAME` overrides `os.Hostname()` when set. Stop a worker with SIGINT/SIGTERM: in-flight unacked messages are requeued by RabbitMQ.
+Those MinIO and RabbitMQ keys are local development defaults. `PREFETCH` defaults to `1`. `FFPROBE_PATH` defaults to `ffprobe`. `FFMPEG_PATH` defaults to `ffmpeg`. `WORKER_HOSTNAME` overrides `os.Hostname()` when set. `HEARTBEAT_INTERVAL` defaults to `5s` (Go duration, for example `5s` or `500ms`). Invalid or non-positive values fail startup. Stop a worker with SIGINT/SIGTERM: in-flight unacked messages are requeued by RabbitMQ; missed heartbeats eventually mark the worker `UNAVAILABLE`.
 
 Then:
 
@@ -369,7 +376,7 @@ OUTPUT_BUCKET=media-output \
 go run ./cmd/worker
 ```
 
-Those MinIO and RabbitMQ keys are local development defaults. `WORKER_ID` is for logs only; it is not a registry. `PREFETCH` defaults to `1`. `FFPROBE_PATH` defaults to `ffprobe`. `FFMPEG_PATH` defaults to `ffmpeg`. Stop a worker with SIGINT/SIGTERM: in-flight unacked messages are requeued by RabbitMQ.
+Those MinIO and RabbitMQ keys are local development defaults. `WORKER_ID` is the durable registry identity (see Worker API above). `PREFETCH` defaults to `1`. `FFPROBE_PATH` defaults to `ffprobe`. `FFMPEG_PATH` defaults to `ffmpeg`. Stop a worker with SIGINT/SIGTERM: in-flight unacked messages are requeued by RabbitMQ.
 
 Then:
 
@@ -396,7 +403,7 @@ s3://media-output/jobs/<jobId>/operations/<operationId>/thumbnail.jpg
 
 ## Worker API
 
-Workers register at startup. Registration is an upsert keyed by `WORKER_ID`. First registration returns **201**; a later registration of the same ID returns **200**, updates capabilities/resources, and **preserves `registeredAt`**. `updatedAt` is the latest registration upsert — **not** a heartbeat.
+Workers register at startup. Registration is an upsert keyed by `WORKER_ID`. First registration returns **201**; a later registration of the same ID returns **200**, updates capabilities/resources, **preserves `registeredAt`**, and refreshes liveness (`status = AVAILABLE`, `lastHeartbeat = now`). Registration initializes liveness; heartbeats maintain it.
 
 ```text
 worker starts
@@ -405,12 +412,37 @@ detects capabilities (executables + static resources)
     ↓
 POST /internal/workers/register
     ↓
-registration succeeds
+AVAILABLE
+    ↓
+start heartbeat loop (POST /internal/workers/{id}/heartbeat)
     ↓
 RabbitMQ consume
+
+periodic heartbeat
+    ↓
+AVAILABLE
+
+heartbeat stops
+    ↓
+timeout + sweeper
+    ↓
+UNAVAILABLE
+
+heartbeat or re-register
+    ↓
+AVAILABLE
 ```
 
-If registration fails after bounded retries, the worker exits and does **not** consume.
+If registration fails after bounded retries, the worker exits and does **not** heartbeat or consume. Transient heartbeat failures are logged and retried on the next interval; they do not kill the worker. The heartbeat loop is independent of media execution and of the RabbitMQ consume loop.
+
+Control-service liveness config (Spring durations, default development values):
+
+```text
+WORKER_HEARTBEAT_TIMEOUT=15s
+WORKER_HEARTBEAT_SWEEP_INTERVAL=5s
+```
+
+Timeout should be greater than `HEARTBEAT_INTERVAL`. A worker with `lastHeartbeat = null` is not considered live (migrated inventory rows start as `UNAVAILABLE`).
 
 ```bash
 curl -sS http://localhost:8080/workers
@@ -424,7 +456,7 @@ Example list:
   "workers": [
     {
       "id": "worker-a",
-      "status": "REGISTERED",
+      "status": "AVAILABLE",
       "hostname": "mac-worker-a",
       "supportedOperations": ["METADATA", "THUMBNAIL"],
       "supportedCodecs": ["h264", "hevc"],
@@ -432,18 +464,19 @@ Example list:
       "cpuCores": 8,
       "memoryBytes": 17179869184,
       "ffmpegVersion": "8.1.2",
+      "lastHeartbeat": "2026-08-25T22:00:05Z",
       "registeredAt": "2026-08-25T22:00:00Z",
-      "updatedAt": "2026-08-25T22:00:00Z"
+      "updatedAt": "2026-08-25T22:00:05Z"
     }
   ]
 }
 ```
 
-`REGISTERED` means this worker ID successfully registered (or re-registered) with the control service. It does **not** mean the worker is alive right now. Unknown IDs return **404** `WORKER_NOT_FOUND`.
+`AVAILABLE` means the control service has observed a registration or heartbeat within `WORKER_HEARTBEAT_TIMEOUT`. `UNAVAILABLE` means it has not. That is **not** proof the OS process is dead, and it does **not** stop RabbitMQ from delivering to a still-connected consumer. Unknown IDs return **404** `WORKER_NOT_FOUND`. Heartbeat of an unknown worker also returns **404**; heartbeats never auto-register. An `UNAVAILABLE` worker can become `AVAILABLE` again via heartbeat or re-registration.
 
 Parent Job status after start/complete/fail is recomputed under a PostgreSQL row lock on the Job, so concurrent operation completions cannot leave the job stale (for example both operations `COMPLETED` while the job stays `RUNNING`). That is aggregation correctness, not exactly-once execution.
 
-Internal `POST /internal/workers/register` is for trusted workers only (no auth yet).
+Internal `POST /internal/workers/register` and `POST /internal/workers/{workerId}/heartbeat` are for trusted workers only (no auth yet).
 
 `file://` inputs still work for both operations. Thumbnail output is always stored in the output bucket.
 
@@ -455,15 +488,16 @@ Internal worker endpoints (`POST /internal/operations/{id}/start`, `.../complete
 
 `POST /internal/operations/claim` still exists but is **disabled by default** (`drive.dispatch.http-claim-enabled=false`) so it does not compete with RabbitMQ. Existing tests turn it on. Do not run poll-based workers against a dispatcher-enabled control service.
 
-### Phase 3B limitations
+### Phase 3C limitations
 
-- registration is **not** a heartbeat; a registered worker can disappear without detection
-- `updatedAt` is the latest registration upsert, not liveness
-- no worker health timeout / `UNAVAILABLE` transition
+- `UNAVAILABLE` detection does **not** reclaim or reassign in-flight work
+- a worker marked unavailable may still be executing if the control-plane connection is interrupted
+- marking a worker `UNAVAILABLE` does not prevent RabbitMQ from delivering to it if the process is still connected
+- no leases / attempt IDs / operation ownership
 - no capability-aware placement; the shared RabbitMQ queue still distributes work
 - workers are not assigned explicitly
-- no leases / attempt IDs
 - no FIFO / round-robin / least-loaded / SJF / EDF / adaptive scheduler
+- no CPU/memory utilization telemetry
 - RabbitMQ competing consumers are not that scheduler
 
 ## What is inactive
@@ -519,4 +553,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-Distributed scheduling policies, heartbeats, leases, additional FFmpeg operations, and observability belong to later phases. RabbitMQ is only the delivery mechanism today. Worker registration is inventory, not placement.
+Distributed scheduling policies, leases, additional FFmpeg operations, and observability belong to later phases. RabbitMQ is only the delivery mechanism today. Worker heartbeats are control-plane liveness, not automatic recovery of in-flight work.

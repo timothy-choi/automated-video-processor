@@ -28,22 +28,27 @@ type Config struct {
 	FfprobePath         string
 	FfmpegPath          string
 	OutputBucket        string
+	HeartbeatInterval   time.Duration
 	SupportedOperations []string
 	ObjectStore         storage.Config
 }
 
 type Worker struct {
-	cfg      Config
-	client   *client.Client
-	deps     run.Deps
-	detect   func(context.Context) (capability.Snapshot, error)
-	register func(context.Context, model.RegisterWorkerRequest) (model.RegisterWorkerResponse, error)
-	consume  func(context.Context, []string) error
+	cfg       Config
+	client    *client.Client
+	deps      run.Deps
+	detect    func(context.Context) (capability.Snapshot, error)
+	register  func(context.Context, model.RegisterWorkerRequest) (model.RegisterWorkerResponse, error)
+	heartbeat func(context.Context) error
+	consume   func(context.Context, []string) error
 }
 
 func New(cfg Config, store storage.ObjectStore) *Worker {
 	if cfg.Prefetch <= 0 {
 		cfg.Prefetch = 1
+	}
+	if cfg.HeartbeatInterval <= 0 {
+		cfg.HeartbeatInterval = DefaultHeartbeatInterval
 	}
 	w := &Worker{
 		cfg:    cfg,
@@ -60,6 +65,10 @@ func New(cfg Config, store storage.ObjectStore) *Worker {
 		})
 	}
 	w.register = w.client.RegisterWorker
+	w.heartbeat = func(ctx context.Context) error {
+		_, err := w.client.Heartbeat(ctx, w.cfg.WorkerID)
+		return err
+	}
 	w.consume = func(ctx context.Context, supported []string) error {
 		exec := func(execCtx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
 			return run.Execute(execCtx, claimed, w.deps)
@@ -110,6 +119,16 @@ func (w *Worker) Run(ctx context.Context) error {
 		strings.Join(req.SupportedCodecs, ","),
 		registered.Status,
 	)
+	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.runHeartbeatLoop(heartbeatCtx)
+	}()
+	defer func() {
+		stopHeartbeat()
+		<-done
+	}()
 	return w.consume(ctx, req.SupportedOperations)
 }
 

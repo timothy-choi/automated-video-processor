@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -165,6 +166,34 @@ func (c *Client) RegisterWorker(ctx context.Context, request model.RegisterWorke
 		return model.RegisterWorkerResponse{}, fmt.Errorf("register response is missing workerId")
 	}
 	return registered, nil
+}
+
+func (c *Client) Heartbeat(ctx context.Context, workerID string) (model.HeartbeatResponse, error) {
+	path := "/internal/workers/" + url.PathEscape(workerID) + "/heartbeat"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, http.NoBody)
+	if err != nil {
+		return model.HeartbeatResponse{}, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return model.HeartbeatResponse{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return model.HeartbeatResponse{}, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return model.HeartbeatResponse{}, &StatusError{Status: resp.StatusCode, Body: string(body)}
+	}
+	var heartbeat model.HeartbeatResponse
+	if err := json.Unmarshal(body, &heartbeat); err != nil {
+		return model.HeartbeatResponse{}, fmt.Errorf("heartbeat response is invalid JSON: %w", err)
+	}
+	if heartbeat.WorkerID == "" {
+		return model.HeartbeatResponse{}, fmt.Errorf("heartbeat response is missing workerId")
+	}
+	return heartbeat, nil
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, payload []byte) error {
