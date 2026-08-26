@@ -40,16 +40,35 @@ public class DispatchOutbox {
 	@Column(name = "publish_attempts", nullable = false)
 	private int publishAttempts;
 
+	@Column(name = "routing_key", nullable = false, length = 128)
+	private String routingKey;
+
+	@Column(name = "worker_id", length = 64)
+	private String workerId;
+
 	protected DispatchOutbox() {
 	}
 
 	public DispatchOutbox(UUID id, UUID operationId, String payloadJson, Instant now) {
+		this(id, operationId, payloadJson, now, DispatchTopology.ROUTING_KEY, null);
+	}
+
+	public DispatchOutbox(
+			UUID id,
+			UUID operationId,
+			String payloadJson,
+			Instant now,
+			String routingKey,
+			String workerId
+	) {
 		this.id = id;
 		this.operationId = operationId;
 		this.payloadJson = payloadJson;
 		this.status = OutboxStatus.PENDING;
 		this.createdAt = now;
 		this.publishAttempts = 0;
+		this.routingKey = routingKey;
+		this.workerId = workerId;
 	}
 
 	public UUID getId() {
@@ -78,6 +97,14 @@ public class DispatchOutbox {
 
 	public int getPublishAttempts() {
 		return publishAttempts;
+	}
+
+	public String getRoutingKey() {
+		return routingKey;
+	}
+
+	public String getWorkerId() {
+		return workerId;
 	}
 
 	public void markSent(Instant now) {

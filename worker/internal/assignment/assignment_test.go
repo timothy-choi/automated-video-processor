@@ -32,14 +32,51 @@ func TestParseMalformedJSON(t *testing.T) {
 
 func TestParseRejectsBadVersion(t *testing.T) {
 	if _, err := Parse([]byte(`{
-		"schemaVersion": 2,
+		"schemaVersion": 3,
 		"operationId": "11111111-1111-1111-1111-111111111111",
 		"jobId": "22222222-2222-2222-2222-222222222222",
 		"type": "METADATA",
 		"inputUri": "s3://media-input/sample.mp4",
-		"dispatchedAt": "2026-08-25T02:00:00Z"
+		"workerId": "worker-a",
+		"scheduledAt": "2026-08-25T02:00:00Z",
+		"policy": "FIFO"
 	}`)); err == nil {
 		t.Fatal("expected schemaVersion error")
+	}
+}
+
+func TestParseV2RequiresWorkerID(t *testing.T) {
+	body := []byte(`{
+		"schemaVersion": 2,
+		"operationId": "11111111-1111-1111-1111-111111111111",
+		"jobId": "22222222-2222-2222-2222-222222222222",
+		"type": "THUMBNAIL",
+		"inputUri": "s3://media-input/sample.mp4",
+		"scheduledAt": "2026-08-25T18:00:00Z",
+		"policy": "FIFO"
+	}`)
+	if _, err := Parse(body); err == nil {
+		t.Fatal("expected workerId error")
+	}
+}
+
+func TestParseValidV2(t *testing.T) {
+	body := []byte(`{
+		"schemaVersion": 2,
+		"operationId": "11111111-1111-1111-1111-111111111111",
+		"jobId": "22222222-2222-2222-2222-222222222222",
+		"type": "THUMBNAIL",
+		"inputUri": "s3://media-input/sample.mp4",
+		"workerId": "worker-a",
+		"scheduledAt": "2026-08-25T18:00:00Z",
+		"policy": "FIFO"
+	}`)
+	got, err := Parse(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkerID != "worker-a" || got.Policy != "FIFO" || got.Type != "THUMBNAIL" {
+		t.Fatalf("got %+v", got)
 	}
 }
 

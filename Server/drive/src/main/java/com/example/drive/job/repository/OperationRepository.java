@@ -19,4 +19,20 @@ public interface OperationRepository extends JpaRepository<Operation, UUID> {
 
 	@Query("select o from Operation o join fetch o.job j left join fetch j.operations where o.id = :id")
 	Optional<Operation> findByIdWithJobAndOperations(@Param("id") UUID id);
+
+	@Query("""
+			select o from Operation o
+			join fetch o.job j
+			where o.status = com.example.drive.job.domain.OperationStatus.QUEUED
+			  and o.type in (
+			    com.example.drive.job.domain.OperationType.METADATA,
+			    com.example.drive.job.domain.OperationType.THUMBNAIL
+			  )
+			  and (
+			    lower(j.inputUri) like 'file:%'
+			    or lower(j.inputUri) like 's3:%'
+			  )
+			order by o.createdAt asc, o.operationOrder asc, o.id asc
+			""")
+	List<Operation> findSchedulableQueued();
 }

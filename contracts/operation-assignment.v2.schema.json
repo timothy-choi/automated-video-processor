@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/timothy-choi/automated-video-processor/contracts/operation-assignment.v2.schema.json",
+  "title": "OperationAssignmentV2",
+  "description": "RabbitMQ assignment envelope published after a Go scheduler placement decision. The control service commits Operation QUEUED -> ASSIGNED, a SchedulingDecision, and a worker-targeted outbox row, then the Java publisher sends this JSON to routing key worker.{workerId}. Ownership is still established later at POST /internal/operations/{id}/start (attemptId + workerId + lease). v2 does not include attemptId.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schemaVersion", "operationId", "jobId", "type", "inputUri", "workerId", "scheduledAt", "policy"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 2
+    },
+    "operationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "jobId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["METADATA", "THUMBNAIL"]
+    },
+    "inputUri": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workerId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scheduledAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "policy": {
+      "type": "string",
+      "const": "FIFO"
+    }
+  }
+}

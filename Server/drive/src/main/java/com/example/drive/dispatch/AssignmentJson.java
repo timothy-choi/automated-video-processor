@@ -4,8 +4,9 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Canonical v1 assignment JSON. Keep aligned with
- * {@code contracts/operation-assignment.v1.schema.json}.
+ * Assignment JSON envelopes. v1 is the legacy shared-queue contract.
+ * v2 is the Phase 4A worker-targeted contract
+ * ({@code contracts/operation-assignment.v2.schema.json}).
  */
 public final class AssignmentJson {
 
@@ -19,6 +20,26 @@ public final class AssignmentJson {
 				+ ",\"type\":" + quote(type)
 				+ ",\"inputUri\":" + quote(inputUri)
 				+ ",\"dispatchedAt\":" + quote(dispatchedAt.toString())
+				+ "}";
+	}
+
+	public static String v2(
+			UUID operationId,
+			UUID jobId,
+			String type,
+			String inputUri,
+			String workerId,
+			Instant scheduledAt,
+			String policy
+	) {
+		return "{\"schemaVersion\":2"
+				+ ",\"operationId\":" + quote(operationId.toString())
+				+ ",\"jobId\":" + quote(jobId.toString())
+				+ ",\"type\":" + quote(type)
+				+ ",\"inputUri\":" + quote(inputUri)
+				+ ",\"workerId\":" + quote(workerId)
+				+ ",\"scheduledAt\":" + quote(scheduledAt.toString())
+				+ ",\"policy\":" + quote(policy)
 				+ "}";
 	}
 

@@ -56,17 +56,20 @@ public class DispatchPublisher {
 				continue;
 			}
 			try {
+				String routingKey = routingKey(row);
 				rabbitTemplate.send(
 						DispatchTopology.EXCHANGE,
-						DispatchTopology.ROUTING_KEY,
+						routingKey,
 						persistentJson(row.getPayloadJson())
 				);
 				row.markSent(now);
 				sent++;
 				log.info(
-						"published assignment outboxId={} operationId={}",
+						"published assignment outboxId={} operationId={} routingKey={} workerId={}",
 						row.getId(),
-						row.getOperationId()
+						row.getOperationId(),
+						routingKey,
+						row.getWorkerId()
 				);
 			}
 			catch (RuntimeException ex) {
@@ -99,6 +102,13 @@ public class DispatchPublisher {
 			ids.add(row instanceof UUID uuid ? uuid : UUID.fromString(row.toString()));
 		}
 		return ids;
+	}
+
+	private static String routingKey(DispatchOutbox row) {
+		if (row.getRoutingKey() == null || row.getRoutingKey().isBlank()) {
+			return DispatchTopology.ROUTING_KEY;
+		}
+		return row.getRoutingKey();
 	}
 
 	private static Message persistentJson(String payload) {

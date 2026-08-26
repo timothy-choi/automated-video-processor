@@ -77,18 +77,19 @@ func (c *Consumer) consumeSession(ctx context.Context) error {
 	}
 	defer ch.Close()
 
-	if err := DeclareTopology(ch); err != nil {
+	if err := DeclareTopology(ch, c.cfg.WorkerID); err != nil {
 		return err
 	}
 	if err := ch.Qos(c.cfg.Prefetch, 0, false); err != nil {
 		return fmt.Errorf("qos: %w", err)
 	}
 
-	msgs, err := ch.Consume(Queue, c.cfg.WorkerID, false, false, false, false, nil)
+	queue := WorkerQueue(c.cfg.WorkerID)
+	msgs, err := ch.Consume(queue, c.cfg.WorkerID, false, false, false, false, nil)
 	if err != nil {
 		return fmt.Errorf("consume: %w", err)
 	}
-	log.Printf("worker=%s event=consuming queue=%s prefetch=%d", c.cfg.WorkerID, Queue, c.cfg.Prefetch)
+	log.Printf("worker=%s event=consuming queue=%s routing_key=%s prefetch=%d", c.cfg.WorkerID, queue, WorkerRoutingKey(c.cfg.WorkerID), c.cfg.Prefetch)
 
 	connClosed := conn.NotifyClose(make(chan *amqp.Error, 1))
 	chClosed := ch.NotifyClose(make(chan *amqp.Error, 1))
@@ -148,26 +149,44 @@ func (c *Consumer) handleDelivery(ctx context.Context, delivery *amqp.Delivery) 
 	}
 }
 
-func DeclareTopology(ch *amqp.Channel) error {
+func DeclareWorkerTopology(url, workerID string) error {
+	conn, err := amqp.DialConfig(url, amqp.Config{
+		Heartbeat: 10 * time.Second,
+		Locale:    "en_US",
+	})
+	if err != nil {
+		return fmt.Errorf("dial rabbitmq: %w", err)
+	}
+	defer conn.Close()
+	ch, err := conn.Channel()
+	if err != nil {
+		return fmt.Errorf("open channel: %w", err)
+	}
+	defer ch.Close()
+	return DeclareTopology(ch, workerID)
+}
+
+func DeclareTopology(ch *amqp.Channel, workerID string) error {
 	if err := ch.ExchangeDeclare(Exchange, "direct", true, false, false, false, nil); err != nil {
 		return fmt.Errorf("declare exchange: %w", err)
 	}
 	if err := ch.ExchangeDeclare(DeadLetterExchange, "direct", true, false, false, false, nil); err != nil {
 		return fmt.Errorf("declare dlx: %w", err)
 	}
-	_, err := ch.QueueDeclare(Queue, true, false, false, false, amqp.Table{
+	queue := WorkerQueue(workerID)
+	_, err := ch.QueueDeclare(queue, true, false, false, false, amqp.Table{
 		"x-dead-letter-exchange":    DeadLetterExchange,
 		"x-dead-letter-routing-key": DeadLetterRoutingKey,
 	})
 	if err != nil {
-		return fmt.Errorf("declare queue: %w", err)
+		return fmt.Errorf("declare worker queue: %w", err)
 	}
 	_, err = ch.QueueDeclare(DeadLetterQueue, true, false, false, false, nil)
 	if err != nil {
 		return fmt.Errorf("declare dlq: %w", err)
 	}
-	if err := ch.QueueBind(Queue, RoutingKey, Exchange, false, nil); err != nil {
-		return fmt.Errorf("bind queue: %w", err)
+	if err := ch.QueueBind(queue, WorkerRoutingKey(workerID), Exchange, false, nil); err != nil {
+		return fmt.Errorf("bind worker queue: %w", err)
 	}
 	if err := ch.QueueBind(DeadLetterQueue, DeadLetterRoutingKey, DeadLetterExchange, false, nil); err != nil {
 		return fmt.Errorf("bind dlq: %w", err)

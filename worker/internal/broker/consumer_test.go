@@ -31,7 +31,7 @@ func TestConsumerAcksAfterCompleteAgainstRealBroker(t *testing.T) {
 		}).Run(ctx)
 	}()
 
-	publishAssignment(t, url, "11111111-1111-1111-1111-111111111111", "METADATA")
+	publishAssignment(t, url, "worker-a", "11111111-1111-1111-1111-111111111111", "METADATA")
 	select {
 	case op := <-executed:
 		if op != "11111111-1111-1111-1111-111111111111" {
@@ -43,16 +43,18 @@ func TestConsumerAcksAfterCompleteAgainstRealBroker(t *testing.T) {
 	waitUntil(t, 5*time.Second, func() bool { return ctrl.completeCount() == 1 })
 }
 
-func TestTwoWorkersProcessDistinctMessages(t *testing.T) {
+func TestTwoWorkersReceiveOnlyTargetedMessages(t *testing.T) {
 	url := startRabbit(t)
-	ops := []string{
+	aOps := []string{
 		"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
 		"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+	}
+	bOps := []string{
 		"cccccccc-cccc-cccc-cccc-cccccccccccc",
 		"dddddddd-dddd-dddd-dddd-dddddddddddd",
 	}
 	outcomes := map[string]string{}
-	for _, op := range ops {
+	for _, op := range append(append([]string{}, aOps...), bOps...) {
 		outcomes[op] = model.StartStarted
 	}
 	ctrl := &recordingControl{outcomes: outcomes}
@@ -60,7 +62,6 @@ func TestTwoWorkersProcessDistinctMessages(t *testing.T) {
 	seen := map[string]string{}
 	execFor := func(workerID string) consumer.Executor {
 		return func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
-			time.Sleep(150 * time.Millisecond)
 			mu.Lock()
 			seen[claimed.OperationID] = workerID
 			mu.Unlock()
@@ -70,30 +71,76 @@ func TestTwoWorkersProcessDistinctMessages(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = New(Config{URL: url, WorkerID: "worker-a", Prefetch: 1}, ctrl, execFor("worker-a")).Run(ctx) }()
-	go func() { _ = New(Config{URL: url, WorkerID: "worker-b", Prefetch: 1}, ctrl, execFor("worker-b")).Run(ctx) }()
+	go func() {
+		_ = New(Config{URL: url, WorkerID: "worker-a", Prefetch: 1}, ctrl, execFor("worker-a")).Run(ctx)
+	}()
+	go func() {
+		_ = New(Config{URL: url, WorkerID: "worker-b", Prefetch: 1}, ctrl, execFor("worker-b")).Run(ctx)
+	}()
 
-	for _, op := range ops {
-		publishAssignment(t, url, op, "THUMBNAIL")
+	for _, op := range aOps {
+		publishAssignment(t, url, "worker-a", op, "THUMBNAIL")
+	}
+	for _, op := range bOps {
+		publishAssignment(t, url, "worker-b", op, "METADATA")
 	}
 
 	waitUntil(t, 30*time.Second, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return len(seen) == len(ops)
+		return len(seen) == len(aOps)+len(bOps)
 	})
-	workers := map[string]int{}
 	mu.Lock()
-	for op, workerID := range seen {
-		workers[workerID]++
-		t.Logf("operation %s processed by %s", op, workerID)
+	defer mu.Unlock()
+	for _, op := range aOps {
+		if seen[op] != "worker-a" {
+			t.Fatalf("operation %s processed by %s", op, seen[op])
+		}
 	}
-	mu.Unlock()
-	if len(seen) != len(ops) {
-		t.Fatalf("processed=%d", len(seen))
+	for _, op := range bOps {
+		if seen[op] != "worker-b" {
+			t.Fatalf("operation %s processed by %s", op, seen[op])
+		}
 	}
-	if len(workers) < 2 {
-		t.Fatalf("expected both workers to process work, distribution=%v", workers)
+}
+
+func TestTargetedRoutingDoesNotDeliverToOtherWorker(t *testing.T) {
+	url := startRabbit(t)
+	ctrl := &recordingControl{outcomes: map[string]string{
+		"11111111-1111-1111-1111-111111111111": model.StartStarted,
+	}}
+	var mu sync.Mutex
+	var executedBy string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = New(Config{URL: url, WorkerID: "worker-a", Prefetch: 1}, ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+			mu.Lock()
+			executedBy = "worker-a"
+			mu.Unlock()
+			return run.Result{RuntimeMs: 1}, nil
+		}).Run(ctx)
+	}()
+	go func() {
+		_ = New(Config{URL: url, WorkerID: "worker-b", Prefetch: 1}, ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+			mu.Lock()
+			executedBy = "worker-b"
+			mu.Unlock()
+			return run.Result{RuntimeMs: 1}, nil
+		}).Run(ctx)
+	}()
+
+	publishAssignment(t, url, "worker-a", "11111111-1111-1111-1111-111111111111", "METADATA")
+	waitUntil(t, 20*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return executedBy != ""
+	})
+	time.Sleep(500 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if executedBy != "worker-a" {
+		t.Fatalf("executedBy=%s", executedBy)
 	}
 }
 
@@ -116,14 +163,14 @@ func TestDuplicateDeliveryDoesNotExecuteTwice(t *testing.T) {
 		}).Run(ctx)
 	}()
 
-	body := assignmentJSON("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", "METADATA")
-	publishRaw(t, url, body)
+	body := assignmentJSON("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", "METADATA", "worker-a")
+	publishRaw(t, url, "worker-a", body)
 	waitUntil(t, 20*time.Second, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return execCount == 1 && ctrl.completeCount() == 1
 	})
-	publishRaw(t, url, body)
+	publishRaw(t, url, "worker-a", body)
 	time.Sleep(2 * time.Second)
 	mu.Lock()
 	defer mu.Unlock()
@@ -149,16 +196,16 @@ func startRabbit(t *testing.T) string {
 	return url
 }
 
-func publishAssignment(t *testing.T, url, operationID, opType string) {
+func publishAssignment(t *testing.T, url, workerID, operationID, opType string) {
 	t.Helper()
-	publishRaw(t, url, assignmentJSON(operationID, opType))
+	publishRaw(t, url, workerID, assignmentJSON(operationID, opType, workerID))
 }
 
-func assignmentJSON(operationID, opType string) string {
-	return fmt.Sprintf(`{"schemaVersion":1,"operationId":"%s","jobId":"22222222-2222-2222-2222-222222222222","type":"%s","inputUri":"s3://media-input/sample.mp4","dispatchedAt":"2026-08-25T02:00:00Z"}`, operationID, opType)
+func assignmentJSON(operationID, opType, workerID string) string {
+	return fmt.Sprintf(`{"schemaVersion":2,"operationId":"%s","jobId":"22222222-2222-2222-2222-222222222222","type":"%s","inputUri":"s3://media-input/sample.mp4","workerId":"%s","scheduledAt":"2026-08-25T18:00:00Z","policy":"FIFO"}`, operationID, opType, workerID)
 }
 
-func publishRaw(t *testing.T, url, body string) {
+func publishRaw(t *testing.T, url, workerID, body string) {
 	t.Helper()
 	conn, err := amqp.Dial(url)
 	if err != nil {
@@ -170,10 +217,10 @@ func publishRaw(t *testing.T, url, body string) {
 		t.Fatal(err)
 	}
 	defer ch.Close()
-	if err := DeclareTopology(ch); err != nil {
+	if err := DeclareTopology(ch, workerID); err != nil {
 		t.Fatal(err)
 	}
-	err = ch.Publish(Exchange, RoutingKey, false, false, amqp.Publishing{
+	err = ch.Publish(Exchange, WorkerRoutingKey(workerID), false, false, amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		Body:         []byte(body),

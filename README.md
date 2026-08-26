@@ -4,14 +4,20 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-That later architecture (Go scheduler policies, OpenTelemetry) is **not implemented yet**. This repository is currently at **Phase 3D**.
+This repository is currently at **Phase 4A**: a Go scheduler makes explicit FIFO placement decisions. RabbitMQ only transports those decisions to the selected worker. Later policies (Round Robin, Least Loaded, SJF, EDF, Adaptive) are not implemented.
 
-## Current status: Phase 3D — execution attempts + leases + safe reassignment
+## Current status: Phase 4A — FIFO scheduler + explicit worker placement
 
 The canonical Java application is the Maven/Spring Boot project at:
 
 ```text
 Server/drive
+```
+
+The Go scheduler lives at:
+
+```text
+scheduler/
 ```
 
 Identical Go workers live at:
@@ -20,29 +26,33 @@ Identical Go workers live at:
 worker/
 ```
 
-The assignment JSON contract lives at:
+Assignment JSON contracts live at:
 
 ```text
-contracts/operation-assignment.v1.schema.json
+contracts/operation-assignment.v1.schema.json   (legacy shared-queue path)
+contracts/operation-assignment.v2.schema.json   (Phase 4A targeted placement)
 ```
 
-Phase 3D currently:
+Phase 4A currently:
 
-- accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write)
-- a **Java dispatcher** (isolated from the public API) selects eligible `QUEUED` `METADATA`/`THUMBNAIL` operations, marks them `ASSIGNED`, and outbox-publishes assignment messages to RabbitMQ
-- Go workers **probe local capabilities and register** with the control service before consuming work
+- accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write and does **not** publish RabbitMQ)
+- a **Go scheduler** polls `GET /internal/scheduler/snapshot`, selects the oldest eligible operation (FIFO) and an explicit worker, then commits with `POST /internal/scheduler/assign`
+- Java revalidates the decision in one transaction: operation still `QUEUED`, worker `AVAILABLE`, worker advertises the type, then `QUEUED -> ASSIGNED`, writes a `scheduling_decisions` row (`policy=FIFO`), and creates a **worker-targeted** outbox row
+- the Java outbox publisher sends that assignment to RabbitMQ with routing key `worker.{workerId}`
+- Go workers declare durable per-worker queues before they register, consume only their queue, and reject a v2 assignment whose `workerId` does not match
 - workers send **periodic heartbeats**; the control service marks them `AVAILABLE` or `UNAVAILABLE`
 - `GET /workers` lists workers, static capabilities, `status`, and `lastHeartbeat`
-- multiple Go workers compete as consumers on **one shared queue** (availability is not placement yet)
 - workers call `POST /internal/operations/{id}/start` with `workerId` so PostgreSQL creates an `ExecutionAttempt`, binds ownership, and issues a lease
 - workers renew that lease independently of heartbeats while media work runs
-- if a worker becomes `UNAVAILABLE` and its attempt lease expires, the attempt is `INTERRUPTED`, the operation is `QUEUED`, and the existing dispatcher redispatches it
-- a late result from an old attempt is rejected (`409 STALE_EXECUTION_ATTEMPT`) and cannot complete a newer attempt's operation
+- if a worker becomes `UNAVAILABLE` and its attempt lease expires, the attempt is `INTERRUPTED`, the operation is `QUEUED`, and the Go scheduler can place it on another eligible worker
+- a late result from an old attempt is rejected (`409 STALE_EXECUTION_ATTEMPT`)
 - downloads `s3://` inputs (and still accepts `file://`)
 - runs **real ffprobe** and **real FFmpeg**
 - uploads JPEG thumbnails to `s3://media-output/...` and persists `Artifact` metadata
 
-RabbitMQ competing consumers are **baseline work distribution**, not the adaptive scheduler. Registration is control-plane inventory. Heartbeats are control-plane liveness. Leases are **attempt ownership**. Neither heartbeat nor lease is worker placement.
+FIFO is a **control baseline**, not a performance claim. It does not use job priority, deadline, CPU, memory, queue depth, or runtime estimates.
+
+Worker placement in this phase is a separate, deliberately simple rule: among `AVAILABLE` workers that advertise the operation type, choose the lexicographically first worker ID. **This is not Round Robin or adaptive placement.**
 
 ```text
 Client
@@ -51,11 +61,14 @@ Client
 Java Control Service
   |              \
   |               +--> GET /workers  (AVAILABLE / UNAVAILABLE)
+  |               +--> GET /internal/scheduler/snapshot
+  |               +--> POST /internal/scheduler/assign
   v
 PostgreSQL  <--- worker registration (upsert by WORKER_ID)
   ^              <--- POST /internal/workers/{id}/heartbeat
   ^              <--- start (creates ExecutionAttempt + lease)
   ^              <--- renew / complete / fail (attemptId required)
+  ^              <--- scheduling_decisions + targeted dispatch_outbox
   |
   | stale-heartbeat sweeper
   |   AVAILABLE -> UNAVAILABLE when lastHeartbeat is older than timeout
@@ -64,22 +77,20 @@ PostgreSQL  <--- worker registration (upsert by WORKER_ID)
   |   RUNNING attempt + expired lease + UNAVAILABLE worker
   |     -> attempt INTERRUPTED, operation QUEUED
   |
-  | outbox dispatcher (still shared-queue publish; redispatches requeued work)
+  | outbox publisher (routing key worker.{workerId})
   v
-RabbitMQ
+RabbitMQ  media.operations
   |
-  +-------------+-------------+
-  |             |             |
-  v             v             v
-Worker A     Worker B     Worker C
-  |             |             |
-  +------ register + heartbeat loop ------+
-  |             |             |
-  +-------------+-------------+
+  +-- worker.worker-a --> media.worker.worker-a --> Worker A
+  +-- worker.worker-b --> media.worker.worker-b --> Worker B
                 |
          ffprobe / FFmpeg
                 |
               MinIO
+
+Go Scheduler (placement authority)
+  |
+  +--> snapshot --> FIFO operation --> lex-first eligible worker --> assign
 ```
 
 Stack: **Java 21**, **Spring Boot 4.1.1**, **Maven**, **PostgreSQL**, **Flyway**, **Spring Data JPA**, **Spring AMQP**, **Go**, **amqp091-go**, **ffprobe/FFmpeg**, **MinIO**, **RabbitMQ**. The Maven `artifactId` remains `drive`.
@@ -92,7 +103,7 @@ From `Server/drive`:
 ./mvnw clean test
 ```
 
-Requires **Java 21+**. Automated Java tests use **Testcontainers** and therefore need a running **Docker daemon**. Go tests (`cd worker && go test ./...`) do not need Docker. The Maven wrapper (`./mvnw`) is preferred over a system Maven install.
+Requires **Java 21+**. Automated Java tests use **Testcontainers** and therefore need a running **Docker daemon**. The Maven wrapper (`./mvnw`) is preferred over a system Maven install.
 
 ## Run tests
 
@@ -107,7 +118,13 @@ go test ./...
 go vet ./...
 ```
 
-Java tests start a temporary PostgreSQL container. Dispatcher tests also start RabbitMQ via Testcontainers. They do **not** require the Compose database, MinIO, or Compose RabbitMQ. Some Go tests generate a tiny clip with FFmpeg when `ffmpeg`/`ffprobe` are on `PATH`; they are skipped if those binaries are missing. GitHub Actions does **not** install FFmpeg or MinIO. Object-storage unit tests use an in-memory fake. Go broker tests start RabbitMQ via Testcontainers.
+```bash
+cd scheduler
+go test ./...
+go vet ./...
+```
+
+Java tests start a temporary PostgreSQL container. Dispatcher and scheduler RabbitMQ tests also start RabbitMQ via Testcontainers. They do **not** require the Compose database, MinIO, or Compose RabbitMQ. Some Go tests generate a tiny clip with FFmpeg when `ffmpeg`/`ffprobe` are on `PATH`; they are skipped if those binaries are missing. GitHub Actions does **not** install FFmpeg or MinIO. Object-storage unit tests use an in-memory fake. Worker broker tests start RabbitMQ via Testcontainers. Scheduler tests are unit tests (no Docker).
 
 ## Local infrastructure
 
@@ -153,7 +170,21 @@ cd Server/drive
 ./mvnw spring-boot:run
 ```
 
-The service listens on port **8080** by default. Override with `SERVER_PORT`:
+The service listens on port **8080** by default. Override with `SERVER_PORT`. Java operation-selection (`drive.dispatch.scheduling-enabled`) is **off** so it does not compete with the Go scheduler. The outbox publisher stays on.
+
+In another terminal, start the scheduler:
+
+```bash
+cd scheduler
+CONTROL_SERVICE_URL=http://localhost:8080 \
+SCHEDULER_POLL_INTERVAL=500ms \
+SCHEDULING_POLICY=FIFO \
+go run ./cmd/scheduler
+```
+
+`SCHEDULING_POLICY` must be `FIFO`. Other names (including `ROUND_ROBIN`) fail startup; those policies are not implemented. Then start workers (see below).
+
+Override the control-service port with `SERVER_PORT`:
 
 ```bash
 SERVER_PORT=8081 ./mvnw spring-boot:run
@@ -173,7 +204,7 @@ Expected response:
 
 ## Job API
 
-Submit a job. Execution is not started inside this request; the job is stored as `QUEUED`. An isolated dispatcher later assigns eligible operations.
+Submit a job. Execution is not started inside this request; the job is stored as `QUEUED`. The Go scheduler later assigns eligible operations.
 
 ```bash
 curl -sS -X POST http://localhost:8080/jobs \
@@ -205,7 +236,94 @@ curl -sS http://localhost:8080/jobs/<job-id>/artifacts
 
 Supported operation types for submission: `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`, `TRANSCODE_4K_TO_1080P`, `H264_TO_AV1`.
 
-**Only `METADATA` and `THUMBNAIL` are executed.** Dispatch still publishes those types to the shared RabbitMQ queue; registration does not change placement.
+**Only `METADATA` and `THUMBNAIL` are executed.** The scheduler places those types onto a specific worker; registration and capability matching now prevent dispatch to a worker that did not advertise the type. Other submitted types remain `QUEUED`.
+
+## Scheduler
+
+The scheduler decides **placement**. RabbitMQ **transports** that placement. The worker **executes** it.
+
+```text
+queued operation
+      ↓
+Go scheduler (FIFO + lex-first eligible worker)
+      ↓
+POST /internal/scheduler/assign
+      ↓
+Java transaction: validate, QUEUED -> ASSIGNED, scheduling_decisions, targeted outbox
+      ↓
+publisher -> routing key worker.{workerId}
+      ↓
+only that worker's queue receives the message
+      ↓
+POST /internal/operations/{id}/start  (attempt + lease; unchanged from Phase 3D)
+```
+
+### FIFO (operation ordering)
+
+Scheduling unit is **Operation**, not whole Job. FIFO means the oldest **schedulable operation across jobs**:
+
+```text
+createdAt ASC, operationOrder ASC, id ASC
+```
+
+Job `priority` and `deadline` are persisted but **intentionally ignored** so FIFO stays a pure baseline. This phase does not skip an older unschedulable operation to run a younger one; if the oldest queued `THUMBNAIL` has no eligible worker, it stays `QUEUED` and the scheduler logs `no_eligible_worker` (no hot loop — it sleeps `SCHEDULER_POLL_INTERVAL`). Worker registration/recovery may make it schedulable later. The operation is not failed.
+
+### Worker placement (not a performance algorithm)
+
+After FIFO picks the operation:
+
+```text
+eligible workers
+    ↓
+status == AVAILABLE
+    ↓
+supports the operation type
+    ↓
+sort worker IDs lexicographically
+    ↓
+choose first
+```
+
+Example: `worker-a` and `worker-b` both `AVAILABLE` and both advertise `METADATA` → `worker-a` wins. If `worker-a` is `UNAVAILABLE`, `worker-b` wins. **This is not Round Robin, Least Loaded, or adaptive scoring.**
+
+Java revalidates worker existence, `AVAILABLE`, and capability at assign commit. A stale snapshot is rejected (`409`), and the scheduler continues.
+
+Two scheduler processes may propose the same operation; the Job row lock allows only one `QUEUED -> ASSIGNED`. The loser gets `409` and retries the next loop.
+
+### Targeted RabbitMQ
+
+| Name | Value |
+| --- | --- |
+| Exchange | `media.operations` (direct, durable) |
+| Worker queue | `media.worker.{workerId}` (durable, worker-declared) |
+| Routing key | `worker.{workerId}` |
+| Dead-letter exchange | `media.operations.dlx` |
+| Dead-letter queue | `media.operations.execute.dlq` |
+
+Workers declare their queue **before** registration so they are not marked `AVAILABLE` with a missing queue. Offline `UNAVAILABLE` workers are not assigned. Durable queues are **not** deleted when a worker becomes `UNAVAILABLE` (cleanup is later technical debt). Messages for a worker that dies after publish can sit on that durable queue until the worker returns; after `start`, Phase 3D lease recovery still applies.
+
+A scheduler snapshot can be stale (worker dies between snapshot and commit). Commit revalidation plus leases provide eventual progress; this phase does not eliminate every race.
+
+The legacy Java enqueue loop (`drive.dispatch.scheduling-enabled=true`) can still select `QUEUED` work onto the old shared queue for tests. Production default is **off**. Do not run it together with the Go scheduler.
+
+### Assignment v2
+
+```json
+{
+  "schemaVersion": 2,
+  "operationId": "...",
+  "jobId": "...",
+  "type": "THUMBNAIL",
+  "inputUri": "s3://...",
+  "workerId": "worker-a",
+  "scheduledAt": "...",
+  "policy": "FIFO"
+}
+```
+
+No `attemptId`. Ownership still begins at `start`. The worker drops a v2 message whose `workerId` does not match `WORKER_ID`.
+
+## Workers
 
 ## Workers
 
@@ -247,9 +365,9 @@ curl -sS -X POST http://localhost:8080/jobs \
   }'
 ```
 
-The job is `QUEUED` until the dispatcher assigns operations (`ASSIGNED`), a worker starts one (`RUNNING` + `ExecutionAttempt`), and results are persisted (`COMPLETED` / `FAILED`). Interrupted infrastructure failures requeue the operation; attempt history is retained.
+The job is `QUEUED` until the scheduler assigns an operation (`ASSIGNED`), a worker starts one (`RUNNING` + `ExecutionAttempt`), and results are persisted (`COMPLETED` / `FAILED`). Interrupted infrastructure failures requeue the operation; the scheduler places it again. Attempt history is retained.
 
-`WORKER_ID` is **required** (stable identity such as `worker-a`). The worker probes local executables and machine info, registers, starts a heartbeat loop, and only then consumes RabbitMQ. After `start` succeeds it also runs a **lease-renewal loop** for that attempt until complete/fail. `supportedOperations` means the worker has an implemented executor **and** the required local binary is available (`METADATA` needs ffprobe, `THUMBNAIL` needs FFmpeg). Optional `SUPPORTED_OPERATIONS` may **restrict** that set; it cannot add unimplemented types. If a requested operation's executable is missing, startup fails: the worker does not register, does not heartbeat, and does not consume. Metadata-only workers (`SUPPORTED_OPERATIONS=METADATA`) do not require FFmpeg; encoder `supportedCodecs` stay empty in that case.
+`WORKER_ID` is **required** (stable identity such as `worker-a`). The worker probes local executables and machine info, **declares its durable RabbitMQ queue**, registers, starts a heartbeat loop, and only then consumes `media.worker.{WORKER_ID}`. After `start` succeeds it also runs a **lease-renewal loop** for that attempt until complete/fail. `supportedOperations` means the worker has an implemented executor **and** the required local binary is available (`METADATA` needs ffprobe, `THUMBNAIL` needs FFmpeg). Optional `SUPPORTED_OPERATIONS` may **restrict** that set; it cannot add unimplemented types. If a requested operation's executable is missing, startup fails: the worker does not register, does not heartbeat, and does not consume. Metadata-only workers (`SUPPORTED_OPERATIONS=METADATA`) do not require FFmpeg; encoder `supportedCodecs` stay empty in that case.
 
 ```bash
 cd worker
@@ -305,7 +423,7 @@ Successful execution:
 QUEUED -> ASSIGNED -> RUNNING -> COMPLETED
 ```
 
-Observe worker logs for `event=registered`, then `worker=`, `job=`, `operation=`, `type=`, `event=received`, `event=execution_start`, `event=execution_completed` / `event=execution_failure`, and `event=ack` / `event=nack_requeue`. An assignment this worker did not advertise (for example `TRANSCODE_1080P`) is not executed; the message is dead-lettered (`event=capability_mismatch`).
+Observe worker logs for `event=registered`, then `event=consuming queue=media.worker.{id}`, `event=received`, `event=execution_start`, `event=execution_completed` / `event=execution_failure`, and `event=ack` / `event=nack_requeue`. A v2 assignment whose `workerId` does not match is dropped (`event=worker_id_mismatch`). An assignment this worker did not advertise (for example `TRANSCODE_1080P`) is not executed; the message is dead-lettered (`event=capability_mismatch`). Scheduler logs include `event=assigned` and `event=no_eligible_worker`.
 
 `METADATA` stores parsed probe JSON on the operation. `THUMBNAIL` extracts one JPEG frame (seek ~1s, falling back to the first frame on short clips) and uploads:
 
@@ -421,13 +539,15 @@ worker starts
     ↓
 detects capabilities (executables + static resources)
     ↓
+declare durable queue media.worker.{WORKER_ID}
+    ↓
 POST /internal/workers/register
     ↓
 AVAILABLE
     ↓
 start heartbeat loop (POST /internal/workers/{id}/heartbeat)
     ↓
-RabbitMQ consume
+RabbitMQ consume media.worker.{WORKER_ID}
 
 periodic heartbeat
     ↓
@@ -483,7 +603,7 @@ Example list:
 }
 ```
 
-`AVAILABLE` means the control service has observed a registration or heartbeat within `WORKER_HEARTBEAT_TIMEOUT`. `UNAVAILABLE` means it has not. That is **not** proof the OS process is dead, and it does **not** stop RabbitMQ from delivering to a still-connected consumer. Unknown IDs return **404** `WORKER_NOT_FOUND`. Heartbeat of an unknown worker also returns **404**; heartbeats never auto-register. An `UNAVAILABLE` worker can become `AVAILABLE` again via heartbeat or re-registration.
+`AVAILABLE` means the control service has observed a registration or heartbeat within `WORKER_HEARTBEAT_TIMEOUT`. `UNAVAILABLE` means it has not. That is **not** proof the OS process is dead. The scheduler will not **newly assign** work to `UNAVAILABLE` workers. A still-connected consumer can still finish an already-started attempt until the lease expires. Unknown IDs return **404** `WORKER_NOT_FOUND`. Heartbeat of an unknown worker also returns **404**; heartbeats never auto-register. An `UNAVAILABLE` worker can become `AVAILABLE` again via heartbeat or re-registration.
 
 Parent Job status after start/complete/fail is recomputed under a PostgreSQL row lock on the Job, so concurrent operation completions cannot leave the job stale (for example both operations `COMPLETED` while the job stays `RUNNING`). That is aggregation correctness, not exactly-once execution.
 
@@ -495,7 +615,7 @@ A missing object (`s3://media-input/does-not-exist.mp4`) becomes operation `FAIL
 
 Internal worker endpoints (`POST /internal/operations/{id}/start`, `.../attempts/{attemptId}/renew`, `.../complete`, `.../fail`) are for **local/trusted development only**. There is no authentication yet. Credential for ownership is the unguessable attempt UUID plus `workerId` on the trusted network; there is no extra lease token.
 
-`POST /internal/operations/claim` still exists but is **disabled by default** (`drive.dispatch.http-claim-enabled=false`) so it does not compete with RabbitMQ. Existing tests turn it on. Claim now also requires `workerId` and creates an attempt. Do not run poll-based workers against a dispatcher-enabled control service.
+`POST /internal/operations/claim` still exists but is **disabled by default** (`drive.dispatch.http-claim-enabled=false`) so it does not compete with the scheduler. Existing tests turn it on. Claim now also requires `workerId` and creates an attempt. Do not run poll-based workers against a scheduler-enabled control service.
 
 ## Execution ownership
 
@@ -509,11 +629,13 @@ Operation THUMBNAIL
     +-- Attempt 2 worker-b COMPLETED   → Operation COMPLETED
 ```
 
-RabbitMQ still selects the consumer. The assignment JSON does **not** bind a worker or attempt. Ownership is established only at start:
+The scheduler selects the worker **before** RabbitMQ delivery. The assignment JSON records that worker (`workerId`) and policy (`FIFO`) but still does **not** include `attemptId`. Ownership is established only at start:
 
 ```text
-dispatcher: Operation QUEUED -> ASSIGNED, publish v1 assignment
-worker receives message
+Go scheduler: choose operation + worker
+Java: Operation QUEUED -> ASSIGNED, persist scheduling_decisions, targeted outbox
+publisher: routing key worker.{workerId}
+selected worker receives v2 assignment
     ↓
 POST /internal/operations/{id}/start  {"workerId":"worker-a"}
     ↓
@@ -568,12 +690,18 @@ sweeper: lease expired AND worker UNAVAILABLE
     ↓
 Attempt 1 INTERRUPTED, Operation QUEUED
     ↓
-existing dispatcher redispatches (outbox row for that operation is cleared so a new publish can occur)
+outbox row for that operation is cleared
+    ↓
+Go scheduler sees QUEUED again, FIFO selects it
+    ↓
+worker-a is UNAVAILABLE so it is not eligible
+    ↓
+lex-first remaining AVAILABLE capable worker (for example worker-b)
     ↓
 worker-b start -> Attempt 2
 ```
 
-The operation is requeued rather than left in a lasting `INTERRUPTED` status. The job stays `RUNNING` if other operations are still unfinished; a single requeued operation can make the job `QUEUED` again until the dispatcher assigns it.
+The operation is requeued rather than left in a lasting `INTERRUPTED` status. The job stays `RUNNING` if other operations are still unfinished; a single requeued operation can make the job `QUEUED` again until the scheduler assigns it.
 
 An expired lease on an `AVAILABLE` worker is **not** reclaimed. That avoids stealing work after one missed renew.
 
@@ -595,16 +723,18 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 
 `GET /jobs/{jobId}/operations/{operationId}/attempts` is a read-only history API (no lease internals).
 
-### Phase 3D limitations
+### Phase 4A limitations
 
-- no FIFO / round-robin / least-loaded / SJF / EDF / adaptive scheduler
-- no capability-aware placement; the shared RabbitMQ queue still distributes work
-- workers are not assigned explicitly before delivery
-- no CPU/memory utilization telemetry
+- only FIFO operation ordering; no Round Robin, Least Loaded, SJF, EDF, or adaptive scoring
+- worker placement is lexicographic among eligible workers, not load-aware
+- FIFO ignores persisted priority and deadline
+- no runtime estimator, queue-wait prediction, or utilization telemetry
+- no CPU/memory scoring even though static cores/memory are registered
 - no OpenTelemetry / Prometheus / Grafana / Jaeger
-- no full retry/backoff policy beyond bounded interruption requeue
 - no benchmark framework
-- RabbitMQ competing consumers are not that scheduler
+- worker queues are not deleted when a worker becomes `UNAVAILABLE`
+- `ASSIGNED` operations with no attempt are not auto-requeued if the selected worker never returns (durable queue may still be consumed on restart)
+- the legacy Java enqueue path remains for tests (`drive.dispatch.scheduling-enabled`); keep it off in production
 
 ## What is inactive
 
@@ -651,7 +781,7 @@ Then:
 
 Do not routinely push feature work directly to `main`.
 
-Pushes to non-`main` branches run **Branch CI**. Pull requests to `main` and pushes/merges to `main` run **PR / Main CI**. Java CI executes `./mvnw clean test` from `Server/drive`. A second job, **Go tests**, runs `go vet` and `go test` in `worker/`. The existing required-check name **Java tests** is unchanged. After **Go tests** has run once on a pull request, add it as a required check as well.
+Pushes to non-`main` branches run **Branch CI**. Pull requests to `main` and pushes/merges to `main` run **PR / Main CI**. Java CI executes `./mvnw clean test` from `Server/drive`. The **Go tests** job runs `go vet` / `go test` in `worker/` and `scheduler/`. The existing required-check names **Java tests** and **Go tests** are unchanged.
 
 These workflows are a **build/test gate**. They do not deploy anything. Deployment will be designed later.
 
@@ -659,4 +789,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next milestone is **baseline scheduling policies** (FIFO / round-robin / least-loaded) on top of this ownership model. That is Phase 4. Additional FFmpeg operations, runtime estimation, utilization telemetry, and OpenTelemetry remain later still. RabbitMQ is only the delivery mechanism today. Heartbeats remain process liveness; leases remain attempt ownership.
+The smallest next milestone is **Round Robin worker placement** on the same scheduler boundary (Phase 4B). FIFO operation ordering stays; only the worker-selection rule changes. Least Loaded, SJF, EDF, runtime estimation, utilization telemetry, and OpenTelemetry remain later still.

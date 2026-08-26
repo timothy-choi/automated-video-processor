@@ -34,4 +34,26 @@ class AssignmentJsonTest {
 		);
 		assertThat(json).contains("\"inputUri\":\"s3://media-input/weird\\\"name.mp4\"");
 	}
+
+	@Test
+	void writesVersionedV2EnvelopeWithWorkerAndPolicy() {
+		UUID operationId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+		UUID jobId = UUID.fromString("22222222-2222-2222-2222-222222222222");
+		Instant scheduledAt = Instant.parse("2026-08-25T18:00:00Z");
+
+		String json = AssignmentJson.v2(
+				operationId,
+				jobId,
+				"THUMBNAIL",
+				"s3://media-input/sample.mp4",
+				"worker-a",
+				scheduledAt,
+				"FIFO"
+		);
+
+		assertThat(json).isEqualTo(
+				"{\"schemaVersion\":2,\"operationId\":\"11111111-1111-1111-1111-111111111111\",\"jobId\":\"22222222-2222-2222-2222-222222222222\",\"type\":\"THUMBNAIL\",\"inputUri\":\"s3://media-input/sample.mp4\",\"workerId\":\"worker-a\",\"scheduledAt\":\"2026-08-25T18:00:00Z\",\"policy\":\"FIFO\"}"
+		);
+		assertThat(json).doesNotContain("attemptId").doesNotContain("hibernate");
+	}
 }

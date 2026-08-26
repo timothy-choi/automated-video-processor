@@ -129,6 +129,50 @@ func TestHandleDropsWhenStartedWithoutAttemptID(t *testing.T) {
 	}
 }
 
+func TestHandleDropsWorkerIDMismatchWithoutExecuting(t *testing.T) {
+	body := []byte(`{
+		"schemaVersion": 2,
+		"operationId": "11111111-1111-1111-1111-111111111111",
+		"jobId": "22222222-2222-2222-2222-222222222222",
+		"type": "METADATA",
+		"inputUri": "s3://media-input/sample.mp4",
+		"workerId": "worker-a",
+		"scheduledAt": "2026-08-25T18:00:00Z",
+		"policy": "FIFO"
+	}`)
+	ctrl := &fakeControl{start: startedOK()}
+	decision := Handle(context.Background(), "worker-b", body, ctrl, unexpectedExec(t))
+	if decision != NackDrop {
+		t.Fatalf("decision=%s", decision)
+	}
+	if ctrl.starts != 0 {
+		t.Fatalf("starts=%d", ctrl.starts)
+	}
+}
+
+func TestHandleAcceptsMatchingV2WorkerID(t *testing.T) {
+	body := []byte(`{
+		"schemaVersion": 2,
+		"operationId": "11111111-1111-1111-1111-111111111111",
+		"jobId": "22222222-2222-2222-2222-222222222222",
+		"type": "METADATA",
+		"inputUri": "s3://media-input/sample.mp4",
+		"workerId": "worker-a",
+		"scheduledAt": "2026-08-25T18:00:00Z",
+		"policy": "FIFO"
+	}`)
+	ctrl := &fakeControl{start: startedOK()}
+	decision := Handle(context.Background(), "worker-a", body, ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+		return run.Result{RuntimeMs: 1}, nil
+	})
+	if decision != Ack {
+		t.Fatalf("decision=%s", decision)
+	}
+	if ctrl.completes != 1 {
+		t.Fatalf("completes=%d", ctrl.completes)
+	}
+}
+
 func TestHandleDropsMalformedAndInvalidState(t *testing.T) {
 	ctrl := &fakeControl{start: model.StartResponse{Outcome: model.StartInvalidState, Status: "QUEUED"}}
 	if got := Handle(context.Background(), "worker-a", []byte("{nope"), ctrl, unexpectedExec(t)); got != NackDrop {
@@ -224,18 +268,18 @@ func startedOK() model.StartResponse {
 }
 
 type fakeControl struct {
-	start              model.StartResponse
-	startErr           error
-	completeErrs       []error
-	failErrs           []error
-	renewErrs          []error
-	completes          int
-	fails              int
-	starts             int
-	renews             int
-	lastStartWorkerID  string
-	lastComplete       model.CompleteRequest
-	lastFailAttemptID  string
+	start             model.StartResponse
+	startErr          error
+	completeErrs      []error
+	failErrs          []error
+	renewErrs         []error
+	completes         int
+	fails             int
+	starts            int
+	renews            int
+	lastStartWorkerID string
+	lastComplete      model.CompleteRequest
+	lastFailAttemptID string
 }
 
 func (f *fakeControl) Start(ctx context.Context, operationID, workerID string) (model.StartResponse, error) {
