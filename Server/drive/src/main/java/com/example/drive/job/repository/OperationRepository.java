@@ -27,7 +27,8 @@ public interface OperationRepository extends JpaRepository<Operation, UUID> {
 			where o.status = com.example.drive.job.domain.OperationStatus.QUEUED
 			  and o.type in (
 			    com.example.drive.job.domain.OperationType.METADATA,
-			    com.example.drive.job.domain.OperationType.THUMBNAIL
+			    com.example.drive.job.domain.OperationType.THUMBNAIL,
+			    com.example.drive.job.domain.OperationType.AUDIO_EXTRACTION
 			  )
 			  and (
 			    lower(j.inputUri) like 'file:%'

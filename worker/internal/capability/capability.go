@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	OperationMetadata  = "METADATA"
-	OperationThumbnail = "THUMBNAIL"
+	OperationMetadata        = "METADATA"
+	OperationThumbnail       = "THUMBNAIL"
+	OperationAudioExtraction = "AUDIO_EXTRACTION"
 )
 
 type Snapshot struct {
@@ -40,7 +41,7 @@ type Probe struct {
 }
 
 func ImplementedOperations() []string {
-	return []string{OperationMetadata, OperationThumbnail}
+	return []string{OperationMetadata, OperationThumbnail, OperationAudioExtraction}
 }
 
 func Detect(ctx context.Context, probe Probe) (Snapshot, error) {
@@ -144,6 +145,11 @@ func advertiseOperations(configured []string, ffprobeOK, ffmpegOK bool) ([]strin
 		case OperationThumbnail:
 			if !ffmpegOK {
 				return nil, fmt.Errorf("THUMBNAIL requires ffmpeg")
+			}
+			advertised = append(advertised, op)
+		case OperationAudioExtraction:
+			if !ffmpegOK {
+				return nil, fmt.Errorf("AUDIO_EXTRACTION requires ffmpeg")
 			}
 			advertised = append(advertised, op)
 		default:

@@ -50,6 +50,20 @@ func TestLeastLoadedIgnoresIncapableIdleWorker(t *testing.T) {
 	}
 }
 
+func TestLeastLoadedPlacesAudioExtractionOnIdleCapableWorker(t *testing.T) {
+	got, ok := mustSelector(t, FIFO, LeastLoaded).Select(model.Snapshot{
+		Operations: []model.Operation{{OperationID: "op-1", Type: "AUDIO_EXTRACTION", CreatedAt: time.Now()}},
+		Workers: []model.Worker{
+			loaded("worker-a", 0, "METADATA", "THUMBNAIL"),
+			loaded("worker-b", 1, "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION"),
+			loaded("worker-c", 0, "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION"),
+		},
+	})
+	if !ok || got.WorkerID != "worker-c" {
+		t.Fatalf("got %+v ok=%t", got, ok)
+	}
+}
+
 func TestLeastLoadedIgnoresUnavailableIdleWorker(t *testing.T) {
 	got, ok := mustSelector(t, FIFO, LeastLoaded).Select(model.Snapshot{
 		Operations: []model.Operation{{OperationID: "op-1", Type: "METADATA", CreatedAt: time.Now()}},

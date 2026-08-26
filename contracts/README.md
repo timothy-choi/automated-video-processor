@@ -21,7 +21,7 @@ Published to RabbitMQ as persistent JSON after the Go scheduler commits a placem
 }
 ```
 
-**v3 does not include `attemptId`.** `policy` is the operation-ordering policy (`FIFO`). `workerPolicy` is worker placement (`LEXICOGRAPHIC`, `ROUND_ROBIN`, or `LEAST_LOADED`) and is ignored by workers. Ownership is still created when the targeted worker calls `POST /internal/operations/{id}/start` with `workerId` and `assignmentId`.
+`type` is the operation (`METADATA`, `THUMBNAIL`, or `AUDIO_EXTRACTION`).
 
 This development environment does **not** accept v2 at runtime. v2 has no `assignmentId`, so accepting it would let an obsolete envelope skip identity checks. Workers reject `schemaVersion` 2 as unsupported.
 

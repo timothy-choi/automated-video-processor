@@ -188,10 +188,11 @@ public class InternalOperationService {
 
 		boolean changed = switch (operation.getType()) {
 			case METADATA -> completeMetadata(operation, attempt, request, now);
-			case THUMBNAIL -> completeThumbnail(operation, attempt, request, now);
+			case THUMBNAIL -> completeArtifact(operation, attempt, request, now, ArtifactType.THUMBNAIL);
+			case AUDIO_EXTRACTION -> completeArtifact(operation, attempt, request, now, ArtifactType.AUDIO);
 			default -> throw new InvalidJobRequestException(
 					"UNSUPPORTED_COMPLETION_TYPE",
-					"Internal completion in this phase supports METADATA and THUMBNAIL only"
+					"Internal completion in this phase supports METADATA, THUMBNAIL, and AUDIO_EXTRACTION only"
 			);
 		};
 		if (changed) {
@@ -425,20 +426,27 @@ public class InternalOperationService {
 		return operation.markCompleted(now, request.actualRuntimeMs(), toResultMap(request.metadata()));
 	}
 
-	private boolean completeThumbnail(
+	private boolean completeArtifact(
 			Operation operation,
 			ExecutionAttempt attempt,
 			CompleteOperationRequest request,
-			Instant now
+			Instant now,
+			ArtifactType artifactType
 	) {
 		if (request.artifact() == null) {
-			throw new InvalidJobRequestException("VALIDATION_FAILED", "artifact is required for THUMBNAIL completion");
+			throw new InvalidJobRequestException(
+					"VALIDATION_FAILED",
+					"artifact is required for " + operation.getType() + " completion"
+			);
 		}
 		if (request.metadata() != null) {
-			throw new InvalidJobRequestException("VALIDATION_FAILED", "metadata is not allowed for THUMBNAIL completion");
+			throw new InvalidJobRequestException(
+					"VALIDATION_FAILED",
+					"metadata is not allowed for " + operation.getType() + " completion"
+			);
 		}
 		ArtifactCompletionDto artifact = request.artifact();
-		validateThumbnailObjectUri(artifact.objectUri());
+		validateArtifactObjectUri(artifact.objectUri());
 		if (attempt.getStatus() != AttemptStatus.RUNNING) {
 			return false;
 		}
@@ -449,7 +457,7 @@ public class InternalOperationService {
 					UUID.randomUUID(),
 					operation.getJob().getId(),
 					operation.getId(),
-					ArtifactType.THUMBNAIL,
+					artifactType,
 					artifact.objectUri().trim(),
 					artifact.contentType().trim(),
 					artifact.sizeBytes(),
@@ -493,7 +501,7 @@ public class InternalOperationService {
 				FROM operations o
 				JOIN jobs j ON j.id = o.job_id
 				WHERE o.status = 'QUEUED'
-				  AND o.operation_type IN ('METADATA', 'THUMBNAIL')
+				  AND o.operation_type IN ('METADATA', 'THUMBNAIL', 'AUDIO_EXTRACTION')
 				  AND (
 				    LOWER(j.input_uri) LIKE 'file:%'
 				    OR LOWER(j.input_uri) LIKE 's3:%'
@@ -508,7 +516,7 @@ public class InternalOperationService {
 		return Optional.of(toUuid(rows.getFirst()));
 	}
 
-	private static void validateThumbnailObjectUri(String raw) {
+	private static void validateArtifactObjectUri(String raw) {
 		URI uri;
 		try {
 			uri = URI.create(raw.trim());

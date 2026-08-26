@@ -53,7 +53,7 @@ class InternalOperationApiIntegrationTest {
 		jdbcTemplate.execute("delete from worker_supported_codecs");
 		jdbcTemplate.execute("delete from worker_supported_operations");
 		jdbcTemplate.execute("delete from workers");
-		WorkerTestSupport.register(mockMvc, "worker-a");
+		WorkerTestSupport.register(mockMvc, "worker-a", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION");
 	}
 
 	@Test
@@ -304,6 +304,46 @@ class InternalOperationApiIntegrationTest {
 	}
 
 	@Test
+	void completeAudioExtractionPersistsArtifactAndCompletesJob() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "s3://media-input/video.mp4",
+				  "operations": [{"type": "AUDIO_EXTRACTION"}]
+				}
+				""");
+		ClaimedIds claimed = claimOperation();
+		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + claimed.operationId() + "/audio.m4a";
+
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(audioCompleteJson(claimed.attemptId(), objectUri, 4096)))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("COMPLETED"))
+				.andExpect(jsonPath("$.actualRuntimeMs").value(20))
+				.andExpect(jsonPath("$.result").doesNotExist());
+
+		mockMvc.perform(get("/jobs/" + jobId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("COMPLETED"));
+
+		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.artifacts.length()").value(1))
+				.andExpect(jsonPath("$.artifacts[0].operationId").value(claimed.operationId().toString()))
+				.andExpect(jsonPath("$.artifacts[0].type").value("AUDIO"))
+				.andExpect(jsonPath("$.artifacts[0].objectUri").value(objectUri))
+				.andExpect(jsonPath("$.artifacts[0].contentType").value("audio/mp4"))
+				.andExpect(jsonPath("$.artifacts[0].sizeBytes").value(4096))
+				.andExpect(jsonPath("$.artifacts[0].checksum").value(SHA256));
+
+		Integer blobColumns = jdbcTemplate.queryForObject(
+				"select count(*) from information_schema.columns where table_name = 'artifacts' and data_type in ('bytea', 'oid')",
+				Integer.class
+		);
+		assertThat(blobColumns).isZero();
+	}
+
+	@Test
 	void failPersistsReasonAndFailsJob() throws Exception {
 		UUID jobId = createJob("""
 				{
@@ -449,6 +489,36 @@ class InternalOperationApiIntegrationTest {
 	}
 
 	@Test
+	void duplicateAudioCompletionDoesNotCreateSecondArtifact() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "file:///tmp/audio-idempotent.mp4",
+				  "operations": [{"type": "AUDIO_EXTRACTION"}]
+				}
+				""");
+		ClaimedIds claimed = claimOperation();
+		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + claimed.operationId() + "/audio.m4a";
+		String body = audioCompleteJson(claimed.attemptId(), objectUri, 99);
+
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(body))
+				.andExpect(status().isOk());
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(body))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("COMPLETED"));
+
+		Integer count = jdbcTemplate.queryForObject(
+				"select count(*) from artifacts where operation_id = ?",
+				Integer.class,
+				claimed.operationId()
+		);
+		assertThat(count).isEqualTo(1);
+	}
+
+	@Test
 	void completingFailedOperationIsRejected() throws Exception {
 		createJob("""
 				{
@@ -509,6 +579,43 @@ class InternalOperationApiIntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(1))
 				.andExpect(jsonPath("$.artifacts[0].operationId").value(thumbnail.operationId().toString()));
+	}
+
+	@Test
+	void mixedMetadataThumbnailAndAudioCompleteJob() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "s3://media-input/mixed.mp4",
+				  "operations": [
+				    {"type": "METADATA"},
+				    {"type": "THUMBNAIL"},
+				    {"type": "AUDIO_EXTRACTION"}
+				  ]
+				}
+				""");
+		ClaimedIds metadata = claimOperation();
+		completeMetadata(metadata.operationId(), metadata.attemptId());
+		ClaimedIds thumbnail = claimOperation();
+		String thumbUri = "s3://media-output/jobs/" + jobId + "/operations/" + thumbnail.operationId() + "/thumbnail.jpg";
+		mockMvc.perform(post("/internal/operations/" + thumbnail.operationId() + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(thumbnailCompleteJson(thumbnail.attemptId(), thumbUri, 50)))
+				.andExpect(status().isOk());
+		mockMvc.perform(get("/jobs/" + jobId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("RUNNING"));
+		ClaimedIds audio = claimOperation();
+		String audioUri = "s3://media-output/jobs/" + jobId + "/operations/" + audio.operationId() + "/audio.m4a";
+		mockMvc.perform(post("/internal/operations/" + audio.operationId() + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(audioCompleteJson(audio.attemptId(), audioUri, 80)))
+				.andExpect(status().isOk());
+		mockMvc.perform(get("/jobs/" + jobId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("COMPLETED"));
+		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.artifacts.length()").value(2));
 	}
 
 	@Test
@@ -663,6 +770,21 @@ class InternalOperationApiIntegrationTest {
 				  "artifact": {
 				    "objectUri": "%s",
 				    "contentType": "image/jpeg",
+				    "sizeBytes": %d,
+				    "checksum": "%s"
+				  }
+				}
+				""".formatted(attemptId, objectUri, sizeBytes, SHA256);
+	}
+
+	private static String audioCompleteJson(UUID attemptId, String objectUri, int sizeBytes) {
+		return """
+				{
+				  "attemptId": "%s",
+				  "actualRuntimeMs": 20,
+				  "artifact": {
+				    "objectUri": "%s",
+				    "contentType": "audio/mp4",
 				    "sizeBytes": %d,
 				    "checksum": "%s"
 				  }

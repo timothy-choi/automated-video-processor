@@ -11,6 +11,10 @@ func ThumbnailObjectKey(jobID, operationID string) string {
 	return "jobs/" + jobID + "/operations/" + operationID + "/thumbnail.jpg"
 }
 
+func AudioObjectKey(jobID, operationID string) string {
+	return "jobs/" + jobID + "/operations/" + operationID + "/audio.m4a"
+}
+
 func ObjectURI(bucket, key string) string {
 	return "s3://" + bucket + "/" + key
 }

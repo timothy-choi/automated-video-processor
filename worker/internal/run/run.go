@@ -20,6 +20,7 @@ type Deps struct {
 	FfmpegPath   string
 	Probe        func(ctx context.Context, ffprobePath, inputPath string) (model.MetadataResult, error)
 	Thumbnail    func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error
+	Audio        func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error
 	NewWorkspace func(operationID string) (*workspace.Workspace, error)
 }
 
@@ -37,6 +38,7 @@ func DefaultDeps(store storage.ObjectStore, outputBucket, ffprobePath, ffmpegPat
 		FfmpegPath:   ffmpegPath,
 		Probe:        executor.ProbeFile,
 		Thumbnail:    executor.ExtractThumbnail,
+		Audio:        executor.ExtractAudio,
 		NewWorkspace: workspace.New,
 	}
 }
@@ -68,26 +70,47 @@ func Execute(ctx context.Context, claimed *model.ClaimedOperation, deps Deps) (R
 		if err := deps.Thumbnail(ctx, deps.FfmpegPath, inputPath, outputPath); err != nil {
 			return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
 		}
-		checksum, size, err := storage.SHA256File(outputPath)
-		if err != nil {
+		return finishArtifact(ctx, claimed, deps, outputPath, storage.ThumbnailObjectKey(claimed.JobID, claimed.OperationID), "image/jpeg", start)
+	case "AUDIO_EXTRACTION":
+		outputPath := ws.File("audio.m4a")
+		if deps.Audio == nil {
+			return Result{RuntimeMs: time.Since(start).Milliseconds()}, fmt.Errorf("audio extraction is not configured")
+		}
+		if err := deps.Audio(ctx, deps.FfmpegPath, inputPath, outputPath); err != nil {
 			return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
 		}
-		key := storage.ThumbnailObjectKey(claimed.JobID, claimed.OperationID)
-		if err := deps.Store.Upload(ctx, deps.OutputBucket, key, outputPath, "image/jpeg"); err != nil {
-			return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
-		}
-		return Result{
-			RuntimeMs: time.Since(start).Milliseconds(),
-			Artifact: &model.ArtifactResult{
-				ObjectURI:   storage.ObjectURI(deps.OutputBucket, key),
-				ContentType: "image/jpeg",
-				SizeBytes:   size,
-				Checksum:    checksum,
-			},
-		}, nil
+		return finishArtifact(ctx, claimed, deps, outputPath, storage.AudioObjectKey(claimed.JobID, claimed.OperationID), executor.AudioContentType, start)
 	default:
 		return Result{RuntimeMs: time.Since(start).Milliseconds()}, fmt.Errorf("unsupported operation type %s", claimed.Type)
 	}
+}
+
+func finishArtifact(
+	ctx context.Context,
+	claimed *model.ClaimedOperation,
+	deps Deps,
+	outputPath, key, contentType string,
+	start time.Time,
+) (Result, error) {
+	checksum, size, err := storage.SHA256File(outputPath)
+	if err != nil {
+		return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
+	}
+	if size <= 0 {
+		return Result{RuntimeMs: time.Since(start).Milliseconds()}, fmt.Errorf("empty output file")
+	}
+	if err := deps.Store.Upload(ctx, deps.OutputBucket, key, outputPath, contentType); err != nil {
+		return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
+	}
+	return Result{
+		RuntimeMs: time.Since(start).Milliseconds(),
+		Artifact: &model.ArtifactResult{
+			ObjectURI:   storage.ObjectURI(deps.OutputBucket, key),
+			ContentType: contentType,
+			SizeBytes:   size,
+			Checksum:    checksum,
+		},
+	}, nil
 }
 
 func resolveInput(ctx context.Context, rawURI string, ws *workspace.Workspace, store storage.ObjectStore) (string, error) {

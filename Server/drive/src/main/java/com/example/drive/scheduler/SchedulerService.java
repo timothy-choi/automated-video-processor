@@ -89,6 +89,7 @@ public class SchedulerService {
 		Map<String, String> cursors = new LinkedHashMap<>();
 		putCursor(cursors, OperationType.METADATA);
 		putCursor(cursors, OperationType.THUMBNAIL);
+		putCursor(cursors, OperationType.AUDIO_EXTRACTION);
 		return new SchedulerSnapshotResponse(operations, workers, cursors);
 	}
 
@@ -249,10 +250,10 @@ public class SchedulerService {
 					"Operation " + operation.getId() + " cannot move from " + operation.getStatus() + " to ASSIGNED"
 			);
 		}
-		if (operation.getType() != OperationType.METADATA && operation.getType() != OperationType.THUMBNAIL) {
+		if (!operation.getType().isExecutable()) {
 			throw new InvalidJobRequestException(
 					"UNSUPPORTED_OPERATION_TYPE",
-					"Scheduler assignment supports METADATA and THUMBNAIL only"
+					"Scheduler assignment supports METADATA, THUMBNAIL, and AUDIO_EXTRACTION only"
 			);
 		}
 		String inputUri = operation.getJob().getInputUri();

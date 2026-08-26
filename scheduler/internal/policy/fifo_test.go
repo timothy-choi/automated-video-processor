@@ -112,6 +112,19 @@ func TestFIFOChoosesLexicographicallyFirstEligibleWorker(t *testing.T) {
 	}
 }
 
+func TestFIFOPlacesAudioExtractionOnCapableWorker(t *testing.T) {
+	got, ok := mustSelector(t, FIFO, Lexicographic).Select(model.Snapshot{
+		Operations: []model.Operation{{OperationID: "op-1", Type: "AUDIO_EXTRACTION", CreatedAt: time.Now()}},
+		Workers: []model.Worker{
+			available("worker-a", "METADATA", "THUMBNAIL"),
+			available("worker-b", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION"),
+		},
+	})
+	if !ok || got.WorkerID != "worker-b" || got.OperationID != "op-1" {
+		t.Fatalf("got %+v ok=%t", got, ok)
+	}
+}
+
 func TestNewRejectsUnimplementedPolicies(t *testing.T) {
 	if _, err := New("ROUND_ROBIN", Lexicographic); err == nil {
 		t.Fatal("expected operation policy error")

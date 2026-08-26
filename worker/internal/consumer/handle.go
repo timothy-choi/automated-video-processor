@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/timothy-choi/automated-video-processor/worker/internal/assignment"
+	"github.com/timothy-choi/automated-video-processor/worker/internal/capability"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/client"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/lease"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/model"
@@ -63,7 +64,7 @@ func HandleWithOptions(ctx context.Context, workerID string, body []byte, ctrl C
 	}
 	supported := opts.Supported
 	if supported == nil {
-		supported = []string{"METADATA", "THUMBNAIL"}
+		supported = capability.ImplementedOperations()
 	}
 	if parsed.WorkerID != "" && parsed.WorkerID != workerID {
 		log.Printf(
