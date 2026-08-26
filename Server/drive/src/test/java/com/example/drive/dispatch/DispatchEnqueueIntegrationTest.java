@@ -113,7 +113,7 @@ class DispatchEnqueueIntegrationTest {
 	}
 
 	@Test
-	void unsupportedOperationsRemainQueuedAndUndispatched() throws Exception {
+	void enqueueIncludesH264ToAv1() throws Exception {
 		UUID jobId = createJob("""
 				{
 				  "inputUri": "file:///tmp/mixed.mp4",
@@ -124,15 +124,15 @@ class DispatchEnqueueIntegrationTest {
 				}
 				""");
 
-		assertThat(enqueueService.enqueueDispatchableOperations()).isEqualTo(1);
+		assertThat(enqueueService.enqueueDispatchableOperations()).isEqualTo(2);
 
 		mockMvc.perform(get("/jobs/" + jobId))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("ASSIGNED"))
 				.andExpect(jsonPath("$.operations[0].status").value("ASSIGNED"))
-				.andExpect(jsonPath("$.operations[1].status").value("QUEUED"));
+				.andExpect(jsonPath("$.operations[1].status").value("ASSIGNED"));
 
-		Integer transcodeOutbox = jdbcTemplate.queryForObject(
+		Integer av1Outbox = jdbcTemplate.queryForObject(
 				"""
 						select count(*) from dispatch_outbox o
 						join operations op on op.id = o.operation_id
@@ -140,7 +140,7 @@ class DispatchEnqueueIntegrationTest {
 						""",
 				Integer.class
 		);
-		assertThat(transcodeOutbox).isZero();
+		assertThat(av1Outbox).isEqualTo(1);
 	}
 
 	@Test

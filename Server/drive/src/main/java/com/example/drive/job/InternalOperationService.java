@@ -191,10 +191,7 @@ public class InternalOperationService {
 			case THUMBNAIL -> completeArtifact(operation, attempt, request, now, ArtifactType.THUMBNAIL);
 			case AUDIO_EXTRACTION -> completeArtifact(operation, attempt, request, now, ArtifactType.AUDIO);
 			case TRANSCODE_1080P -> completeArtifact(operation, attempt, request, now, ArtifactType.TRANSCODE_1080P);
-			default -> throw new InvalidJobRequestException(
-					"UNSUPPORTED_COMPLETION_TYPE",
-					"Internal completion in this phase supports METADATA, THUMBNAIL, AUDIO_EXTRACTION, and TRANSCODE_1080P only"
-			);
+			case H264_TO_AV1 -> completeArtifact(operation, attempt, request, now, ArtifactType.H264_TO_AV1);
 		};
 		if (changed) {
 			operation.getJob().refreshStatusFromOperations(now);
@@ -502,7 +499,7 @@ public class InternalOperationService {
 				FROM operations o
 				JOIN jobs j ON j.id = o.job_id
 				WHERE o.status = 'QUEUED'
-				  AND o.operation_type IN ('METADATA', 'THUMBNAIL', 'AUDIO_EXTRACTION', 'TRANSCODE_1080P')
+				  AND o.operation_type IN ('METADATA', 'THUMBNAIL', 'AUDIO_EXTRACTION', 'TRANSCODE_1080P', 'H264_TO_AV1')
 				  AND (
 				    LOWER(j.input_uri) LIKE 'file:%'
 				    OR LOWER(j.input_uri) LIKE 's3:%'

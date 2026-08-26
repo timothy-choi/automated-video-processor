@@ -118,18 +118,78 @@ func wrapTranscodeError(err error) error {
 	return err
 }
 
+const AV1ContentType = "video/mp4"
+
+const (
+	AV1EncoderLibSvt = "libsvtav1"
+	AV1EncoderLibAom = "libaom-av1"
+)
+
+func AV1Args(inputPath, outputPath, encoder string) []string {
+	args := []string{
+		"-y",
+		"-v", "error",
+		"-i", inputPath,
+		"-map", "0:v:0",
+		"-map", "0:a?",
+		"-c:v", encoder,
+	}
+	switch encoder {
+	case AV1EncoderLibSvt:
+		args = append(args, "-preset", "8", "-crf", "35")
+	case AV1EncoderLibAom:
+		args = append(args, "-crf", "32", "-b:v", "0", "-cpu-used", "8", "-row-mt", "1")
+	}
+	args = append(args,
+		"-pix_fmt", "yuv420p",
+		"-c:a", "aac",
+		"-b:a", "192k",
+		"-movflags", "+faststart",
+		outputPath,
+	)
+	return args
+}
+
+func TranscodeAV1(ctx context.Context, ffmpegPath, inputPath, outputPath, encoder string) error {
+	if encoder != AV1EncoderLibSvt && encoder != AV1EncoderLibAom {
+		return fmt.Errorf("AV1 encoder is not available")
+	}
+	err := runFFmpeg(ctx, ffmpegPath, AV1Args(inputPath, outputPath, encoder)...)
+	if err != nil {
+		return wrapTranscodeError(err)
+	}
+	if !nonEmpty(outputPath) {
+		return fmt.Errorf("ffmpeg produced empty AV1 output")
+	}
+	return nil
+}
+
 func runFFmpeg(ctx context.Context, ffmpegPath string, args ...string) error {
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		message := strings.TrimSpace(stderr.String())
-		if message == "" {
-			message = err.Error()
-		}
-		return fmt.Errorf("ffmpeg failed: %s", truncate(message, 4000))
+		return fmt.Errorf("ffmpeg failed: %s", ffmpegFailureMessage(stderr.String(), err))
 	}
 	return nil
+}
+
+// ffmpegFailureMessage keeps bounded FFmpeg stderr but drops SVT-AV1 info
+// banners, which otherwise hide the real exit error and inject tab characters.
+func ffmpegFailureMessage(stderr string, runErr error) string {
+	var kept []string
+	for _, line := range strings.Split(stderr, "\n") {
+		trim := strings.TrimSpace(line)
+		if trim == "" || strings.HasPrefix(trim, "Svt[info]:") {
+			continue
+		}
+		kept = append(kept, trim)
+	}
+	message := strings.Join(kept, "\n")
+	if message == "" && runErr != nil {
+		message = runErr.Error()
+	}
+	return truncate(message, 4000)
 }
 
 func nonEmpty(path string) bool {

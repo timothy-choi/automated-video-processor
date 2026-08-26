@@ -142,7 +142,7 @@ class SchedulerApiIntegrationTest {
 	}
 
 	@Test
-	void snapshotOmitsUnsupportedOperationTypes() throws Exception {
+	void snapshotIncludesH264ToAv1() throws Exception {
 		WorkerTestSupport.register(mockMvc, "worker-a");
 		createJob("""
 				{
@@ -156,20 +156,20 @@ class SchedulerApiIntegrationTest {
 
 		mockMvc.perform(get("/internal/scheduler/snapshot"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.operations.length()").value(1))
-				.andExpect(jsonPath("$.operations[0].type").value("METADATA"));
+				.andExpect(jsonPath("$.operations.length()").value(2))
+				.andExpect(jsonPath("$.operations[0].type").value("METADATA"))
+				.andExpect(jsonPath("$.operations[1].type").value("H264_TO_AV1"));
 	}
 
 	@Test
-	void snapshotIncludesTranscode1080pAndOmitsLaterTranscodes() throws Exception {
-		WorkerTestSupport.register(mockMvc, "worker-a", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P");
+	void snapshotIncludesTranscode1080pAndH264ToAv1() throws Exception {
+		WorkerTestSupport.register(mockMvc, "worker-a", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P", "H264_TO_AV1");
 		createJob("""
 				{
 				  "inputUri": "s3://media-input/mixed.mp4",
 				  "operations": [
 				    {"type": "AUDIO_EXTRACTION"},
 				    {"type": "TRANSCODE_1080P"},
-				    {"type": "TRANSCODE_4K_TO_1080P"},
 				    {"type": "H264_TO_AV1"}
 				  ]
 				}
@@ -177,9 +177,10 @@ class SchedulerApiIntegrationTest {
 
 		mockMvc.perform(get("/internal/scheduler/snapshot"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.operations.length()").value(2))
+				.andExpect(jsonPath("$.operations.length()").value(3))
 				.andExpect(jsonPath("$.operations[0].type").value("AUDIO_EXTRACTION"))
-				.andExpect(jsonPath("$.operations[1].type").value("TRANSCODE_1080P"));
+				.andExpect(jsonPath("$.operations[1].type").value("TRANSCODE_1080P"))
+				.andExpect(jsonPath("$.operations[2].type").value("H264_TO_AV1"));
 	}
 
 	@Test
@@ -228,6 +229,61 @@ class SchedulerApiIntegrationTest {
 
 		UUID ll = operationId(createJob("""
 				{"inputUri":"s3://media-input/video.mp4","operations":[{"type":"TRANSCODE_1080P"}]}
+				"""));
+		mockMvc.perform(post("/internal/scheduler/assign")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(assignJson(ll, "worker-b", "FIFO", "LEAST_LOADED")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.workerId").value("worker-b"))
+				.andExpect(jsonPath("$.workerPolicy").value("LEAST_LOADED"));
+	}
+
+	@Test
+	void h264ToAv1CannotBeAssignedToWorkerWithoutCapability() throws Exception {
+		WorkerTestSupport.register(mockMvc, "worker-a", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P");
+		UUID operationId = operationId(createJob("""
+				{
+				  "inputUri": "s3://media-input/video.mp4",
+				  "operations": [{"type": "H264_TO_AV1"}]
+				}
+				"""));
+
+		mockMvc.perform(post("/internal/scheduler/assign")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(assignJson(operationId, "worker-a", "FIFO")))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("WORKER_CAPABILITY_MISMATCH"));
+		assertThat(operationStatus(operationId)).isEqualTo("QUEUED");
+		assertThat(outboxCount(operationId)).isZero();
+		assertThat(decisionCount(operationId)).isZero();
+	}
+
+	@Test
+	void h264ToAv1AssignsUnderLexicographicRoundRobinAndLeastLoaded() throws Exception {
+		WorkerTestSupport.register(mockMvc, "worker-a", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P", "H264_TO_AV1");
+		WorkerTestSupport.register(mockMvc, "worker-b", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P", "H264_TO_AV1");
+		UUID lex = operationId(createJob("""
+				{"inputUri":"s3://media-input/video.mp4","operations":[{"type":"H264_TO_AV1"}]}
+				"""));
+		mockMvc.perform(post("/internal/scheduler/assign")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(assignJson(lex, "worker-a", "FIFO", "LEXICOGRAPHIC")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.workerId").value("worker-a"))
+				.andExpect(jsonPath("$.workerPolicy").value("LEXICOGRAPHIC"));
+
+		UUID rr = operationId(createJob("""
+				{"inputUri":"s3://media-input/video.mp4","operations":[{"type":"H264_TO_AV1"}]}
+				"""));
+		mockMvc.perform(post("/internal/scheduler/assign")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(assignJson(rr, "worker-a", "FIFO", "ROUND_ROBIN")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.workerId").value("worker-a"))
+				.andExpect(jsonPath("$.workerPolicy").value("ROUND_ROBIN"));
+
+		UUID ll = operationId(createJob("""
+				{"inputUri":"s3://media-input/video.mp4","operations":[{"type":"H264_TO_AV1"}]}
 				"""));
 		mockMvc.perform(post("/internal/scheduler/assign")
 						.contentType(MediaType.APPLICATION_JSON)

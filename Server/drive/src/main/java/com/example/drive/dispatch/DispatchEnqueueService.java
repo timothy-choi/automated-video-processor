@@ -96,7 +96,7 @@ public class DispatchEnqueueService {
 				FROM operations o
 				JOIN jobs j ON j.id = o.job_id
 				WHERE o.status = 'QUEUED'
-				  AND o.operation_type IN ('METADATA', 'THUMBNAIL', 'AUDIO_EXTRACTION', 'TRANSCODE_1080P')
+				  AND o.operation_type IN ('METADATA', 'THUMBNAIL', 'AUDIO_EXTRACTION', 'TRANSCODE_1080P', 'H264_TO_AV1')
 				  AND (
 				    LOWER(j.input_uri) LIKE 'file:%'
 				    OR LOWER(j.input_uri) LIKE 's3:%'

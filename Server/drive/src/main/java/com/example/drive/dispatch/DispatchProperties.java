@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class DispatchProperties {
 
 	/**
-	 * Selects QUEUED METADATA/THUMBNAIL/AUDIO_EXTRACTION/TRANSCODE_1080P operations and writes outbox rows.
+	 * Selects QUEUED METADATA/THUMBNAIL/AUDIO_EXTRACTION/TRANSCODE_1080P/H264_TO_AV1 operations and writes outbox rows.
 	 * Isolated from {@code POST /jobs}.
 	 */
 	private boolean enabled = true;

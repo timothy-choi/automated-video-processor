@@ -104,6 +104,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("detect capabilities: %w", err)
 	}
+	w.deps.AV1Encoder = snap.SelectedAV1Encoder
 	req := capability.RegistrationRequest(w.cfg.WorkerID, snap)
 	log.Printf(
 		"worker_id=%s hostname=%s cpu_arch=%s cpu_cores=%d memory_bytes=%d ffmpeg_version=%s supported_operations=%s supported_codecs=%s event=registering",

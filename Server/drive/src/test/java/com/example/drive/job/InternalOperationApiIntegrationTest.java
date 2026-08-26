@@ -163,7 +163,7 @@ class InternalOperationApiIntegrationTest {
 	}
 
 	@Test
-	void claimIgnoresUnsupportedQueuedOperations() throws Exception {
+	void claimIgnoresOperationsWorkerDoesNotAdvertise() throws Exception {
 		createJob("""
 				{
 				  "inputUri": "file:///tmp/transcode.mp4",
@@ -174,7 +174,8 @@ class InternalOperationApiIntegrationTest {
 		mockMvc.perform(post("/internal/operations/claim")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(WorkerTestSupport.identityJson("worker-a")))
-				.andExpect(status().isNoContent());
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("WORKER_CAPABILITY_MISMATCH"));
 	}
 
 	@Test
@@ -733,7 +734,133 @@ class InternalOperationApiIntegrationTest {
 	}
 
 	@Test
-	void jobStaysNotCompletedWhenUnsupportedOperationsRemain() throws Exception {
+	void completeH264ToAv1PersistsArtifactAndCompletesJob() throws Exception {
+		WorkerTestSupport.register(mockMvc, "worker-av1", "H264_TO_AV1");
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "s3://media-input/video.mp4",
+				  "operations": [{"type": "H264_TO_AV1"}]
+				}
+				""");
+		ClaimedIds claimed = claimOperation("worker-av1");
+		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + claimed.operationId() + "/video-av1.mp4";
+
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(av1CompleteJson(claimed.attemptId(), objectUri, 8192)))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("COMPLETED"))
+				.andExpect(jsonPath("$.actualRuntimeMs").value(20))
+				.andExpect(jsonPath("$.result").doesNotExist());
+
+		mockMvc.perform(get("/jobs/" + jobId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("COMPLETED"));
+
+		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.artifacts.length()").value(1))
+				.andExpect(jsonPath("$.artifacts[0].operationId").value(claimed.operationId().toString()))
+				.andExpect(jsonPath("$.artifacts[0].type").value("H264_TO_AV1"))
+				.andExpect(jsonPath("$.artifacts[0].objectUri").value(objectUri))
+				.andExpect(jsonPath("$.artifacts[0].contentType").value("video/mp4"))
+				.andExpect(jsonPath("$.artifacts[0].sizeBytes").value(8192))
+				.andExpect(jsonPath("$.artifacts[0].checksum").value(SHA256));
+	}
+
+	@Test
+	void duplicateAv1CompletionDoesNotCreateSecondArtifact() throws Exception {
+		WorkerTestSupport.register(mockMvc, "worker-av1", "H264_TO_AV1");
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "file:///tmp/av1-idempotent.mp4",
+				  "operations": [{"type": "H264_TO_AV1"}]
+				}
+				""");
+		ClaimedIds claimed = claimOperation("worker-av1");
+		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + claimed.operationId() + "/video-av1.mp4";
+		String body = av1CompleteJson(claimed.attemptId(), objectUri, 99);
+
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(body))
+				.andExpect(status().isOk());
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(body))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("COMPLETED"));
+
+		Integer count = jdbcTemplate.queryForObject(
+				"select count(*) from artifacts where operation_id = ?",
+				Integer.class,
+				claimed.operationId()
+		);
+		assertThat(count).isEqualTo(1);
+	}
+
+	@Test
+	void mixedFiveOperationsCompleteJob() throws Exception {
+		WorkerTestSupport.register(
+				mockMvc,
+				"worker-all",
+				"METADATA",
+				"THUMBNAIL",
+				"AUDIO_EXTRACTION",
+				"TRANSCODE_1080P",
+				"H264_TO_AV1"
+		);
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "s3://media-input/mixed.mp4",
+				  "operations": [
+				    {"type": "METADATA"},
+				    {"type": "THUMBNAIL"},
+				    {"type": "AUDIO_EXTRACTION"},
+				    {"type": "TRANSCODE_1080P"},
+				    {"type": "H264_TO_AV1"}
+				  ]
+				}
+				""");
+		ClaimedIds metadata = claimOperation("worker-all");
+		completeMetadata(metadata.operationId(), metadata.attemptId());
+		ClaimedIds thumbnail = claimOperation("worker-all");
+		String thumbUri = "s3://media-output/jobs/" + jobId + "/operations/" + thumbnail.operationId() + "/thumbnail.jpg";
+		mockMvc.perform(post("/internal/operations/" + thumbnail.operationId() + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(thumbnailCompleteJson(thumbnail.attemptId(), thumbUri, 50)))
+				.andExpect(status().isOk());
+		ClaimedIds audio = claimOperation("worker-all");
+		String audioUri = "s3://media-output/jobs/" + jobId + "/operations/" + audio.operationId() + "/audio.m4a";
+		mockMvc.perform(post("/internal/operations/" + audio.operationId() + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(audioCompleteJson(audio.attemptId(), audioUri, 80)))
+				.andExpect(status().isOk());
+		ClaimedIds transcode = claimOperation("worker-all");
+		String videoUri = "s3://media-output/jobs/" + jobId + "/operations/" + transcode.operationId() + "/video-1080p.mp4";
+		mockMvc.perform(post("/internal/operations/" + transcode.operationId() + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(transcodeCompleteJson(transcode.attemptId(), videoUri, 120)))
+				.andExpect(status().isOk());
+		mockMvc.perform(get("/jobs/" + jobId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("RUNNING"));
+		ClaimedIds av1 = claimOperation("worker-all");
+		String av1Uri = "s3://media-output/jobs/" + jobId + "/operations/" + av1.operationId() + "/video-av1.mp4";
+		mockMvc.perform(post("/internal/operations/" + av1.operationId() + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(av1CompleteJson(av1.attemptId(), av1Uri, 200)))
+				.andExpect(status().isOk());
+		mockMvc.perform(get("/jobs/" + jobId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("COMPLETED"));
+		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.artifacts.length()").value(4));
+	}
+
+	@Test
+	void jobStaysQueuedForAv1WhenWorkerDoesNotAdvertiseIt() throws Exception {
 		UUID jobId = createJob("""
 				{
 				  "inputUri": "file:///tmp/mixed.mp4",
@@ -851,9 +978,13 @@ class InternalOperationApiIntegrationTest {
 	}
 
 	private ClaimedIds claimOperation() throws Exception {
+		return claimOperation("worker-a");
+	}
+
+	private ClaimedIds claimOperation(String workerId) throws Exception {
 		MvcResult result = mockMvc.perform(post("/internal/operations/claim")
 						.contentType(MediaType.APPLICATION_JSON)
-						.content(WorkerTestSupport.identityJson("worker-a")))
+						.content(WorkerTestSupport.identityJson(workerId)))
 				.andExpect(status().isOk())
 				.andReturn();
 		String body = result.getResponse().getContentAsString();
@@ -919,6 +1050,10 @@ class InternalOperationApiIntegrationTest {
 				  }
 				}
 				""".formatted(attemptId, objectUri, sizeBytes, SHA256);
+	}
+
+	private static String av1CompleteJson(UUID attemptId, String objectUri, int sizeBytes) {
+		return transcodeCompleteJson(attemptId, objectUri, sizeBytes);
 	}
 
 	private record ClaimedIds(UUID operationId, UUID attemptId) {

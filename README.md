@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 4D.2**: FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, and **TRANSCODE_1080P**. `TRANSCODE_4K_TO_1080P` and `H264_TO_AV1` remain queued only. SJF, EDF, and adaptive scoring are not implemented.
+This repository is currently at **Phase 4D.3**: FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
 
-## Current status: Phase 4D.2 — TRANSCODE_1080P as a real media capability
+## Current status: Phase 4D.3 — H264_TO_AV1 as a real codec conversion
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,7 +34,7 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
-Phase 4D.2 currently:
+Phase 4D.3 currently:
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write and does **not** publish RabbitMQ)
 - a **Go scheduler** polls `GET /internal/scheduler/snapshot`, selects the oldest eligible operation (**FIFO**), then chooses a worker with **LEXICOGRAPHIC**, **ROUND_ROBIN**, or **LEAST_LOADED** placement
@@ -51,7 +51,7 @@ Phase 4D.2 currently:
 - a late result from an old attempt is rejected (`409 STALE_EXECUTION_ATTEMPT`)
 - downloads `s3://` inputs (and still accepts `file://`)
 - runs **real ffprobe** and **real FFmpeg**
-- uploads JPEG thumbnails, AAC/M4A audio extracts, and H.264 MP4 transcodes to `s3://media-output/...` and persists `Artifact` metadata
+- uploads JPEG thumbnails, AAC/M4A audio extracts, H.264 MP4 transcodes, and AV1 MP4 conversions to `s3://media-output/...` and persists `Artifact` metadata
 
 FIFO is a **control baseline** for operation order, not a performance claim. It does not use job priority, deadline, CPU, memory, queue depth, or runtime estimates.
 
@@ -254,13 +254,32 @@ curl -sS http://localhost:8080/jobs/<job-id>/artifacts
 
 `priority` defaults to `NORMAL` when omitted. `deadline` is optional. Unknown jobs return **404**. Invalid bodies (missing `inputUri`, empty `operations`, unknown operation type, past deadline) return **400**.
 
-`inputUri` is stored as a URI string. The public API does **not** contact S3 or verify that the object exists. Dispatch executes `file://` and `s3://` for `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, and `TRANSCODE_1080P`. Other submitted types remain `QUEUED`. A job is not `COMPLETED` while those remain.
+`inputUri` is stored as a URI string. The public API does **not** contact S3 or verify that the object exists. Dispatch executes `file://` and `s3://` for `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`, and `H264_TO_AV1`. A job is not `COMPLETED` while any of those remain queued or running.
 
-Supported operation types for submission: `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`, `TRANSCODE_4K_TO_1080P`, `H264_TO_AV1`.
+Supported operation types for submission:
 
-**Executable operations:** `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`.
+```text
+METADATA
+    inspect media
 
-**Not executable yet:** `TRANSCODE_4K_TO_1080P`, `H264_TO_AV1`. Those remain `QUEUED`. The scheduler places executable types onto a specific worker; registration and capability matching prevent dispatch to a worker that did not advertise the type.
+THUMBNAIL
+    create preview image
+
+AUDIO_EXTRACTION
+    extract AAC/M4A audio
+
+TRANSCODE_1080P
+    create H.264 MP4 capped at 1080p
+
+H264_TO_AV1
+    convert H.264 video to AV1 while preserving resolution
+```
+
+`TRANSCODE_4K_TO_1080P` is retired. New submissions return **400** `INVALID_ENUM_VALUE`. Use `TRANSCODE_1080P` for 4K (or any larger) sources that need a 1080p-or-lower H.264 MP4.
+
+**Executable operations:** `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`, `H264_TO_AV1`.
+
+The scheduler places executable types onto a specific worker; registration and capability matching prevent dispatch to a worker that did not advertise the type. A worker without a usable AV1 encoder does not advertise `H264_TO_AV1`; that work stays `QUEUED` until a capable worker exists.
 
 ## Scheduler
 
@@ -312,7 +331,7 @@ Concurrent scheduler instances can both snapshot two idle workers and assign dif
 
 Eligibility is always `AVAILABLE` + capable, for every placement policy. A metadata-only worker is never selected for `THUMBNAIL` even if it is idle. An `UNAVAILABLE` worker is never selected even if `activeOperations` is 0.
 
-Round Robin: `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, and `TRANSCODE_1080P` rotate independently using committed RR history. `UNAVAILABLE` workers leave the current rotation and may rejoin later; there is no downtime-compensation credit. Round Robin ignores current executing work.
+Round Robin: `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`, and `H264_TO_AV1` rotate independently using committed RR history. `UNAVAILABLE` workers leave the current rotation and may rejoin later; there is no downtime-compensation credit. Round Robin ignores current executing work.
 
 Least Loaded does not rotate and does not use the RR cursor. It compares current `RUNNING` counts among the eligible set. After lease or assignment-timeout recovery requeues work, the next tick places it among currently eligible workers using the same rule.
 
@@ -363,7 +382,7 @@ No `attemptId`. `assignmentId` is `SchedulingDecision.id`. Ownership still begin
 
 Requirements: Java 21, Docker (PostgreSQL + MinIO + RabbitMQ), Go, FFmpeg/ffprobe.
 
-Generate a tiny local clip (do not commit large binaries). Video-only is enough for METADATA/THUMBNAIL. AUDIO_EXTRACTION needs an audio stream. TRANSCODE_1080P needs video; audio is optional:
+Generate a tiny local clip (do not commit large binaries). Video-only is enough for METADATA/THUMBNAIL. AUDIO_EXTRACTION needs an audio stream. TRANSCODE_1080P needs video; audio is optional. H264_TO_AV1 needs an H.264 video stream; audio is optional:
 
 ```bash
 ffmpeg -y -f lavfi -i testsrc=duration=2:size=320x240:rate=30 -pix_fmt yuv420p /tmp/sample.mp4
@@ -409,7 +428,8 @@ curl -sS -X POST http://localhost:8080/jobs \
       {"type": "METADATA"},
       {"type": "THUMBNAIL"},
       {"type": "AUDIO_EXTRACTION"},
-      {"type": "TRANSCODE_1080P"}
+      {"type": "TRANSCODE_1080P"},
+      {"type": "H264_TO_AV1"}
     ]
   }'
 ```
@@ -436,9 +456,20 @@ curl -sS -X POST http://localhost:8080/jobs \
   }'
 ```
 
+H.264 to AV1 (same H.264 sample; resolution is preserved, not capped at 1080p):
+
+```bash
+curl -sS -X POST http://localhost:8080/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "inputUri": "s3://media-input/audio-sample.mp4",
+    "operations": [{"type": "H264_TO_AV1"}]
+  }'
+```
+
 The job is `QUEUED` until the scheduler assigns an operation (`ASSIGNED`), a worker starts one (`RUNNING` + `ExecutionAttempt`), and results are persisted (`COMPLETED` / `FAILED`). Interrupted infrastructure failures requeue the operation; the scheduler places it again. Attempt history is retained.
 
-`WORKER_ID` is **required** (stable identity such as `worker-a`). The worker probes local executables and machine info, **declares its durable RabbitMQ queue**, registers, starts a heartbeat loop, and only then consumes `media.worker.{WORKER_ID}`. After `start` succeeds it also runs a **lease-renewal loop** for that attempt until complete/fail. `supportedOperations` means the worker has an implemented executor **and** the required local binary is available (`METADATA` needs ffprobe; `THUMBNAIL` and `AUDIO_EXTRACTION` need FFmpeg; `TRANSCODE_1080P` needs FFmpeg with the `libx264` encoder). Optional `SUPPORTED_OPERATIONS` may **restrict** that set; it cannot add unimplemented types. If a requested operation's executable or encoder is missing, startup fails: the worker does not register, does not heartbeat, and does not consume. Metadata-only workers (`SUPPORTED_OPERATIONS=METADATA`) do not require FFmpeg; encoder `supportedCodecs` stay empty in that case.
+`WORKER_ID` is **required** (stable identity such as `worker-a`). The worker probes local executables and machine info, **declares its durable RabbitMQ queue**, registers, starts a heartbeat loop, and only then consumes `media.worker.{WORKER_ID}`. After `start` succeeds it also runs a **lease-renewal loop** for that attempt until complete/fail. `supportedOperations` means the worker has an implemented executor **and** the required local binary is available (`METADATA` needs ffprobe; `THUMBNAIL` and `AUDIO_EXTRACTION` need FFmpeg; `TRANSCODE_1080P` needs FFmpeg with the `libx264` encoder; `H264_TO_AV1` needs FFmpeg with `libsvtav1` or `libaom-av1`). Optional `SUPPORTED_OPERATIONS` may **restrict** that set; it cannot add unimplemented types. If a requested operation's executable or encoder is missing, startup fails: the worker does not register, does not heartbeat, and does not consume. The default (unrestricted) worker set **skips** `H264_TO_AV1` when no usable AV1 encoder is present so H.264-only machines can still run the other operations. Metadata-only workers (`SUPPORTED_OPERATIONS=METADATA`) do not require FFmpeg; encoder `supportedCodecs` stay empty in that case.
 
 ```bash
 cd worker
@@ -494,7 +525,7 @@ Successful execution:
 QUEUED -> ASSIGNED -> RUNNING -> COMPLETED
 ```
 
-Observe worker logs for `event=registered`, then `event=consuming queue=media.worker.{id}`, `event=received`, `event=execution_start`, `event=execution_completed` / `event=execution_failure`, and `event=ack` / `event=nack_requeue`. A v3 assignment whose `workerId` does not match is dropped (`event=worker_id_mismatch`). A stale recovered assignment is dropped (`event=stale_assignment_start_rejected`) and does not run media. An assignment this worker did not advertise (for example `H264_TO_AV1`) is not executed; the message is dead-lettered (`event=capability_mismatch`). Scheduler logs include `event=assigned` and `event=no_eligible_worker`.
+Observe worker logs for `event=registered`, then `event=consuming queue=media.worker.{id}`, `event=received`, `event=execution_start`, `event=execution_completed` / `event=execution_failure`, and `event=ack` / `event=nack_requeue`. A v3 assignment whose `workerId` does not match is dropped (`event=worker_id_mismatch`). A stale recovered assignment is dropped (`event=stale_assignment_start_rejected`) and does not run media. An assignment this worker did not advertise is not executed; the message is dead-lettered (`event=capability_mismatch`). Scheduler logs include `event=assigned` and `event=no_eligible_worker`.
 
 `METADATA` stores parsed probe JSON on the operation. `THUMBNAIL` extracts one JPEG frame (seek ~1s, falling back to the first frame on short clips) and uploads:
 
@@ -516,9 +547,15 @@ Inputs with no audio stream fail the operation (`FAILED`) with reason `input has
 s3://media-output/jobs/<jobId>/operations/<operationId>/video-1080p.mp4
 ```
 
-This is a 1080p-or-lower compatibility transcode, not a quality or bitrate guarantee. CRF 23 / medium preset are fixed defaults.
+This is a 1080p-or-lower compatibility transcode, not a quality or bitrate guarantee. CRF 23 / medium preset are fixed defaults. 4K and other larger sources are accepted and downscaled; there is no separate `TRANSCODE_4K_TO_1080P` operation.
 
-`GET /jobs/{id}/artifacts` returns type (`THUMBNAIL`, `AUDIO`, or `TRANSCODE_1080P`), object URI, content type, size, and SHA-256 checksum. Media bytes stay in MinIO.
+`H264_TO_AV1` converts an H.264 video stream to AV1 in MP4 without changing resolution. The primary video codec must be H.264; other codecs fail (`input video codec is not h264`). Audio is re-encoded to AAC when present; video-only inputs succeed as video-only MP4. Inputs with no video stream fail (`input has no video stream`). The worker uses `libsvtav1` when FFmpeg provides it, otherwise `libaom-av1`. It does not advertise the operation unless one of those encoders is present. AV1 output is not guaranteed to be smaller or faster than the H.264 source. Content type is `video/mp4`. Canonical object:
+
+```text
+s3://media-output/jobs/<jobId>/operations/<operationId>/video-av1.mp4
+```
+
+`GET /jobs/{id}/artifacts` returns type (`THUMBNAIL`, `AUDIO`, `TRANSCODE_1080P`, or `H264_TO_AV1`), object URI, content type, size, and SHA-256 checksum. Media bytes stay in MinIO.
 
 ## Worker API
 
@@ -629,9 +666,15 @@ Inputs with no audio stream fail the operation (`FAILED`) with reason `input has
 s3://media-output/jobs/<jobId>/operations/<operationId>/video-1080p.mp4
 ```
 
-This is a 1080p-or-lower compatibility transcode, not a quality or bitrate guarantee. CRF 23 / medium preset are fixed defaults.
+This is a 1080p-or-lower compatibility transcode, not a quality or bitrate guarantee. CRF 23 / medium preset are fixed defaults. 4K and other larger sources are accepted and downscaled; there is no separate `TRANSCODE_4K_TO_1080P` operation.
 
-`GET /jobs/{id}/artifacts` returns type (`THUMBNAIL`, `AUDIO`, or `TRANSCODE_1080P`), object URI, content type, size, and SHA-256 checksum. Media bytes stay in MinIO.
+`H264_TO_AV1` converts an H.264 video stream to AV1 in MP4 without changing resolution. The primary video codec must be H.264; other codecs fail (`input video codec is not h264`). Audio is re-encoded to AAC when present; video-only inputs succeed as video-only MP4. Inputs with no video stream fail (`input has no video stream`). The worker uses `libsvtav1` when FFmpeg provides it, otherwise `libaom-av1`. It does not advertise the operation unless one of those encoders is present. AV1 output is not guaranteed to be smaller or faster than the H.264 source. Content type is `video/mp4`. Canonical object:
+
+```text
+s3://media-output/jobs/<jobId>/operations/<operationId>/video-av1.mp4
+```
+
+`GET /jobs/{id}/artifacts` returns type (`THUMBNAIL`, `AUDIO`, `TRANSCODE_1080P`, or `H264_TO_AV1`), object URI, content type, size, and SHA-256 checksum. Media bytes stay in MinIO.
 
 ## Worker API
 
@@ -867,13 +910,16 @@ A delayed worker-a message cannot start after the operation has been reassigned 
 
 ### Artifact retries
 
-Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operationId>/thumbnail.jpg`. Audio keys stay `s3://media-output/jobs/<jobId>/operations/<operationId>/audio.m4a`. Transcode keys stay `s3://media-output/jobs/<jobId>/operations/<operationId>/video-1080p.mp4`. A retry may overwrite the same key. If a worker uploads then dies before `complete` persists, the object can exist without an Artifact row. That orphan is **not** garbage-collected in this phase. Execution is **at-least-once**, not exactly-once.
+Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operationId>/thumbnail.jpg`. Audio keys stay `s3://media-output/jobs/<jobId>/operations/<operationId>/audio.m4a`. Transcode keys stay `s3://media-output/jobs/<jobId>/operations/<operationId>/video-1080p.mp4`. AV1 keys stay `s3://media-output/jobs/<jobId>/operations/<operationId>/video-av1.mp4`. A retry may overwrite the same key. If a worker uploads then dies before `complete` persists, the object can exist without an Artifact row. That orphan is **not** garbage-collected in this phase. Execution is **at-least-once**, not exactly-once.
 
 `GET /jobs/{jobId}/operations/{operationId}/attempts` is a read-only history API (no lease internals).
 
-### Phase 4D.2 limitations
+### Phase 4D.3 limitations
 
-- transcode operations not yet executable: TRANSCODE_4K_TO_1080P, H264_TO_AV1
+- TRANSCODE_4K_TO_1080P is retired; use TRANSCODE_1080P for 1080p H.264 output including 4K sources
+- H264_TO_AV1 requires an H.264 video stream and a software AV1 encoder (`libsvtav1` or `libaom-av1`)
+- H264_TO_AV1 is a fixed codec conversion (resolution preserved; AAC audio when present); no codec/bitrate API
+- AV1 output is not a size or speed guarantee versus the H.264 source
 - TRANSCODE_1080P is a fixed H.264/AAC compatibility encode (CRF 23, medium); no codec/bitrate API
 - AUDIO_EXTRACTION is a fixed AAC/M4A extract; no codec/bitrate API
 - only FIFO operation ordering; no SJF, EDF, or adaptive scoring
@@ -941,4 +987,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next milestone is **TRANSCODE_4K_TO_1080P** as another real media capability on the same distributed path. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.
+The smallest next **product** milestone is a useful media capability that is not another redundant H.264 1080p path — for example cancellation of in-flight work, or a clearly distinct delivery format. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.

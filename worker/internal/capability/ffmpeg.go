@@ -49,6 +49,19 @@ func HasEncoder(output, encoder string) bool {
 	return false
 }
 
+// SelectAV1Encoder returns the encoder the H264_TO_AV1 executor will use:
+// libsvtav1 if present, otherwise libaom-av1. librav1e and hardware AV1
+// encoders are not selected in this phase.
+func SelectAV1Encoder(output string) string {
+	if HasEncoder(output, EncoderLibSvtAV1) {
+		return EncoderLibSvtAV1
+	}
+	if HasEncoder(output, EncoderLibAomAV1) {
+		return EncoderLibAomAV1
+	}
+	return ""
+}
+
 func ParseSupportedCodecs(output string) []string {
 	found := map[string]struct{}{}
 	for _, line := range strings.Split(output, "\n") {

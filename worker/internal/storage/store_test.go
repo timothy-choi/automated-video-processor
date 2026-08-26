@@ -26,9 +26,9 @@ func TestAudioObjectKey(t *testing.T) {
 	}
 }
 
-func TestTranscode1080pObjectKey(t *testing.T) {
-	got := Transcode1080pObjectKey("job-1", "op-2")
-	want := "jobs/job-1/operations/op-2/video-1080p.mp4"
+func TestAV1ObjectKey(t *testing.T) {
+	got := AV1ObjectKey("job-1", "op-2")
+	want := "jobs/job-1/operations/op-2/video-av1.mp4"
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}

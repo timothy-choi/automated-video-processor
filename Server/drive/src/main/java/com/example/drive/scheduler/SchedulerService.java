@@ -91,6 +91,7 @@ public class SchedulerService {
 		putCursor(cursors, OperationType.THUMBNAIL);
 		putCursor(cursors, OperationType.AUDIO_EXTRACTION);
 		putCursor(cursors, OperationType.TRANSCODE_1080P);
+		putCursor(cursors, OperationType.H264_TO_AV1);
 		return new SchedulerSnapshotResponse(operations, workers, cursors);
 	}
 
@@ -254,7 +255,7 @@ public class SchedulerService {
 		if (!operation.getType().isExecutable()) {
 			throw new InvalidJobRequestException(
 					"UNSUPPORTED_OPERATION_TYPE",
-					"Scheduler assignment supports METADATA, THUMBNAIL, AUDIO_EXTRACTION, and TRANSCODE_1080P only"
+					"Scheduler assignment supports METADATA, THUMBNAIL, AUDIO_EXTRACTION, TRANSCODE_1080P, and H264_TO_AV1 only"
 			);
 		}
 		String inputUri = operation.getJob().getInputUri();

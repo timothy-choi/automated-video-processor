@@ -78,6 +78,20 @@ func TestLeastLoadedPlacesTranscode1080pOnIdleCapableWorker(t *testing.T) {
 	}
 }
 
+func TestLeastLoadedPlacesH264ToAV1OnIdleCapableWorker(t *testing.T) {
+	got, ok := mustSelector(t, FIFO, LeastLoaded).Select(model.Snapshot{
+		Operations: []model.Operation{{OperationID: "op-1", Type: "H264_TO_AV1", CreatedAt: time.Now()}},
+		Workers: []model.Worker{
+			loaded("worker-a", 0, "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P"),
+			loaded("worker-b", 1, "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P", "H264_TO_AV1"),
+			loaded("worker-c", 0, "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P", "H264_TO_AV1"),
+		},
+	})
+	if !ok || got.WorkerID != "worker-c" {
+		t.Fatalf("got %+v ok=%t", got, ok)
+	}
+}
+
 func TestLeastLoadedIgnoresUnavailableIdleWorker(t *testing.T) {
 	got, ok := mustSelector(t, FIFO, LeastLoaded).Select(model.Snapshot{
 		Operations: []model.Operation{{OperationID: "op-1", Type: "METADATA", CreatedAt: time.Now()}},

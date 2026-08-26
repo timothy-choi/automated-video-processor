@@ -16,6 +16,9 @@ const (
 	OperationThumbnail       = "THUMBNAIL"
 	OperationAudioExtraction = "AUDIO_EXTRACTION"
 	OperationTranscode1080P  = "TRANSCODE_1080P"
+	OperationH264ToAV1       = "H264_TO_AV1"
+	EncoderLibSvtAV1         = "libsvtav1"
+	EncoderLibAomAV1         = "libaom-av1"
 )
 
 type Snapshot struct {
@@ -26,6 +29,7 @@ type Snapshot struct {
 	FFmpegVersion       string
 	SupportedCodecs     []string
 	SupportedOperations []string
+	SelectedAV1Encoder  string
 }
 
 type Probe struct {
@@ -42,7 +46,7 @@ type Probe struct {
 }
 
 func ImplementedOperations() []string {
-	return []string{OperationMetadata, OperationThumbnail, OperationAudioExtraction, OperationTranscode1080P}
+	return []string{OperationMetadata, OperationThumbnail, OperationAudioExtraction, OperationTranscode1080P, OperationH264ToAV1}
 }
 
 func Detect(ctx context.Context, probe Probe) (Snapshot, error) {
@@ -112,16 +116,18 @@ func Detect(ctx context.Context, probe Probe) (Snapshot, error) {
 	version := ""
 	codecs := []string{}
 	encoderOutput := ""
+	selectedAV1 := ""
 	if ffmpegOK {
 		version = ParseFFmpegVersion(ffmpegOutput)
 		out, encoderErr := run(ctx, ffmpegPath, "-encoders")
 		if encoderErr == nil {
 			encoderOutput = out
 			codecs = ParseSupportedCodecs(encoderOutput)
+			selectedAV1 = SelectAV1Encoder(encoderOutput)
 		}
 	}
 
-	advertised, err := advertiseOperations(operations, ffprobeOK, ffmpegOK, encoderOutput)
+	advertised, err := advertiseOperations(operations, ffprobeOK, ffmpegOK, encoderOutput, probe.RestrictOperations)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -134,10 +140,18 @@ func Detect(ctx context.Context, probe Probe) (Snapshot, error) {
 		FFmpegVersion:       version,
 		SupportedCodecs:     codecs,
 		SupportedOperations: advertised,
+		SelectedAV1Encoder:  selectedAV1,
 	}, nil
 }
 
-func advertiseOperations(configured []string, ffprobeOK, ffmpegOK bool, encoderOutput string) ([]string, error) {
+func advertiseOperations(configured []string, ffprobeOK, ffmpegOK bool, encoderOutput string, restricted []string) ([]string, error) {
+	required := map[string]struct{}{}
+	for _, op := range restricted {
+		op = strings.TrimSpace(op)
+		if op != "" {
+			required[op] = struct{}{}
+		}
+	}
 	var advertised []string
 	for _, op := range configured {
 		switch op {
@@ -162,6 +176,21 @@ func advertiseOperations(configured []string, ffprobeOK, ffmpegOK bool, encoderO
 			}
 			if !HasEncoder(encoderOutput, "libx264") {
 				return nil, fmt.Errorf("TRANSCODE_1080P requires H.264 encoder (libx264)")
+			}
+			advertised = append(advertised, op)
+		case OperationH264ToAV1:
+			_, explicitlyRequested := required[op]
+			if !ffmpegOK {
+				if explicitlyRequested {
+					return nil, fmt.Errorf("H264_TO_AV1 requires ffmpeg")
+				}
+				continue
+			}
+			if SelectAV1Encoder(encoderOutput) == "" {
+				if explicitlyRequested {
+					return nil, fmt.Errorf("H264_TO_AV1 requires AV1 encoder (libsvtav1 or libaom-av1)")
+				}
+				continue
 			}
 			advertised = append(advertised, op)
 		default:

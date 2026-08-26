@@ -21,7 +21,7 @@ Published to RabbitMQ as persistent JSON after the Go scheduler commits a placem
 }
 ```
 
-`type` is the operation (`METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, or `TRANSCODE_1080P`).
+`type` is the operation (`METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`, or `H264_TO_AV1`).
 
 This development environment does **not** accept v2 at runtime. v2 has no `assignmentId`, so accepting it would let an obsolete envelope skip identity checks. Workers reject `schemaVersion` 2 as unsupported.
 
