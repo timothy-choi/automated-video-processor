@@ -20,6 +20,17 @@ func TestThumbnailArgsAreSeparateAndSeekable(t *testing.T) {
 	}
 }
 
+func TestAudioArgsAreAudioOnlyAacM4a(t *testing.T) {
+	args := AudioArgs("/tmp/in.mp4", "/tmp/out.m4a")
+	if !containsAll(args, "-i", "/tmp/in.mp4", "-vn", "-map", "0:a", "-c:a", "aac", "-b:a", "192k", "/tmp/out.m4a") {
+		t.Fatalf("args=%v", args)
+	}
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "ffmpeg ") {
+		t.Fatal("args should not include the executable")
+	}
+}
+
 func TestExtractThumbnailFromGeneratedSample(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not installed")
@@ -73,6 +84,95 @@ func TestExtractThumbnailMissingInputFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ffmpeg failed") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestExtractAudioFromGeneratedSample(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+
+	dir := t.TempDir()
+	sample := filepath.Join(dir, "sample.mp4")
+	generate := exec.Command(
+		"ffmpeg",
+		"-y",
+		"-f", "lavfi",
+		"-i", "testsrc=duration=1:size=320x240:rate=30",
+		"-f", "lavfi",
+		"-i", "sine=frequency=440:duration=1",
+		"-pix_fmt", "yuv420p",
+		"-c:v", "libx264",
+		"-c:a", "aac",
+		"-shortest",
+		sample,
+	)
+	if out, err := generate.CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg generate failed: %v\n%s", err, out)
+	}
+
+	output := filepath.Join(dir, "audio.m4a")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := ExtractAudio(ctx, "ffmpeg", sample, output); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() == 0 {
+		t.Fatal("expected non-empty audio")
+	}
+	probe := exec.Command("ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", output)
+	out, err := probe.CombinedOutput()
+	if err != nil {
+		t.Fatalf("ffprobe failed: %v\n%s", err, out)
+	}
+	types := strings.TrimSpace(string(out))
+	if types != "audio" {
+		t.Fatalf("expected audio-only stream, got %q", types)
+	}
+}
+
+func TestExtractAudioFailsWhenInputHasNoAudio(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+
+	dir := t.TempDir()
+	sample := filepath.Join(dir, "silent.mp4")
+	generate := exec.Command(
+		"ffmpeg",
+		"-y",
+		"-f", "lavfi",
+		"-i", "testsrc=duration=1:size=320x240:rate=30",
+		"-pix_fmt", "yuv420p",
+		"-an",
+		sample,
+	)
+	if out, err := generate.CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg generate failed: %v\n%s", err, out)
+	}
+
+	output := filepath.Join(dir, "audio.m4a")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	err := ExtractAudio(ctx, "ffmpeg", sample, output)
+	if err == nil {
+		t.Fatal("expected no-audio failure")
+	}
+	if !strings.Contains(err.Error(), "no audio stream") {
+		t.Fatalf("got %v", err)
+	}
+	if _, statErr := os.Stat(output); statErr == nil {
+		info, _ := os.Stat(output)
+		if info != nil && info.Size() > 0 {
+			t.Fatal("should not leave a successful audio artifact")
+		}
 	}
 }
 

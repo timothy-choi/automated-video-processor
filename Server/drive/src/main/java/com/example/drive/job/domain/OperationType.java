@@ -6,5 +6,9 @@ public enum OperationType {
 	AUDIO_EXTRACTION,
 	TRANSCODE_1080P,
 	TRANSCODE_4K_TO_1080P,
-	H264_TO_AV1
+	H264_TO_AV1;
+
+	public boolean isExecutable() {
+		return this == METADATA || this == THUMBNAIL || this == AUDIO_EXTRACTION;
+	}
 }

@@ -36,6 +36,42 @@ func ExtractThumbnail(ctx context.Context, ffmpegPath, inputPath, outputPath str
 	return nil
 }
 
+const AudioContentType = "audio/mp4"
+
+func AudioArgs(inputPath, outputPath string) []string {
+	return []string{
+		"-y",
+		"-v", "error",
+		"-i", inputPath,
+		"-vn",
+		"-map", "0:a",
+		"-c:a", "aac",
+		"-b:a", "192k",
+		outputPath,
+	}
+}
+
+func ExtractAudio(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
+	err := runFFmpeg(ctx, ffmpegPath, AudioArgs(inputPath, outputPath)...)
+	if err != nil {
+		return wrapAudioError(err)
+	}
+	if !nonEmpty(outputPath) {
+		return fmt.Errorf("ffmpeg produced empty audio output")
+	}
+	return nil
+}
+
+func wrapAudioError(err error) error {
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "matches no streams") ||
+		strings.Contains(msg, "does not contain any stream") ||
+		strings.Contains(msg, "does not contain an audio stream") {
+		return fmt.Errorf("input has no audio stream")
+	}
+	return err
+}
+
 func runFFmpeg(ctx context.Context, ffmpegPath string, args ...string) error {
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 	var stderr bytes.Buffer

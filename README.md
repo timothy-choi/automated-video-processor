@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 4C**: FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded (fewest `RUNNING` execution attempts). RabbitMQ only transports that decision. SJF, EDF, and adaptive scoring are not implemented.
+This repository is currently at **Phase 4D.1**: FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, and **AUDIO_EXTRACTION**. Transcode types remain queued only. SJF, EDF, and adaptive scoring are not implemented.
 
-## Current status: Phase 4C — FIFO operations + Least Loaded worker placement
+## Current status: Phase 4D.1 — AUDIO_EXTRACTION as a real media capability
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,7 +34,7 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
-Phase 4C currently:
+Phase 4D.1 currently:
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write and does **not** publish RabbitMQ)
 - a **Go scheduler** polls `GET /internal/scheduler/snapshot`, selects the oldest eligible operation (**FIFO**), then chooses a worker with **LEXICOGRAPHIC**, **ROUND_ROBIN**, or **LEAST_LOADED** placement
@@ -51,7 +51,7 @@ Phase 4C currently:
 - a late result from an old attempt is rejected (`409 STALE_EXECUTION_ATTEMPT`)
 - downloads `s3://` inputs (and still accepts `file://`)
 - runs **real ffprobe** and **real FFmpeg**
-- uploads JPEG thumbnails to `s3://media-output/...` and persists `Artifact` metadata
+- uploads JPEG thumbnails and AAC/M4A audio extracts to `s3://media-output/...` and persists `Artifact` metadata
 
 FIFO is a **control baseline** for operation order, not a performance claim. It does not use job priority, deadline, CPU, memory, queue depth, or runtime estimates.
 
@@ -254,11 +254,13 @@ curl -sS http://localhost:8080/jobs/<job-id>/artifacts
 
 `priority` defaults to `NORMAL` when omitted. `deadline` is optional. Unknown jobs return **404**. Invalid bodies (missing `inputUri`, empty `operations`, unknown operation type, past deadline) return **400**.
 
-`inputUri` is stored as a URI string. The public API does **not** contact S3 or verify that the object exists. Dispatch still executes `file://` and `s3://` for `METADATA` and `THUMBNAIL` only. Other submitted types remain `QUEUED`. A job is not `COMPLETED` while those remain.
+`inputUri` is stored as a URI string. The public API does **not** contact S3 or verify that the object exists. Dispatch executes `file://` and `s3://` for `METADATA`, `THUMBNAIL`, and `AUDIO_EXTRACTION`. Other submitted types remain `QUEUED`. A job is not `COMPLETED` while those remain.
 
 Supported operation types for submission: `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`, `TRANSCODE_4K_TO_1080P`, `H264_TO_AV1`.
 
-**Only `METADATA` and `THUMBNAIL` are executed.** The scheduler places those types onto a specific worker; registration and capability matching now prevent dispatch to a worker that did not advertise the type. Other submitted types remain `QUEUED`.
+**Executable operations:** `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`.
+
+**Not executable yet:** `TRANSCODE_1080P`, `TRANSCODE_4K_TO_1080P`, `H264_TO_AV1`. Those remain `QUEUED`. The scheduler places executable types onto a specific worker; registration and capability matching prevent dispatch to a worker that did not advertise the type.
 
 ## Scheduler
 
@@ -310,7 +312,7 @@ Concurrent scheduler instances can both snapshot two idle workers and assign dif
 
 Eligibility is always `AVAILABLE` + capable, for every placement policy. A metadata-only worker is never selected for `THUMBNAIL` even if it is idle. An `UNAVAILABLE` worker is never selected even if `activeOperations` is 0.
 
-Round Robin: `METADATA` and `THUMBNAIL` rotate independently using committed RR history. `UNAVAILABLE` workers leave the current rotation and may rejoin later; there is no downtime-compensation credit. Round Robin ignores current executing work.
+Round Robin: `METADATA`, `THUMBNAIL`, and `AUDIO_EXTRACTION` rotate independently using committed RR history. `UNAVAILABLE` workers leave the current rotation and may rejoin later; there is no downtime-compensation credit. Round Robin ignores current executing work.
 
 Least Loaded does not rotate and does not use the RR cursor. It compares current `RUNNING` counts among the eligible set. After lease or assignment-timeout recovery requeues work, the next tick places it among currently eligible workers using the same rule.
 
@@ -361,10 +363,13 @@ No `attemptId`. `assignmentId` is `SchedulingDecision.id`. Ownership still begin
 
 Requirements: Java 21, Docker (PostgreSQL + MinIO + RabbitMQ), Go, FFmpeg/ffprobe.
 
-Generate a tiny local clip (do not commit large binaries):
+Generate a tiny local clip (do not commit large binaries). Video-only is enough for METADATA/THUMBNAIL. AUDIO_EXTRACTION needs an audio stream:
 
 ```bash
 ffmpeg -y -f lavfi -i testsrc=duration=2:size=320x240:rate=30 -pix_fmt yuv420p /tmp/sample.mp4
+ffmpeg -y -f lavfi -i testsrc=duration=2:size=320x240:rate=30 \
+  -f lavfi -i sine=frequency=440:duration=2 \
+  -pix_fmt yuv420p -c:v libx264 -c:a aac -shortest /tmp/audio-sample.mp4
 ```
 
 Upload it to MinIO. With the AWS CLI:
@@ -372,16 +377,18 @@ Upload it to MinIO. With the AWS CLI:
 ```bash
 AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin \
   aws --endpoint-url http://localhost:9000 s3 cp /tmp/sample.mp4 s3://media-input/sample.mp4
+AWS_ACCESS_KEY_ID=minioadmin AWS_SECRET_ACCESS_KEY=minioadmin \
+  aws --endpoint-url http://localhost:9000 s3 cp /tmp/audio-sample.mp4 s3://media-input/audio-sample.mp4
 ```
 
 Or with the MinIO client in Docker:
 
 ```bash
-docker run --rm --network host -v /tmp/sample.mp4:/sample.mp4 minio/mc \
-  sh -c 'mc alias set local http://localhost:9000 minioadmin minioadmin && mc cp /sample.mp4 local/media-input/sample.mp4'
+docker run --rm --network host -v /tmp/sample.mp4:/sample.mp4 -v /tmp/audio-sample.mp4:/audio-sample.mp4 minio/mc \
+  sh -c 'mc alias set local http://localhost:9000 minioadmin minioadmin && mc cp /sample.mp4 local/media-input/sample.mp4 && mc cp /audio-sample.mp4 local/media-input/audio-sample.mp4'
 ```
 
-Canonical object: `s3://media-input/sample.mp4`.
+Canonical object: `s3://media-input/sample.mp4`. Audio sample: `s3://media-input/audio-sample.mp4`.
 
 Start PostgreSQL, MinIO, RabbitMQ, and the control service as above, then submit:
 
@@ -389,17 +396,29 @@ Start PostgreSQL, MinIO, RabbitMQ, and the control service as above, then submit
 curl -sS -X POST http://localhost:8080/jobs \
   -H 'Content-Type: application/json' \
   -d '{
-    "inputUri": "s3://media-input/sample.mp4",
+    "inputUri": "s3://media-input/audio-sample.mp4",
     "operations": [
       {"type": "METADATA"},
-      {"type": "THUMBNAIL"}
+      {"type": "THUMBNAIL"},
+      {"type": "AUDIO_EXTRACTION"}
     ]
+  }'
+```
+
+Audio-only:
+
+```bash
+curl -sS -X POST http://localhost:8080/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "inputUri": "s3://media-input/audio-sample.mp4",
+    "operations": [{"type": "AUDIO_EXTRACTION"}]
   }'
 ```
 
 The job is `QUEUED` until the scheduler assigns an operation (`ASSIGNED`), a worker starts one (`RUNNING` + `ExecutionAttempt`), and results are persisted (`COMPLETED` / `FAILED`). Interrupted infrastructure failures requeue the operation; the scheduler places it again. Attempt history is retained.
 
-`WORKER_ID` is **required** (stable identity such as `worker-a`). The worker probes local executables and machine info, **declares its durable RabbitMQ queue**, registers, starts a heartbeat loop, and only then consumes `media.worker.{WORKER_ID}`. After `start` succeeds it also runs a **lease-renewal loop** for that attempt until complete/fail. `supportedOperations` means the worker has an implemented executor **and** the required local binary is available (`METADATA` needs ffprobe, `THUMBNAIL` needs FFmpeg). Optional `SUPPORTED_OPERATIONS` may **restrict** that set; it cannot add unimplemented types. If a requested operation's executable is missing, startup fails: the worker does not register, does not heartbeat, and does not consume. Metadata-only workers (`SUPPORTED_OPERATIONS=METADATA`) do not require FFmpeg; encoder `supportedCodecs` stay empty in that case.
+`WORKER_ID` is **required** (stable identity such as `worker-a`). The worker probes local executables and machine info, **declares its durable RabbitMQ queue**, registers, starts a heartbeat loop, and only then consumes `media.worker.{WORKER_ID}`. After `start` succeeds it also runs a **lease-renewal loop** for that attempt until complete/fail. `supportedOperations` means the worker has an implemented executor **and** the required local binary is available (`METADATA` needs ffprobe; `THUMBNAIL` and `AUDIO_EXTRACTION` need FFmpeg). Optional `SUPPORTED_OPERATIONS` may **restrict** that set; it cannot add unimplemented types. If a requested operation's executable is missing, startup fails: the worker does not register, does not heartbeat, and does not consume. Metadata-only workers (`SUPPORTED_OPERATIONS=METADATA`) do not require FFmpeg; encoder `supportedCodecs` stay empty in that case.
 
 ```bash
 cd worker
@@ -463,7 +482,15 @@ Observe worker logs for `event=registered`, then `event=consuming queue=media.wo
 s3://media-output/jobs/<jobId>/operations/<operationId>/thumbnail.jpg
 ```
 
-`GET /jobs/{id}/artifacts` returns type, object URI, content type, size, and SHA-256 checksum. Image bytes stay in MinIO.
+`AUDIO_EXTRACTION` runs FFmpeg to produce AAC in an M4A container (`-vn -map 0:a -c:a aac -b:a 192k`). Content type is `audio/mp4`. Canonical object:
+
+```text
+s3://media-output/jobs/<jobId>/operations/<operationId>/audio.m4a
+```
+
+Inputs with no audio stream fail the operation (`FAILED`) with reason `input has no audio stream`. Empty output is rejected. Codec/bitrate are not configurable in this phase.
+
+`GET /jobs/{id}/artifacts` returns type (`THUMBNAIL` or `AUDIO`), object URI, content type, size, and SHA-256 checksum. Media bytes stay in MinIO.
 
 ## Worker API
 
@@ -560,7 +587,15 @@ Observe worker logs for `worker=`, `job=`, `operation=`, `type=`, `event=receive
 s3://media-output/jobs/<jobId>/operations/<operationId>/thumbnail.jpg
 ```
 
-`GET /jobs/{id}/artifacts` returns type, object URI, content type, size, and SHA-256 checksum. Image bytes stay in MinIO.
+`AUDIO_EXTRACTION` runs FFmpeg to produce AAC in an M4A container (`-vn -map 0:a -c:a aac -b:a 192k`). Content type is `audio/mp4`. Canonical object:
+
+```text
+s3://media-output/jobs/<jobId>/operations/<operationId>/audio.m4a
+```
+
+Inputs with no audio stream fail the operation (`FAILED`) with reason `input has no audio stream`. Empty output is rejected. Codec/bitrate are not configurable in this phase.
+
+`GET /jobs/{id}/artifacts` returns type (`THUMBNAIL` or `AUDIO`), object URI, content type, size, and SHA-256 checksum. Media bytes stay in MinIO.
 
 ## Worker API
 
@@ -796,12 +831,14 @@ A delayed worker-a message cannot start after the operation has been reassigned 
 
 ### Artifact retries
 
-Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operationId>/thumbnail.jpg`. A retry may overwrite the same key. If a worker uploads then dies before `complete` persists, the object can exist without an Artifact row. That orphan is **not** garbage-collected in this phase. Execution is **at-least-once**, not exactly-once.
+Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operationId>/thumbnail.jpg`. Audio keys stay `s3://media-output/jobs/<jobId>/operations/<operationId>/audio.m4a`. A retry may overwrite the same key. If a worker uploads then dies before `complete` persists, the object can exist without an Artifact row. That orphan is **not** garbage-collected in this phase. Execution is **at-least-once**, not exactly-once.
 
 `GET /jobs/{jobId}/operations/{operationId}/attempts` is a read-only history API (no lease internals).
 
-### Phase 4C limitations
+### Phase 4D.1 limitations
 
+- transcode operations are not executable: TRANSCODE_1080P, TRANSCODE_4K_TO_1080P, H264_TO_AV1
+- AUDIO_EXTRACTION is a fixed AAC/M4A extract; no codec/bitrate API
 - only FIFO operation ordering; no SJF, EDF, or adaptive scoring
 - worker placement is LEXICOGRAPHIC, ROUND_ROBIN, or LEAST_LOADED; not weighted or adaptive
 - Least Loaded counts RUNNING attempts only; ASSIGNED-not-started work is not reserved
@@ -867,4 +904,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next milestone is a **baseline scheduling benchmark harness** comparing LEXICOGRAPHIC, ROUND_ROBIN, and LEAST_LOADED on the same FIFO operation stream. SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.
+The smallest next milestone is **TRANSCODE_1080P** as another real media capability on the same distributed path. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.

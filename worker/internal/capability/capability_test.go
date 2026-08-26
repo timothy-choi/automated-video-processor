@@ -10,7 +10,7 @@ import (
 
 func TestImplementedOperations(t *testing.T) {
 	got := ImplementedOperations()
-	if strings.Join(got, ",") != "METADATA,THUMBNAIL" {
+	if strings.Join(got, ",") != "METADATA,THUMBNAIL,AUDIO_EXTRACTION" {
 		t.Fatalf("implemented=%v", got)
 	}
 }
@@ -39,7 +39,14 @@ func TestParseSupportedOperationsEnv(t *testing.T) {
 	if strings.Join(got, ",") != "METADATA,THUMBNAIL" {
 		t.Fatalf("got=%v", got)
 	}
-	if _, err := ParseSupportedOperationsEnv("AUDIO_EXTRACTION"); err == nil {
+	got, err = ParseSupportedOperationsEnv("AUDIO_EXTRACTION")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "AUDIO_EXTRACTION" {
+		t.Fatalf("got=%v", got)
+	}
+	if _, err := ParseSupportedOperationsEnv("TRANSCODE_1080P"); err == nil {
 		t.Fatal("expected unimplemented error")
 	}
 }
@@ -123,7 +130,7 @@ func TestDetectAdvertisesBothWhenBinariesAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(snap.SupportedOperations, ",") != "METADATA,THUMBNAIL" {
+	if strings.Join(snap.SupportedOperations, ",") != "METADATA,THUMBNAIL,AUDIO_EXTRACTION" {
 		t.Fatalf("operations=%v", snap.SupportedOperations)
 	}
 }
@@ -151,6 +158,20 @@ func TestDetectFailsWhenFFmpegMissingForThumbnail(t *testing.T) {
 		Command:     fakeBinaries(true, false, ""),
 	})
 	if err == nil || !strings.Contains(err.Error(), "THUMBNAIL requires ffmpeg") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestDetectFailsWhenFFmpegMissingForAudioExtraction(t *testing.T) {
+	_, err := Detect(context.Background(), Probe{
+		Hostname:           "host",
+		Arch:               "amd64",
+		Cores:              2,
+		MemoryBytes:        1024,
+		RestrictOperations: []string{"AUDIO_EXTRACTION"},
+		Command:            fakeBinaries(true, false, ""),
+	})
+	if err == nil || !strings.Contains(err.Error(), "AUDIO_EXTRACTION requires ffmpeg") {
 		t.Fatalf("err=%v", err)
 	}
 }

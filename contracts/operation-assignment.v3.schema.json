@@ -21,7 +21,7 @@
     },
     "type": {
       "type": "string",
-      "enum": ["METADATA", "THUMBNAIL"]
+      "enum": ["METADATA", "THUMBNAIL", "AUDIO_EXTRACTION"]
     },
     "inputUri": {
       "type": "string",
