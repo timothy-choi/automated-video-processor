@@ -47,10 +47,11 @@ class WorkerHeartbeatIntegrationTest {
 	void clearTables() {
 		jdbcTemplate.execute("delete from worker_supported_codecs");
 		jdbcTemplate.execute("delete from worker_supported_operations");
-		jdbcTemplate.execute("delete from workers");
 		jdbcTemplate.execute("delete from artifacts");
+		jdbcTemplate.execute("delete from execution_attempts");
 		jdbcTemplate.execute("delete from operations");
 		jdbcTemplate.execute("delete from jobs");
+		jdbcTemplate.execute("delete from workers");
 	}
 
 	@Test
@@ -236,7 +237,11 @@ class WorkerHeartbeatIntegrationTest {
 								}
 								"""))
 				.andExpect(status().isAccepted());
-		MvcResult claimed = mockMvc.perform(post("/internal/operations/claim"))
+		MvcResult claimed = mockMvc.perform(post("/internal/operations/claim")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"workerId": "worker-a"}
+								"""))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("RUNNING"))
 				.andReturn();

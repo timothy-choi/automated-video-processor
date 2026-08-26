@@ -14,7 +14,9 @@ import com.example.drive.job.dto.ClaimedOperationResponse;
 import com.example.drive.job.dto.CompleteOperationRequest;
 import com.example.drive.job.dto.FailOperationRequest;
 import com.example.drive.job.dto.OperationResponse;
+import com.example.drive.job.dto.RenewAttemptResponse;
 import com.example.drive.job.dto.StartOperationResponse;
+import com.example.drive.job.dto.WorkerIdentityRequest;
 
 import jakarta.validation.Valid;
 
@@ -34,18 +36,30 @@ public class InternalOperationController {
 	}
 
 	@PostMapping("/claim")
-	public ResponseEntity<ClaimedOperationResponse> claim() {
+	public ResponseEntity<ClaimedOperationResponse> claim(@Valid @RequestBody WorkerIdentityRequest request) {
 		if (!dispatchProperties.isHttpClaimEnabled()) {
 			throw new HttpClaimDisabledException();
 		}
-		return internalOperationService.claimNextExecutableOperation()
+		return internalOperationService.claimNextExecutableOperation(request.workerId())
 				.map(ResponseEntity::ok)
 				.orElseGet(() -> ResponseEntity.noContent().build());
 	}
 
 	@PostMapping("/{operationId}/start")
-	public StartOperationResponse start(@PathVariable("operationId") UUID operationId) {
-		return internalOperationService.start(operationId);
+	public StartOperationResponse start(
+			@PathVariable("operationId") UUID operationId,
+			@Valid @RequestBody WorkerIdentityRequest request
+	) {
+		return internalOperationService.start(operationId, request.workerId());
+	}
+
+	@PostMapping("/{operationId}/attempts/{attemptId}/renew")
+	public RenewAttemptResponse renew(
+			@PathVariable("operationId") UUID operationId,
+			@PathVariable("attemptId") UUID attemptId,
+			@Valid @RequestBody WorkerIdentityRequest request
+	) {
+		return internalOperationService.renew(operationId, attemptId, request.workerId());
 	}
 
 	@PostMapping("/{operationId}/complete")

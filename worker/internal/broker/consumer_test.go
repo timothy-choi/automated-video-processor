@@ -213,14 +213,22 @@ func (r *recordingControl) completeCount() int {
 	return r.completes
 }
 
-func (r *recordingControl) Start(ctx context.Context, operationID string) (model.StartResponse, error) {
+func (r *recordingControl) Start(ctx context.Context, operationID, workerID string) (model.StartResponse, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	outcome := r.outcomes[operationID]
 	if outcome == "" {
 		outcome = model.StartInvalidState
 	}
-	return model.StartResponse{Outcome: outcome, OperationID: operationID, Status: "RUNNING"}, nil
+	attemptID := ""
+	status := "RUNNING"
+	if outcome == model.StartStarted {
+		attemptID = "attempt-" + operationID
+	}
+	if outcome == model.StartAlreadyTerminal {
+		status = "COMPLETED"
+	}
+	return model.StartResponse{Outcome: outcome, OperationID: operationID, Status: status, AttemptID: attemptID}, nil
 }
 
 func (r *recordingControl) Complete(ctx context.Context, operationID string, request model.CompleteRequest) error {
@@ -231,6 +239,10 @@ func (r *recordingControl) Complete(ctx context.Context, operationID string, req
 	return nil
 }
 
-func (r *recordingControl) Fail(ctx context.Context, operationID string, runtimeMs *int64, reason string) error {
+func (r *recordingControl) Fail(ctx context.Context, operationID string, runtimeMs *int64, reason, attemptID string) error {
 	return nil
+}
+
+func (r *recordingControl) Renew(ctx context.Context, operationID, attemptID, workerID string) (model.RenewResponse, error) {
+	return model.RenewResponse{AttemptID: attemptID, WorkerID: workerID, Status: "RUNNING"}, nil
 }

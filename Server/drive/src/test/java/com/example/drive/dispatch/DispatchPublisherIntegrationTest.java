@@ -32,6 +32,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 		"drive.dispatch.publisher-enabled=true",
 		"drive.dispatch.http-claim-enabled=false",
 		"drive.worker.heartbeat-sweep-enabled=false",
+		"drive.execution.lease-sweep-enabled=false",
 		"spring.autoconfigure.exclude=org.springframework.boot.amqp.autoconfigure.RabbitAutoConfiguration"
 })
 @AutoConfigureMockMvc
@@ -57,6 +58,7 @@ class DispatchPublisherIntegrationTest {
 	void clearTables() {
 		reset(rabbitTemplate);
 		jdbcTemplate.update("delete from artifacts");
+		jdbcTemplate.update("delete from execution_attempts");
 		jdbcTemplate.update("delete from dispatch_outbox");
 		jdbcTemplate.update("delete from operations");
 		jdbcTemplate.update("delete from jobs");

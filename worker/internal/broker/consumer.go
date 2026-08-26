@@ -16,6 +16,7 @@ type Config struct {
 	WorkerID            string
 	Prefetch            int
 	SupportedOperations []string
+	LeaseRenewInterval  time.Duration
 }
 
 type Consumer struct {
@@ -117,7 +118,10 @@ func (c *Consumer) consumeSession(ctx context.Context) error {
 func (c *Consumer) handleDelivery(ctx context.Context, delivery *amqp.Delivery) {
 	workCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	decision := consumer.HandleWithCapabilities(workCtx, c.cfg.WorkerID, c.cfg.SupportedOperations, delivery.Body, c.ctrl, c.exec)
+	decision := consumer.HandleWithOptions(workCtx, c.cfg.WorkerID, delivery.Body, c.ctrl, c.exec, consumer.Options{
+		Supported:     c.cfg.SupportedOperations,
+		RenewInterval: c.cfg.LeaseRenewInterval,
+	})
 	switch decision {
 	case consumer.Ack:
 		if err := delivery.Ack(false); err != nil {

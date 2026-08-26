@@ -18,12 +18,14 @@ import org.springframework.test.web.servlet.MvcResult;
 import com.example.drive.job.domain.JobStatus;
 import com.example.drive.job.domain.OperationStatus;
 import com.example.drive.job.dto.ArtifactCompletionDto;
+import com.example.drive.job.dto.ClaimedOperationResponse;
 import com.example.drive.job.dto.CompleteOperationRequest;
 import com.example.drive.job.dto.FailOperationRequest;
 import com.example.drive.job.dto.MetadataResultDto;
 import com.example.drive.job.repository.JobRepository;
 import com.example.drive.job.repository.OperationRepository;
 import com.example.drive.support.ControlServiceTest;
+import com.example.drive.support.WorkerTestSupport;
 import com.jayway.jsonpath.JsonPath;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -52,10 +54,15 @@ class JobAggregationConcurrencyTest {
 	private OperationRepository operationRepository;
 
 	@BeforeEach
-	void clearTables() {
+	void clearTables() throws Exception {
 		jdbcTemplate.update("delete from artifacts");
+		jdbcTemplate.update("delete from execution_attempts");
 		jdbcTemplate.update("delete from operations");
 		jdbcTemplate.update("delete from jobs");
+		jdbcTemplate.execute("delete from worker_supported_codecs");
+		jdbcTemplate.execute("delete from worker_supported_operations");
+		jdbcTemplate.execute("delete from workers");
+		WorkerTestSupport.register(mockMvc, "worker-a");
 	}
 
 	@Test
@@ -63,15 +70,18 @@ class JobAggregationConcurrencyTest {
 		for (int i = 0; i < 8; i++) {
 			clearTables();
 			UUID jobId = createTwoOpJob();
-			UUID metadataId = claimByType("METADATA");
-			UUID thumbnailId = claimByType("THUMBNAIL");
+			ClaimedOperationResponse metadata = claimByType("METADATA");
+			ClaimedOperationResponse thumbnail = claimByType("THUMBNAIL");
 			runConcurrent(
-					() -> internalOperationService.complete(metadataId, metadataComplete()),
-					() -> internalOperationService.complete(thumbnailId, thumbnailComplete(jobId, thumbnailId))
+					() -> internalOperationService.complete(metadata.operationId(), metadataComplete(metadata.attemptId())),
+					() -> internalOperationService.complete(
+							thumbnail.operationId(),
+							thumbnailComplete(jobId, thumbnail.operationId(), thumbnail.attemptId())
+					)
 			);
-			assertThat(operationRepository.findById(metadataId).orElseThrow().getStatus())
+			assertThat(operationRepository.findById(metadata.operationId()).orElseThrow().getStatus())
 					.isEqualTo(OperationStatus.COMPLETED);
-			assertThat(operationRepository.findById(thumbnailId).orElseThrow().getStatus())
+			assertThat(operationRepository.findById(thumbnail.operationId()).orElseThrow().getStatus())
 					.isEqualTo(OperationStatus.COMPLETED);
 			assertThat(jobRepository.findById(jobId).orElseThrow().getStatus())
 					.isEqualTo(JobStatus.COMPLETED);
@@ -81,15 +91,18 @@ class JobAggregationConcurrencyTest {
 	@Test
 	void concurrentCompleteAndFailLeaveJobFailed() throws Exception {
 		UUID jobId = createTwoOpJob();
-		UUID metadataId = claimByType("METADATA");
-		UUID thumbnailId = claimByType("THUMBNAIL");
+		ClaimedOperationResponse metadata = claimByType("METADATA");
+		ClaimedOperationResponse thumbnail = claimByType("THUMBNAIL");
 		runConcurrent(
-				() -> internalOperationService.complete(metadataId, metadataComplete()),
-				() -> internalOperationService.fail(thumbnailId, new FailOperationRequest(9L, "thumbnail failed"))
+				() -> internalOperationService.complete(metadata.operationId(), metadataComplete(metadata.attemptId())),
+				() -> internalOperationService.fail(
+						thumbnail.operationId(),
+						new FailOperationRequest(thumbnail.attemptId(), 9L, "thumbnail failed")
+				)
 		);
-		assertThat(operationRepository.findById(metadataId).orElseThrow().getStatus())
+		assertThat(operationRepository.findById(metadata.operationId()).orElseThrow().getStatus())
 				.isEqualTo(OperationStatus.COMPLETED);
-		assertThat(operationRepository.findById(thumbnailId).orElseThrow().getStatus())
+		assertThat(operationRepository.findById(thumbnail.operationId()).orElseThrow().getStatus())
 				.isEqualTo(OperationStatus.FAILED);
 		assertThat(jobRepository.findById(jobId).orElseThrow().getStatus())
 				.isEqualTo(JobStatus.FAILED);
@@ -135,23 +148,25 @@ class JobAggregationConcurrencyTest {
 		return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
 	}
 
-	private UUID claimByType(String type) {
-		var claimed = internalOperationService.claimNextExecutableOperation()
+	private ClaimedOperationResponse claimByType(String type) {
+		var claimed = internalOperationService.claimNextExecutableOperation("worker-a")
 				.orElseThrow(() -> new AssertionError("expected claimable " + type));
 		assertThat(claimed.type().name()).isEqualTo(type);
-		return claimed.operationId();
+		return claimed;
 	}
 
-	private static CompleteOperationRequest metadataComplete() {
+	private static CompleteOperationRequest metadataComplete(UUID attemptId) {
 		return new CompleteOperationRequest(
+				attemptId,
 				12L,
 				new MetadataResultDto(2.0, "mp4", 100L, "h264", null, 320, 240, 30.0),
 				null
 		);
 	}
 
-	private static CompleteOperationRequest thumbnailComplete(UUID jobId, UUID operationId) {
+	private static CompleteOperationRequest thumbnailComplete(UUID jobId, UUID operationId, UUID attemptId) {
 		return new CompleteOperationRequest(
+				attemptId,
 				20L,
 				null,
 				new ArtifactCompletionDto(

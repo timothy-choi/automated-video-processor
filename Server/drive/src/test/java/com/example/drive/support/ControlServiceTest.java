@@ -17,6 +17,7 @@ import org.springframework.context.annotation.Import;
 		"drive.dispatch.publisher-enabled=false",
 		"drive.dispatch.http-claim-enabled=true",
 		"drive.worker.heartbeat-sweep-enabled=false",
+		"drive.execution.lease-sweep-enabled=false",
 		"spring.autoconfigure.exclude=org.springframework.boot.amqp.autoconfigure.RabbitAutoConfiguration"
 })
 @AutoConfigureMockMvc

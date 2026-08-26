@@ -20,6 +20,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import com.example.drive.job.dto.ClaimedOperationResponse;
 import com.example.drive.support.ControlServiceTest;
+import com.example.drive.support.WorkerTestSupport;
 import com.jayway.jsonpath.JsonPath;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -44,10 +45,15 @@ class InternalOperationApiIntegrationTest {
 	private InternalOperationService internalOperationService;
 
 	@BeforeEach
-	void clearTables() {
+	void clearTables() throws Exception {
 		jdbcTemplate.update("delete from artifacts");
+		jdbcTemplate.update("delete from execution_attempts");
 		jdbcTemplate.update("delete from operations");
 		jdbcTemplate.update("delete from jobs");
+		jdbcTemplate.execute("delete from worker_supported_codecs");
+		jdbcTemplate.execute("delete from worker_supported_operations");
+		jdbcTemplate.execute("delete from workers");
+		WorkerTestSupport.register(mockMvc, "worker-a");
 	}
 
 	@Test
@@ -59,13 +65,18 @@ class InternalOperationApiIntegrationTest {
 				}
 				""");
 
-		MvcResult result = mockMvc.perform(post("/internal/operations/claim"))
+		MvcResult result = mockMvc.perform(post("/internal/operations/claim")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.jobId").value(jobId.toString()))
 				.andExpect(jsonPath("$.type").value("METADATA"))
 				.andExpect(jsonPath("$.inputUri").value("file:///tmp/sample.mp4"))
 				.andExpect(jsonPath("$.status").value("RUNNING"))
 				.andExpect(jsonPath("$.operationId").isString())
+				.andExpect(jsonPath("$.attemptId").isString())
+				.andExpect(jsonPath("$.workerId").value("worker-a"))
+				.andExpect(jsonPath("$.leaseExpiresAt").isString())
 				.andReturn();
 
 		UUID operationId = UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.operationId"));
@@ -81,6 +92,12 @@ class InternalOperationApiIntegrationTest {
 				operationId
 		);
 		assertThat(runningCount).isEqualTo(1);
+		Integer attempts = jdbcTemplate.queryForObject(
+				"select count(*) from execution_attempts where operation_id = ? and status = 'RUNNING' and attempt_number = 1",
+				Integer.class,
+				operationId
+		);
+		assertThat(attempts).isEqualTo(1);
 	}
 
 	@Test
@@ -92,7 +109,9 @@ class InternalOperationApiIntegrationTest {
 				}
 				""");
 
-		mockMvc.perform(post("/internal/operations/claim"))
+		mockMvc.perform(post("/internal/operations/claim")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.jobId").value(jobId.toString()))
 				.andExpect(jsonPath("$.type").value("METADATA"))
@@ -109,7 +128,9 @@ class InternalOperationApiIntegrationTest {
 				}
 				""");
 
-		mockMvc.perform(post("/internal/operations/claim"))
+		mockMvc.perform(post("/internal/operations/claim")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.type").value("THUMBNAIL"))
 				.andExpect(jsonPath("$.inputUri").value("file:///tmp/thumb.mp4"))
@@ -125,7 +146,9 @@ class InternalOperationApiIntegrationTest {
 				}
 				""");
 
-		mockMvc.perform(post("/internal/operations/claim"))
+		mockMvc.perform(post("/internal/operations/claim")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.type").value("THUMBNAIL"))
 				.andExpect(jsonPath("$.inputUri").value("s3://media-input/video.mp4"));
@@ -133,7 +156,9 @@ class InternalOperationApiIntegrationTest {
 
 	@Test
 	void claimReturns204WhenNoWork() throws Exception {
-		mockMvc.perform(post("/internal/operations/claim"))
+		mockMvc.perform(post("/internal/operations/claim")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isNoContent());
 	}
 
@@ -146,7 +171,9 @@ class InternalOperationApiIntegrationTest {
 				}
 				""");
 
-		mockMvc.perform(post("/internal/operations/claim"))
+		mockMvc.perform(post("/internal/operations/claim")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isNoContent());
 	}
 
@@ -165,7 +192,7 @@ class InternalOperationApiIntegrationTest {
 			for (int i = 0; i < 2; i++) {
 				futures.add(pool.submit(() -> {
 					start.await(5, TimeUnit.SECONDS);
-					return internalOperationService.claimNextExecutableOperation();
+					return internalOperationService.claimNextExecutableOperation("worker-a");
 				}));
 			}
 			start.countDown();
@@ -192,12 +219,13 @@ class InternalOperationApiIntegrationTest {
 				  "operations": [{"type": "METADATA"}]
 				}
 				""");
-		UUID operationId = claimOperationId();
+		ClaimedIds claimed = claimOperation();
 
-		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/complete")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
+								  "attemptId": "%s",
 								  "actualRuntimeMs": 42,
 								  "metadata": {
 								    "durationSeconds": 2.0,
@@ -209,7 +237,7 @@ class InternalOperationApiIntegrationTest {
 								    "frameRate": 30.0
 								  }
 								}
-								"""))
+								""".formatted(claimed.attemptId())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"))
 				.andExpect(jsonPath("$.actualRuntimeMs").value(42))
@@ -224,7 +252,7 @@ class InternalOperationApiIntegrationTest {
 		Integer stored = jdbcTemplate.queryForObject(
 				"select count(*) from operations where id = ? and status = 'COMPLETED' and actual_runtime_ms = 42 and result_json is not null",
 				Integer.class,
-				operationId
+				claimed.operationId()
 		);
 		assertThat(stored).isEqualTo(1);
 	}
@@ -237,12 +265,12 @@ class InternalOperationApiIntegrationTest {
 				  "operations": [{"type": "THUMBNAIL"}]
 				}
 				""");
-		UUID operationId = claimOperationId();
-		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + operationId + "/thumbnail.jpg";
+		ClaimedIds claimed = claimOperation();
+		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + claimed.operationId() + "/thumbnail.jpg";
 
-		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/complete")
 						.contentType(MediaType.APPLICATION_JSON)
-						.content(thumbnailCompleteJson(objectUri, 1234)))
+						.content(thumbnailCompleteJson(claimed.attemptId(), objectUri, 1234)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"))
 				.andExpect(jsonPath("$.actualRuntimeMs").value(20))
@@ -255,7 +283,7 @@ class InternalOperationApiIntegrationTest {
 		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(1))
-				.andExpect(jsonPath("$.artifacts[0].operationId").value(operationId.toString()))
+				.andExpect(jsonPath("$.artifacts[0].operationId").value(claimed.operationId().toString()))
 				.andExpect(jsonPath("$.artifacts[0].type").value("THUMBNAIL"))
 				.andExpect(jsonPath("$.artifacts[0].objectUri").value(objectUri))
 				.andExpect(jsonPath("$.artifacts[0].contentType").value("image/jpeg"))
@@ -265,7 +293,7 @@ class InternalOperationApiIntegrationTest {
 		UUID storedJobId = UUID.fromString(jdbcTemplate.queryForObject(
 				"select job_id from artifacts where operation_id = ?",
 				String.class,
-				operationId
+				claimed.operationId()
 		));
 		assertThat(storedJobId).isEqualTo(jobId);
 		Integer blobColumns = jdbcTemplate.queryForObject(
@@ -283,16 +311,17 @@ class InternalOperationApiIntegrationTest {
 				  "operations": [{"type": "METADATA"}]
 				}
 				""");
-		UUID operationId = claimOperationId();
+		ClaimedIds claimed = claimOperation();
 
-		mockMvc.perform(post("/internal/operations/" + operationId + "/fail")
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/fail")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
+								  "attemptId": "%s",
 								  "actualRuntimeMs": 15,
 								  "reason": "ffprobe: No such file or directory"
 								}
-								"""))
+								""".formatted(claimed.attemptId())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("FAILED"))
 				.andExpect(jsonPath("$.failureReason").value("ffprobe: No such file or directory"))
@@ -314,15 +343,15 @@ class InternalOperationApiIntegrationTest {
 				  ]
 				}
 				""");
-		UUID metadataId = claimOperationId();
-		completeMetadata(metadataId);
-		UUID thumbnailId = claimOperationId();
+		ClaimedIds metadata = claimOperation();
+		completeMetadata(metadata.operationId(), metadata.attemptId());
+		ClaimedIds thumbnail = claimOperation();
 
-		mockMvc.perform(post("/internal/operations/" + thumbnailId + "/fail")
+		mockMvc.perform(post("/internal/operations/" + thumbnail.operationId() + "/fail")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
-								{"reason": "ffmpeg failed: no video stream"}
-								"""))
+								{"attemptId": "%s", "reason": "ffmpeg failed: no video stream"}
+								""".formatted(thumbnail.attemptId())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("FAILED"));
 
@@ -349,12 +378,13 @@ class InternalOperationApiIntegrationTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
+								  "attemptId": "%s",
 								  "actualRuntimeMs": 1,
 								  "metadata": {"formatName": "mp4"}
 								}
-								"""))
-				.andExpect(status().isConflict())
-				.andExpect(jsonPath("$.code").value("INVALID_OPERATION_STATE"));
+								""".formatted(UUID.randomUUID())))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("ATTEMPT_NOT_FOUND"));
 	}
 
 	@Test
@@ -365,21 +395,22 @@ class InternalOperationApiIntegrationTest {
 				  "operations": [{"type": "METADATA"}]
 				}
 				""");
-		UUID operationId = claimOperationId();
+		ClaimedIds claimed = claimOperation();
 		String body = """
 				{
+				  "attemptId": "%s",
 				  "actualRuntimeMs": 10,
 				  "metadata": {"formatName": "mp4", "width": 320}
 				}
-				""";
+				""".formatted(claimed.attemptId());
 
-		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/complete")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(body))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"));
 
-		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/complete")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(body))
 				.andExpect(status().isOk())
@@ -395,15 +426,15 @@ class InternalOperationApiIntegrationTest {
 				  "operations": [{"type": "THUMBNAIL"}]
 				}
 				""");
-		UUID operationId = claimOperationId();
-		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + operationId + "/thumbnail.jpg";
-		String body = thumbnailCompleteJson(objectUri, 99);
+		ClaimedIds claimed = claimOperation();
+		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + claimed.operationId() + "/thumbnail.jpg";
+		String body = thumbnailCompleteJson(claimed.attemptId(), objectUri, 99);
 
-		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/complete")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(body))
 				.andExpect(status().isOk());
-		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/complete")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(body))
 				.andExpect(status().isOk())
@@ -412,7 +443,7 @@ class InternalOperationApiIntegrationTest {
 		Integer count = jdbcTemplate.queryForObject(
 				"select count(*) from artifacts where operation_id = ?",
 				Integer.class,
-				operationId
+				claimed.operationId()
 		);
 		assertThat(count).isEqualTo(1);
 	}
@@ -425,24 +456,25 @@ class InternalOperationApiIntegrationTest {
 				  "operations": [{"type": "METADATA"}]
 				}
 				""");
-		UUID operationId = claimOperationId();
-		mockMvc.perform(post("/internal/operations/" + operationId + "/fail")
+		ClaimedIds claimed = claimOperation();
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/fail")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
-								{"reason": "probe failed"}
-								"""))
+								{"attemptId": "%s", "reason": "probe failed"}
+								""".formatted(claimed.attemptId())))
 				.andExpect(status().isOk());
 
-		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+		mockMvc.perform(post("/internal/operations/" + claimed.operationId() + "/complete")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
+								  "attemptId": "%s",
 								  "actualRuntimeMs": 1,
 								  "metadata": {"formatName": "mp4"}
 								}
-								"""))
+								""".formatted(claimed.attemptId())))
 				.andExpect(status().isConflict())
-				.andExpect(jsonPath("$.code").value("INVALID_OPERATION_STATE"));
+				.andExpect(jsonPath("$.code").value("STALE_EXECUTION_ATTEMPT"));
 	}
 
 	@Test
@@ -456,18 +488,18 @@ class InternalOperationApiIntegrationTest {
 				  ]
 				}
 				""");
-		UUID metadataId = claimOperationId();
-		completeMetadata(metadataId);
+		ClaimedIds metadata = claimOperation();
+		completeMetadata(metadata.operationId(), metadata.attemptId());
 
 		mockMvc.perform(get("/jobs/" + jobId))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("RUNNING"));
 
-		UUID thumbnailId = claimOperationId();
-		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + thumbnailId + "/thumbnail.jpg";
-		mockMvc.perform(post("/internal/operations/" + thumbnailId + "/complete")
+		ClaimedIds thumbnail = claimOperation();
+		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + thumbnail.operationId() + "/thumbnail.jpg";
+		mockMvc.perform(post("/internal/operations/" + thumbnail.operationId() + "/complete")
 						.contentType(MediaType.APPLICATION_JSON)
-						.content(thumbnailCompleteJson(objectUri, 50)))
+						.content(thumbnailCompleteJson(thumbnail.attemptId(), objectUri, 50)))
 				.andExpect(status().isOk());
 
 		mockMvc.perform(get("/jobs/" + jobId))
@@ -476,7 +508,7 @@ class InternalOperationApiIntegrationTest {
 		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(1))
-				.andExpect(jsonPath("$.artifacts[0].operationId").value(thumbnailId.toString()));
+				.andExpect(jsonPath("$.artifacts[0].operationId").value(thumbnail.operationId().toString()));
 	}
 
 	@Test
@@ -490,8 +522,8 @@ class InternalOperationApiIntegrationTest {
 				  ]
 				}
 				""");
-		UUID operationId = claimOperationId();
-		completeMetadata(operationId);
+		ClaimedIds claimed = claimOperation();
+		completeMetadata(claimed.operationId(), claimed.attemptId());
 
 		mockMvc.perform(get("/jobs/" + jobId))
 				.andExpect(status().isOk())
@@ -505,8 +537,8 @@ class InternalOperationApiIntegrationTest {
 		mockMvc.perform(post("/internal/operations/" + UUID.randomUUID() + "/fail")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
-								{"reason": "missing"}
-								"""))
+								{"attemptId": "%s", "reason": "missing"}
+								""".formatted(UUID.randomUUID())))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("OPERATION_NOT_FOUND"));
 	}
@@ -526,24 +558,66 @@ class InternalOperationApiIntegrationTest {
 		));
 		jdbcTemplate.update("update operations set status = 'ASSIGNED' where id = ?", operationId);
 
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+		MvcResult started = mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.outcome").value("STARTED"))
-				.andExpect(jsonPath("$.status").value("RUNNING"));
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+				.andExpect(jsonPath("$.status").value("RUNNING"))
+				.andExpect(jsonPath("$.attemptId").isString())
+				.andExpect(jsonPath("$.workerId").value("worker-a"))
+				.andExpect(jsonPath("$.leaseExpiresAt").isString())
+				.andReturn();
+		UUID attemptId = UUID.fromString(JsonPath.read(started.getResponse().getContentAsString(), "$.attemptId"));
+		mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.outcome").value("ALREADY_RUNNING"));
 
-		completeMetadata(operationId);
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+		Integer attemptCount = jdbcTemplate.queryForObject(
+				"select count(*) from execution_attempts where operation_id = ?",
+				Integer.class,
+				operationId
+		);
+		assertThat(attemptCount).isEqualTo(1);
+
+		completeMetadata(operationId, attemptId);
+		mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(jsonPath("$.outcome").value("ALREADY_TERMINAL"));
 	}
 
 	@Test
 	void startUnknownOperationReturns404() throws Exception {
-		mockMvc.perform(post("/internal/operations/" + UUID.randomUUID() + "/start"))
+		mockMvc.perform(post("/internal/operations/" + UUID.randomUUID() + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("OPERATION_NOT_FOUND"));
+	}
+
+	@Test
+	void unknownWorkerCannotStart() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "file:///tmp/start.mp4",
+				  "operations": [{"type": "METADATA"}]
+				}
+				""");
+		UUID operationId = UUID.fromString(jdbcTemplate.queryForObject(
+				"select id from operations where job_id = ?",
+				String.class,
+				jobId
+		));
+		jdbcTemplate.update("update operations set status = 'ASSIGNED' where id = ?", operationId);
+
+		mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("missing-worker")))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("WORKER_NOT_FOUND"));
 	}
 
 	private UUID createJob(String json) throws Exception {
@@ -555,28 +629,36 @@ class InternalOperationApiIntegrationTest {
 		return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
 	}
 
-	private UUID claimOperationId() throws Exception {
-		MvcResult result = mockMvc.perform(post("/internal/operations/claim"))
+	private ClaimedIds claimOperation() throws Exception {
+		MvcResult result = mockMvc.perform(post("/internal/operations/claim")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
 				.andReturn();
-		return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.operationId"));
+		String body = result.getResponse().getContentAsString();
+		return new ClaimedIds(
+				UUID.fromString(JsonPath.read(body, "$.operationId")),
+				UUID.fromString(JsonPath.read(body, "$.attemptId"))
+		);
 	}
 
-	private void completeMetadata(UUID operationId) throws Exception {
+	private void completeMetadata(UUID operationId, UUID attemptId) throws Exception {
 		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
+								  "attemptId": "%s",
 								  "actualRuntimeMs": 8,
 								  "metadata": {"formatName": "mp4"}
 								}
-								"""))
+								""".formatted(attemptId)))
 				.andExpect(status().isOk());
 	}
 
-	private static String thumbnailCompleteJson(String objectUri, int sizeBytes) {
+	private static String thumbnailCompleteJson(UUID attemptId, String objectUri, int sizeBytes) {
 		return """
 				{
+				  "attemptId": "%s",
 				  "actualRuntimeMs": 20,
 				  "artifact": {
 				    "objectUri": "%s",
@@ -585,6 +667,9 @@ class InternalOperationApiIntegrationTest {
 				    "checksum": "%s"
 				  }
 				}
-				""".formatted(objectUri, sizeBytes, SHA256);
+				""".formatted(attemptId, objectUri, sizeBytes, SHA256);
+	}
+
+	private record ClaimedIds(UUID operationId, UUID attemptId) {
 	}
 }

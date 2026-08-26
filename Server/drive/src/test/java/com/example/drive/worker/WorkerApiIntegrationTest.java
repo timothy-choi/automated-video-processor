@@ -30,6 +30,7 @@ class WorkerApiIntegrationTest {
 
 	@BeforeEach
 	void clearWorkers() {
+		jdbcTemplate.execute("delete from execution_attempts");
 		jdbcTemplate.execute("delete from worker_supported_codecs");
 		jdbcTemplate.execute("delete from worker_supported_operations");
 		jdbcTemplate.execute("delete from workers");

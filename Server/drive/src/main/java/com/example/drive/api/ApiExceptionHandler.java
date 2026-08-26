@@ -13,11 +13,14 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import com.example.drive.job.AttemptNotFoundException;
 import com.example.drive.job.HttpClaimDisabledException;
 import com.example.drive.job.IllegalOperationStateException;
 import com.example.drive.job.InvalidJobRequestException;
 import com.example.drive.job.JobNotFoundException;
 import com.example.drive.job.OperationNotFoundException;
+import com.example.drive.job.StaleExecutionAttemptException;
+import com.example.drive.job.WorkerNotEligibleException;
 import com.example.drive.worker.InvalidRegistrationException;
 import com.example.drive.worker.WorkerNotFoundException;
 
@@ -38,6 +41,21 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(OperationNotFoundException.class)
 	public ResponseEntity<ApiError> handleOperationNotFound(OperationNotFoundException ex) {
 		return respond(HttpStatus.NOT_FOUND, "OPERATION_NOT_FOUND", ex.getMessage());
+	}
+
+	@ExceptionHandler(AttemptNotFoundException.class)
+	public ResponseEntity<ApiError> handleAttemptNotFound(AttemptNotFoundException ex) {
+		return respond(HttpStatus.NOT_FOUND, "ATTEMPT_NOT_FOUND", ex.getMessage());
+	}
+
+	@ExceptionHandler(StaleExecutionAttemptException.class)
+	public ResponseEntity<ApiError> handleStaleAttempt(StaleExecutionAttemptException ex) {
+		return respond(HttpStatus.CONFLICT, "STALE_EXECUTION_ATTEMPT", ex.getMessage());
+	}
+
+	@ExceptionHandler(WorkerNotEligibleException.class)
+	public ResponseEntity<ApiError> handleWorkerNotEligible(WorkerNotEligibleException ex) {
+		return respond(HttpStatus.CONFLICT, ex.getCode(), ex.getMessage());
 	}
 
 	@ExceptionHandler(HttpClaimDisabledException.class)

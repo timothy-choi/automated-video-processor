@@ -75,6 +75,9 @@ func TestCompleteSendsPayload(t *testing.T) {
 		if body["actualRuntimeMs"].(float64) != 12 {
 			t.Fatalf("runtime = %v", body["actualRuntimeMs"])
 		}
+		if body["attemptId"] != "attempt-1" {
+			t.Fatalf("attemptId = %v", body["attemptId"])
+		}
 		metadata, ok := body["metadata"].(map[string]any)
 		if !ok || metadata["formatName"] != "mp4" {
 			t.Fatalf("metadata = %v", body["metadata"])
@@ -86,6 +89,7 @@ func TestCompleteSendsPayload(t *testing.T) {
 
 	format := "mp4"
 	err := New(server.URL, 5*time.Second).Complete(context.Background(), "op-1", model.CompleteRequest{
+		AttemptID:       "attempt-1",
 		ActualRuntimeMs: 12,
 		Metadata: &model.MetadataResult{
 			FormatName: &format,
@@ -96,10 +100,17 @@ func TestCompleteSendsPayload(t *testing.T) {
 	}
 }
 
-func TestStartParsesOutcome(t *testing.T) {
+func TestStartSendsWorkerIDAndParsesAttempt(t *testing.T) {
+	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/internal/operations/op-9/start" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("content-type=%s", r.Header.Get("Content-Type"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{
@@ -108,17 +119,26 @@ func TestStartParsesOutcome(t *testing.T) {
 			"jobId": "job-9",
 			"type": "METADATA",
 			"inputUri": "s3://media-input/sample.mp4",
-			"status": "RUNNING"
+			"status": "RUNNING",
+			"attemptId": "attempt-9",
+			"workerId": "worker-a",
+			"leaseExpiresAt": "2026-08-25T18:00:30Z"
 		}`)
 	}))
 	defer server.Close()
 
-	started, err := New(server.URL, 5*time.Second).Start(context.Background(), "op-9")
+	started, err := New(server.URL, 5*time.Second).Start(context.Background(), "op-9", "worker-a")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if started.Outcome != model.StartStarted {
 		t.Fatalf("outcome=%s", started.Outcome)
+	}
+	if started.AttemptID != "attempt-9" || started.WorkerID != "worker-a" {
+		t.Fatalf("started=%+v", started)
+	}
+	if gotBody["workerId"] != "worker-a" {
+		t.Fatalf("body=%v", gotBody)
 	}
 }
 
@@ -129,7 +149,7 @@ func TestStartNotFoundIsStatusError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := New(server.URL, 5*time.Second).Start(context.Background(), "missing")
+	_, err := New(server.URL, 5*time.Second).Start(context.Background(), "missing", "worker-a")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -140,6 +160,36 @@ func TestStartNotFoundIsStatusError(t *testing.T) {
 		}
 	} else {
 		t.Fatalf("404 should not be unavailable: %v", err)
+	}
+}
+
+func TestRenewSendsWorkerAndAttempt(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/operations/op-9/attempts/attempt-9/renew" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"attemptId": "attempt-9",
+			"workerId": "worker-a",
+			"status": "RUNNING",
+			"leaseExpiresAt": "2026-08-25T18:01:00Z"
+		}`)
+	}))
+	defer server.Close()
+	renewed, err := New(server.URL, 5*time.Second).Renew(context.Background(), "op-9", "attempt-9", "worker-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.AttemptID != "attempt-9" {
+		t.Fatalf("renewed=%+v", renewed)
+	}
+	if gotBody["workerId"] != "worker-a" {
+		t.Fatalf("body=%v", gotBody)
 	}
 }
 
@@ -256,6 +306,39 @@ func TestHeartbeatSuccess(t *testing.T) {
 	}
 	if resp.LastHeartbeat.IsZero() {
 		t.Fatal("expected lastHeartbeat")
+	}
+}
+
+func TestCompleteConflictIsConflict(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, `{"code":"STALE_EXECUTION_ATTEMPT"}`)
+	}))
+	defer server.Close()
+	err := New(server.URL, 5*time.Second).Complete(context.Background(), "op-1", model.CompleteRequest{AttemptID: "old"})
+	if !IsConflict(err) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestFailSendsAttemptID(t *testing.T) {
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/operations/op-1/fail" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	runtime := int64(9)
+	if err := New(server.URL, 5*time.Second).Fail(context.Background(), "op-1", &runtime, "boom", "attempt-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got["attemptId"] != "attempt-1" || got["reason"] != "boom" {
+		t.Fatalf("body=%v", got)
 	}
 }
 

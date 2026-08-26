@@ -11,6 +11,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import com.example.drive.support.DispatchServiceTest;
+import com.example.drive.support.WorkerTestSupport;
 import com.jayway.jsonpath.JsonPath;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -32,11 +33,16 @@ class DispatchEnqueueIntegrationTest {
 	private DispatchEnqueueService enqueueService;
 
 	@BeforeEach
-	void clearTables() {
+	void clearTables() throws Exception {
 		jdbcTemplate.update("delete from artifacts");
+		jdbcTemplate.update("delete from execution_attempts");
 		jdbcTemplate.update("delete from dispatch_outbox");
 		jdbcTemplate.update("delete from operations");
 		jdbcTemplate.update("delete from jobs");
+		jdbcTemplate.execute("delete from worker_supported_codecs");
+		jdbcTemplate.execute("delete from worker_supported_operations");
+		jdbcTemplate.execute("delete from workers");
+		WorkerTestSupport.register(mockMvc, "worker-a");
 	}
 
 	@Test
@@ -151,13 +157,18 @@ class DispatchEnqueueIntegrationTest {
 				String.class
 		));
 
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+		mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.outcome").value("STARTED"))
 				.andExpect(jsonPath("$.status").value("RUNNING"))
+				.andExpect(jsonPath("$.attemptId").isString())
 				.andExpect(jsonPath("$.inputUri").value("s3://media-input/video.mp4"));
 
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+		mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.outcome").value("ALREADY_RUNNING"))
 				.andExpect(jsonPath("$.status").value("RUNNING"));
@@ -184,7 +195,9 @@ class DispatchEnqueueIntegrationTest {
 				jobId
 		));
 
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+		mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.outcome").value("INVALID_STATE"))
 				.andExpect(jsonPath("$.status").value("QUEUED"));
@@ -200,23 +213,30 @@ class DispatchEnqueueIntegrationTest {
 				""");
 		enqueueService.enqueueDispatchableOperations();
 		UUID operationId = UUID.fromString(jdbcTemplate.queryForObject("select id from operations", String.class));
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+		MvcResult started = mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.outcome").value("STARTED"));
+				.andExpect(jsonPath("$.outcome").value("STARTED"))
+				.andReturn();
+		String attemptId = JsonPath.read(started.getResponse().getContentAsString(), "$.attemptId");
 
 		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
+								  "attemptId": "%s",
 								  "actualRuntimeMs": 9,
 								  "metadata": {"formatName": "mp4", "width": 320}
 								}
-								"""))
+								""".formatted(attemptId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"))
 				.andExpect(jsonPath("$.result.width").value(320));
 
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+		mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.outcome").value("ALREADY_TERMINAL"));
 	}
@@ -231,20 +251,26 @@ class DispatchEnqueueIntegrationTest {
 				""");
 		enqueueService.enqueueDispatchableOperations();
 		UUID operationId = UUID.fromString(jdbcTemplate.queryForObject("select id from operations", String.class));
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
-				.andExpect(jsonPath("$.outcome").value("STARTED"));
+		MvcResult started = mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
+				.andExpect(jsonPath("$.outcome").value("STARTED"))
+				.andReturn();
+		String attemptId = JsonPath.read(started.getResponse().getContentAsString(), "$.attemptId");
 
 		mockMvc.perform(post("/internal/operations/" + operationId + "/fail")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
-								{"reason": "object not found"}
-								"""))
+								{"attemptId": "%s", "reason": "object not found"}
+								""".formatted(attemptId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("FAILED"));
 
 		mockMvc.perform(get("/jobs/" + jobId))
 				.andExpect(jsonPath("$.status").value("FAILED"));
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+		mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(jsonPath("$.outcome").value("ALREADY_TERMINAL"));
 	}
 
@@ -258,12 +284,18 @@ class DispatchEnqueueIntegrationTest {
 				""");
 		enqueueService.enqueueDispatchableOperations();
 		UUID operationId = UUID.fromString(jdbcTemplate.queryForObject("select id from operations", String.class));
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start")).andExpect(status().isOk());
+		MvcResult started = mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
+				.andExpect(status().isOk())
+				.andReturn();
+		String attemptId = JsonPath.read(started.getResponse().getContentAsString(), "$.attemptId");
 		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + operationId + "/thumbnail.jpg";
 		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
+								  "attemptId": "%s",
 								  "actualRuntimeMs": 20,
 								  "artifact": {
 								    "objectUri": "%s",
@@ -272,7 +304,7 @@ class DispatchEnqueueIntegrationTest {
 								    "checksum": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 								  }
 								}
-								""".formatted(objectUri)))
+								""".formatted(attemptId, objectUri)))
 				.andExpect(status().isOk());
 
 		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
@@ -283,7 +315,9 @@ class DispatchEnqueueIntegrationTest {
 
 	@Test
 	void claimEndpointIsDisabledWhenFlagOff() throws Exception {
-		mockMvc.perform(post("/internal/operations/claim"))
+		mockMvc.perform(post("/internal/operations/claim")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("CLAIM_DISABLED"));
 	}

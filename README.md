@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-That later architecture (Go scheduler policies, leases, OpenTelemetry) is **not implemented yet**. This repository is currently at **Phase 3C**.
+That later architecture (Go scheduler policies, OpenTelemetry) is **not implemented yet**. This repository is currently at **Phase 3D**.
 
-## Current status: Phase 3C — worker heartbeats + availability
+## Current status: Phase 3D — execution attempts + leases + safe reassignment
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -26,7 +26,7 @@ The assignment JSON contract lives at:
 contracts/operation-assignment.v1.schema.json
 ```
 
-Phase 3C currently:
+Phase 3D currently:
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write)
 - a **Java dispatcher** (isolated from the public API) selects eligible `QUEUED` `METADATA`/`THUMBNAIL` operations, marks them `ASSIGNED`, and outbox-publishes assignment messages to RabbitMQ
@@ -34,12 +34,15 @@ Phase 3C currently:
 - workers send **periodic heartbeats**; the control service marks them `AVAILABLE` or `UNAVAILABLE`
 - `GET /workers` lists workers, static capabilities, `status`, and `lastHeartbeat`
 - multiple Go workers compete as consumers on **one shared queue** (availability is not placement yet)
-- workers call `POST /internal/operations/{id}/start` so PostgreSQL stays authoritative about whether work may execute
+- workers call `POST /internal/operations/{id}/start` with `workerId` so PostgreSQL creates an `ExecutionAttempt`, binds ownership, and issues a lease
+- workers renew that lease independently of heartbeats while media work runs
+- if a worker becomes `UNAVAILABLE` and its attempt lease expires, the attempt is `INTERRUPTED`, the operation is `QUEUED`, and the existing dispatcher redispatches it
+- a late result from an old attempt is rejected (`409 STALE_EXECUTION_ATTEMPT`) and cannot complete a newer attempt's operation
 - downloads `s3://` inputs (and still accepts `file://`)
 - runs **real ffprobe** and **real FFmpeg**
 - uploads JPEG thumbnails to `s3://media-output/...` and persists `Artifact` metadata
 
-RabbitMQ competing consumers are **baseline work distribution**, not the adaptive scheduler. Registration is control-plane inventory. Heartbeats are control-plane liveness. Neither is worker placement or job recovery.
+RabbitMQ competing consumers are **baseline work distribution**, not the adaptive scheduler. Registration is control-plane inventory. Heartbeats are control-plane liveness. Leases are **attempt ownership**. Neither heartbeat nor lease is worker placement.
 
 ```text
 Client
@@ -51,12 +54,17 @@ Java Control Service
   v
 PostgreSQL  <--- worker registration (upsert by WORKER_ID)
   ^              <--- POST /internal/workers/{id}/heartbeat
-  ^              <--- start / complete / fail
+  ^              <--- start (creates ExecutionAttempt + lease)
+  ^              <--- renew / complete / fail (attemptId required)
   |
   | stale-heartbeat sweeper
   |   AVAILABLE -> UNAVAILABLE when lastHeartbeat is older than timeout
   |
-  | outbox dispatcher (still shared-queue publish)
+  | expired-lease sweeper
+  |   RUNNING attempt + expired lease + UNAVAILABLE worker
+  |     -> attempt INTERRUPTED, operation QUEUED
+  |
+  | outbox dispatcher (still shared-queue publish; redispatches requeued work)
   v
 RabbitMQ
   |
@@ -187,6 +195,7 @@ Expected: **202 Accepted**, with `id`, `status: "QUEUED"`, timestamps, and the c
 ```bash
 curl -sS http://localhost:8080/jobs/<job-id>
 curl -sS http://localhost:8080/jobs/<job-id>/operations
+curl -sS http://localhost:8080/jobs/<job-id>/operations/<operation-id>/attempts
 curl -sS http://localhost:8080/jobs/<job-id>/artifacts
 ```
 
@@ -238,15 +247,16 @@ curl -sS -X POST http://localhost:8080/jobs \
   }'
 ```
 
-The job is `QUEUED` until the dispatcher assigns operations (`ASSIGNED`), a worker starts one (`RUNNING`), and results are persisted (`COMPLETED` / `FAILED`).
+The job is `QUEUED` until the dispatcher assigns operations (`ASSIGNED`), a worker starts one (`RUNNING` + `ExecutionAttempt`), and results are persisted (`COMPLETED` / `FAILED`). Interrupted infrastructure failures requeue the operation; attempt history is retained.
 
-`WORKER_ID` is **required** (stable identity such as `worker-a`). The worker probes local executables and machine info, registers, starts a heartbeat loop, and only then consumes RabbitMQ. `supportedOperations` means the worker has an implemented executor **and** the required local binary is available (`METADATA` needs ffprobe, `THUMBNAIL` needs FFmpeg). Optional `SUPPORTED_OPERATIONS` may **restrict** that set; it cannot add unimplemented types. If a requested operation's executable is missing, startup fails: the worker does not register, does not heartbeat, and does not consume. Metadata-only workers (`SUPPORTED_OPERATIONS=METADATA`) do not require FFmpeg; encoder `supportedCodecs` stay empty in that case.
+`WORKER_ID` is **required** (stable identity such as `worker-a`). The worker probes local executables and machine info, registers, starts a heartbeat loop, and only then consumes RabbitMQ. After `start` succeeds it also runs a **lease-renewal loop** for that attempt until complete/fail. `supportedOperations` means the worker has an implemented executor **and** the required local binary is available (`METADATA` needs ffprobe, `THUMBNAIL` needs FFmpeg). Optional `SUPPORTED_OPERATIONS` may **restrict** that set; it cannot add unimplemented types. If a requested operation's executable is missing, startup fails: the worker does not register, does not heartbeat, and does not consume. Metadata-only workers (`SUPPORTED_OPERATIONS=METADATA`) do not require FFmpeg; encoder `supportedCodecs` stay empty in that case.
 
 ```bash
 cd worker
 
 WORKER_ID=worker-a \
 HEARTBEAT_INTERVAL=5s \
+LEASE_RENEW_INTERVAL=10s \
 CONTROL_SERVICE_URL=http://localhost:8080 \
 RABBITMQ_URL=amqp://media_platform:media_platform@localhost:5672/ \
 PREFETCH=1 \
@@ -260,6 +270,7 @@ go run ./cmd/worker
 
 WORKER_ID=worker-b \
 HEARTBEAT_INTERVAL=5s \
+LEASE_RENEW_INTERVAL=10s \
 CONTROL_SERVICE_URL=http://localhost:8080 \
 RABBITMQ_URL=amqp://media_platform:media_platform@localhost:5672/ \
 PREFETCH=1 \
@@ -278,7 +289,7 @@ Heterogeneous registry demo (still the same binary; restriction only):
 SUPPORTED_OPERATIONS=METADATA WORKER_ID=worker-b ... go run ./cmd/worker
 ```
 
-Those MinIO and RabbitMQ keys are local development defaults. `PREFETCH` defaults to `1`. `FFPROBE_PATH` defaults to `ffprobe`. `FFMPEG_PATH` defaults to `ffmpeg`. `WORKER_HOSTNAME` overrides `os.Hostname()` when set. `HEARTBEAT_INTERVAL` defaults to `5s` (Go duration, for example `5s` or `500ms`). Invalid or non-positive values fail startup. Stop a worker with SIGINT/SIGTERM: in-flight unacked messages are requeued by RabbitMQ; missed heartbeats eventually mark the worker `UNAVAILABLE`.
+Those MinIO and RabbitMQ keys are local development defaults. `PREFETCH` defaults to `1`. `FFPROBE_PATH` defaults to `ffprobe`. `FFMPEG_PATH` defaults to `ffmpeg`. `WORKER_HOSTNAME` overrides `os.Hostname()` when set. `HEARTBEAT_INTERVAL` defaults to `5s` (Go duration, for example `5s` or `500ms`). `LEASE_RENEW_INTERVAL` defaults to `10s` and should stay below half of `OPERATION_LEASE_DURATION` (control-service default `30s`). Invalid or non-positive values fail startup. Stop a worker with SIGINT/SIGTERM: in-flight unacked messages are requeued by RabbitMQ; missed heartbeats eventually mark the worker `UNAVAILABLE`; an unrenewed lease plus `UNAVAILABLE` lets the control plane interrupt the attempt and requeue the operation. There is no explicit relinquish endpoint in this phase.
 
 Then:
 
@@ -482,22 +493,117 @@ Internal `POST /internal/workers/register` and `POST /internal/workers/{workerId
 
 A missing object (`s3://media-input/does-not-exist.mp4`) becomes operation `FAILED` and job `FAILED`, with a persisted `failureReason` that does not include credentials.
 
-Duplicate RabbitMQ delivery cannot rerun completed (or already running) work: `POST /internal/operations/{id}/start` is a conditional `ASSIGNED -> RUNNING` transition. `ALREADY_RUNNING` / `ALREADY_TERMINAL` is acknowledged without executing media again.
+Internal worker endpoints (`POST /internal/operations/{id}/start`, `.../attempts/{attemptId}/renew`, `.../complete`, `.../fail`) are for **local/trusted development only**. There is no authentication yet. Credential for ownership is the unguessable attempt UUID plus `workerId` on the trusted network; there is no extra lease token.
 
-Internal worker endpoints (`POST /internal/operations/{id}/start`, `.../complete`, `.../fail`) are for **local/trusted development only**. There is no authentication yet.
+`POST /internal/operations/claim` still exists but is **disabled by default** (`drive.dispatch.http-claim-enabled=false`) so it does not compete with RabbitMQ. Existing tests turn it on. Claim now also requires `workerId` and creates an attempt. Do not run poll-based workers against a dispatcher-enabled control service.
 
-`POST /internal/operations/claim` still exists but is **disabled by default** (`drive.dispatch.http-claim-enabled=false`) so it does not compete with RabbitMQ. Existing tests turn it on. Do not run poll-based workers against a dispatcher-enabled control service.
+## Execution ownership
 
-### Phase 3C limitations
+`Operation` is the user-facing logical task. `ExecutionAttempt` is one concrete worker execution of that operation.
 
-- `UNAVAILABLE` detection does **not** reclaim or reassign in-flight work
-- a worker marked unavailable may still be executing if the control-plane connection is interrupted
-- marking a worker `UNAVAILABLE` does not prevent RabbitMQ from delivering to it if the process is still connected
-- no leases / attempt IDs / operation ownership
-- no capability-aware placement; the shared RabbitMQ queue still distributes work
-- workers are not assigned explicitly
+```text
+Operation THUMBNAIL
+    |
+    +-- Attempt 1 worker-a INTERRUPTED
+    |
+    +-- Attempt 2 worker-b COMPLETED   → Operation COMPLETED
+```
+
+RabbitMQ still selects the consumer. The assignment JSON does **not** bind a worker or attempt. Ownership is established only at start:
+
+```text
+dispatcher: Operation QUEUED -> ASSIGNED, publish v1 assignment
+worker receives message
+    ↓
+POST /internal/operations/{id}/start  {"workerId":"worker-a"}
+    ↓
+control service (Job row lock):
+    worker exists, AVAILABLE, advertises the type
+    Operation ASSIGNED
+    no RUNNING attempt already
+    create ExecutionAttempt RUNNING, attemptNumber, leaseExpiresAt
+    Operation RUNNING
+    return attemptId + leaseExpiresAt
+```
+
+A second start while the operation is already `RUNNING` returns `ALREADY_RUNNING` and does not create another attempt.
+
+### Lease vs heartbeat
+
+```text
+heartbeat  = worker process / control-plane liveness   (AVAILABLE / UNAVAILABLE)
+lease      = ownership of one execution attempt        (leaseExpiresAt)
+```
+
+A worker may be `AVAILABLE` with no active leases. A `RUNNING` attempt always has a lease. Lease expiration is **not** proof the worker is dead.
+
+Control-service lease config:
+
+```text
+OPERATION_LEASE_DURATION=30s
+OPERATION_LEASE_SWEEP_INTERVAL=5s
+MAX_EXECUTION_ATTEMPTS=3
+```
+
+Worker:
+
+```text
+LEASE_RENEW_INTERVAL=10s
+```
+
+Keep `LEASE_RENEW_INTERVAL` less than half of `OPERATION_LEASE_DURATION`. Transient renew failures are logged and retried on the next interval; they do not kill media work. If renewals stop and the worker is later `UNAVAILABLE`, the control plane may reclaim the attempt. A late `complete`/`fail` from that attempt is then `409 STALE_EXECUTION_ATTEMPT`.
+
+### Recovery after worker failure
+
+```text
+worker-a starts Attempt 1
+    ↓
+worker-a disappears; heartbeats stop
+    ↓
+worker-a -> UNAVAILABLE
+    ↓
+Attempt 1 lease expires
+    ↓
+sweeper: lease expired AND worker UNAVAILABLE
+    ↓
+Attempt 1 INTERRUPTED, Operation QUEUED
+    ↓
+existing dispatcher redispatches (outbox row for that operation is cleared so a new publish can occur)
+    ↓
+worker-b start -> Attempt 2
+```
+
+The operation is requeued rather than left in a lasting `INTERRUPTED` status. The job stays `RUNNING` if other operations are still unfinished; a single requeued operation can make the job `QUEUED` again until the dispatcher assigns it.
+
+An expired lease on an `AVAILABLE` worker is **not** reclaimed. That avoids stealing work after one missed renew.
+
+After `MAX_EXECUTION_ATTEMPTS` infrastructure interruptions, the operation becomes `FAILED` with reason `maximum execution attempts exceeded`. Real FFmpeg/ffprobe errors still fail the attempt immediately and are **not** auto-retried.
+
+### Stale-result safety
+
+Complete and fail require `attemptId`. If that attempt is not the current `RUNNING` owner:
+
+- HTTP `409` `STALE_EXECUTION_ATTEMPT`
+- Operation / Job status unchanged
+- no Artifact row written or overwritten
+
+Attempt 1 cannot complete Attempt 2's work.
+
+### Artifact retries
+
+Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operationId>/thumbnail.jpg`. A retry may overwrite the same key. If a worker uploads then dies before `complete` persists, the object can exist without an Artifact row. That orphan is **not** garbage-collected in this phase. Execution is **at-least-once**, not exactly-once.
+
+`GET /jobs/{jobId}/operations/{operationId}/attempts` is a read-only history API (no lease internals).
+
+### Phase 3D limitations
+
 - no FIFO / round-robin / least-loaded / SJF / EDF / adaptive scheduler
+- no capability-aware placement; the shared RabbitMQ queue still distributes work
+- workers are not assigned explicitly before delivery
 - no CPU/memory utilization telemetry
+- no OpenTelemetry / Prometheus / Grafana / Jaeger
+- no full retry/backoff policy beyond bounded interruption requeue
+- no benchmark framework
 - RabbitMQ competing consumers are not that scheduler
 
 ## What is inactive
@@ -553,4 +659,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-Distributed scheduling policies, leases, additional FFmpeg operations, and observability belong to later phases. RabbitMQ is only the delivery mechanism today. Worker heartbeats are control-plane liveness, not automatic recovery of in-flight work.
+The smallest next milestone is **baseline scheduling policies** (FIFO / round-robin / least-loaded) on top of this ownership model. That is Phase 4. Additional FFmpeg operations, runtime estimation, utilization telemetry, and OpenTelemetry remain later still. RabbitMQ is only the delivery mechanism today. Heartbeats remain process liveness; leases remain attempt ownership.
