@@ -98,7 +98,8 @@ class SchedulerRabbitIntegrationTest {
 		schedulerService.assign(new com.example.drive.scheduler.dto.AssignOperationRequest(
 				operationId,
 				"worker-a",
-				"FIFO"
+				"FIFO",
+				"LEXICOGRAPHIC"
 		));
 		assertThat(publisher.publishPending()).isEqualTo(1);
 
@@ -108,6 +109,7 @@ class SchedulerRabbitIntegrationTest {
 				.isEqualTo(MessageDeliveryMode.PERSISTENT);
 		String body = new String(forA.getBody(), StandardCharsets.UTF_8);
 		assertThat(body).contains("schemaVersion").contains("worker-a").contains("FIFO");
+		assertThat(body).contains("LEXICOGRAPHIC").contains("workerPolicy");
 		assertThat(body).contains(operationId.toString());
 		assertThat(body).contains("assignmentId");
 		assertThat(body).doesNotContain("attemptId");

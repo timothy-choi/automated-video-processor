@@ -28,17 +28,20 @@ func TestSnapshotAndAssign(t *testing.T) {
 					Status:              "AVAILABLE",
 					SupportedOperations: []string{"METADATA"},
 				}},
+				RoundRobinCursors: map[string]string{"METADATA": "worker-b"},
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/internal/scheduler/assign":
 			if err := json.NewDecoder(r.Body).Decode(&assigned); err != nil {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(model.AssignResponse{
-				DecisionID:  "dec-1",
-				OperationID: assigned.OperationID,
-				WorkerID:    assigned.WorkerID,
-				Policy:      assigned.Policy,
-				RoutingKey:  "worker.worker-a",
+				DecisionID:      "dec-1",
+				OperationID:     assigned.OperationID,
+				WorkerID:        assigned.WorkerID,
+				Policy:          assigned.OperationPolicy,
+				OperationPolicy: assigned.OperationPolicy,
+				WorkerPolicy:    assigned.WorkerPolicy,
+				RoutingKey:      "worker.worker-a",
 			})
 		default:
 			http.NotFound(w, r)
@@ -54,15 +57,19 @@ func TestSnapshotAndAssign(t *testing.T) {
 	if len(snap.Operations) != 1 || snap.Operations[0].OperationID != "op-1" {
 		t.Fatalf("snapshot %+v", snap)
 	}
+	if snap.RoundRobinCursors["METADATA"] != "worker-b" {
+		t.Fatalf("cursors %+v", snap.RoundRobinCursors)
+	}
 	resp, err := c.Assign(context.Background(), model.Placement{
-		OperationID: "op-1",
-		WorkerID:    "worker-a",
-		Policy:      "FIFO",
+		OperationID:     "op-1",
+		WorkerID:        "worker-a",
+		OperationPolicy: "FIFO",
+		WorkerPolicy:    "ROUND_ROBIN",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assigned.WorkerID != "worker-a" || resp.DecisionID != "dec-1" {
+	if assigned.WorkerID != "worker-a" || assigned.WorkerPolicy != "ROUND_ROBIN" || resp.DecisionID != "dec-1" {
 		t.Fatalf("assigned=%+v resp=%+v", assigned, resp)
 	}
 }
@@ -74,7 +81,7 @@ func TestAssignConflict(t *testing.T) {
 	}))
 	defer server.Close()
 	c := New(server.URL, time.Second)
-	_, err := c.Assign(context.Background(), model.Placement{OperationID: "op-1", WorkerID: "worker-a", Policy: "FIFO"})
+	_, err := c.Assign(context.Background(), model.Placement{OperationID: "op-1", WorkerID: "worker-a", OperationPolicy: "FIFO", WorkerPolicy: "LEXICOGRAPHIC"})
 	if !IsConflict(err) {
 		t.Fatalf("err=%v", err)
 	}

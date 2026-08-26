@@ -16,11 +16,12 @@ Published to RabbitMQ as persistent JSON after the Go scheduler commits a placem
   "workerId": "worker-a",
   "scheduledAt": "2026-08-25T18:00:00Z",
   "policy": "FIFO",
+  "workerPolicy": "ROUND_ROBIN",
   "assignmentId": "33333333-3333-3333-3333-333333333333"
 }
 ```
 
-**v3 does not include `attemptId`.** Ownership is still created when the targeted worker calls `POST /internal/operations/{id}/start` with `workerId` and `assignmentId`. A worker that receives a v3 assignment whose `workerId` does not match must not execute it; it dead-letters the message. After recovery/reassignment, an old delayed v3 message is rejected at `/start` (`409 STALE_ASSIGNMENT`) because `assignmentId` no longer matches.
+**v3 does not include `attemptId`.** `policy` is the operation-ordering policy (`FIFO`). `workerPolicy` is worker placement (`LEXICOGRAPHIC` or `ROUND_ROBIN`) and is ignored by workers. Ownership is still created when the targeted worker calls `POST /internal/operations/{id}/start` with `workerId` and `assignmentId`.
 
 This development environment does **not** accept v2 at runtime. v2 has no `assignmentId`, so accepting it would let an obsolete envelope skip identity checks. Workers reject `schemaVersion` 2 as unsupported.
 

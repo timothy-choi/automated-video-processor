@@ -10,7 +10,11 @@ public record AssignOperationRequest(
 		UUID operationId,
 		@NotBlank(message = "workerId is required")
 		String workerId,
-		@NotBlank(message = "policy is required")
+		String operationPolicy,
+		String workerPolicy,
 		String policy
 ) {
+	public AssignOperationRequest(UUID operationId, String workerId, String operationPolicy, String workerPolicy) {
+		this(operationId, workerId, operationPolicy, workerPolicy, null);
+	}
 }

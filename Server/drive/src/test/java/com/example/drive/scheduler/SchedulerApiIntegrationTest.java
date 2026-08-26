@@ -177,6 +177,8 @@ class SchedulerApiIntegrationTest {
 				.andExpect(jsonPath("$.operationId").value(operationId.toString()))
 				.andExpect(jsonPath("$.workerId").value("worker-a"))
 				.andExpect(jsonPath("$.policy").value("FIFO"))
+				.andExpect(jsonPath("$.operationPolicy").value("FIFO"))
+				.andExpect(jsonPath("$.workerPolicy").value("LEXICOGRAPHIC"))
 				.andExpect(jsonPath("$.routingKey").value("worker.worker-a"))
 				.andExpect(jsonPath("$.decisionId").isString())
 				.andReturn();
@@ -203,7 +205,7 @@ class SchedulerApiIntegrationTest {
 		);
 		assertThat(routingKey).isEqualTo("worker.worker-a");
 		Integer decisions = jdbcTemplate.queryForObject(
-				"select count(*) from scheduling_decisions where operation_id = ? and worker_id = 'worker-a' and policy = 'FIFO'",
+				"select count(*) from scheduling_decisions where operation_id = ? and worker_id = 'worker-a' and policy = 'FIFO' and operation_policy = 'FIFO' and worker_policy = 'LEXICOGRAPHIC'",
 				Integer.class,
 				operationId
 		);
@@ -296,8 +298,8 @@ class SchedulerApiIntegrationTest {
 				  "operations": [{"type": "METADATA"}]
 				}
 				"""));
-		AssignOperationRequest first = new AssignOperationRequest(operationId, "worker-a", "FIFO");
-		AssignOperationRequest second = new AssignOperationRequest(operationId, "worker-b", "FIFO");
+		AssignOperationRequest first = new AssignOperationRequest(operationId, "worker-a", "FIFO", "LEXICOGRAPHIC");
+		AssignOperationRequest second = new AssignOperationRequest(operationId, "worker-b", "FIFO", "LEXICOGRAPHIC");
 		AtomicInteger successes = new AtomicInteger();
 		AtomicInteger conflicts = new AtomicInteger();
 		CountDownLatch start = new CountDownLatch(1);
@@ -348,7 +350,7 @@ class SchedulerApiIntegrationTest {
 				}
 				""");
 		UUID operationId = operationId(jobId);
-		var assigned = schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO"));
+		var assigned = schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO", "LEXICOGRAPHIC"));
 		MvcResult started = mockMvc.perform(post("/internal/operations/" + operationId + "/start")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(WorkerTestSupport.startJson("worker-a", assigned.decisionId())))
@@ -407,6 +409,34 @@ class SchedulerApiIntegrationTest {
 	}
 
 	@Test
+	void roundRobinAssignRecordsBothPolicyDimensions() throws Exception {
+		WorkerTestSupport.register(mockMvc, "worker-a");
+		WorkerTestSupport.register(mockMvc, "worker-b");
+		UUID operationId = operationId(createJob("""
+				{
+				  "inputUri": "s3://media-input/video.mp4",
+				  "operations": [{"type": "METADATA"}]
+				}
+				"""));
+		mockMvc.perform(post("/internal/scheduler/assign")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(assignJson(operationId, "worker-a", "FIFO", "ROUND_ROBIN")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.policy").value("FIFO"))
+				.andExpect(jsonPath("$.operationPolicy").value("FIFO"))
+				.andExpect(jsonPath("$.workerPolicy").value("ROUND_ROBIN"))
+				.andExpect(jsonPath("$.workerId").value("worker-a"));
+		assertThat(jdbcTemplate.queryForObject(
+				"select count(*) from scheduling_decisions where operation_id = ? and operation_policy = 'FIFO' and worker_policy = 'ROUND_ROBIN' and worker_id = 'worker-a'",
+				Integer.class,
+				operationId
+		)).isEqualTo(1);
+		mockMvc.perform(get("/internal/scheduler/snapshot"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.roundRobinCursors.METADATA").value("worker-a"));
+	}
+
+	@Test
 	void unsupportedPolicyIsRejected() throws Exception {
 		WorkerTestSupport.register(mockMvc, "worker-a");
 		UUID operationId = operationId(createJob("""
@@ -417,7 +447,13 @@ class SchedulerApiIntegrationTest {
 				"""));
 		mockMvc.perform(post("/internal/scheduler/assign")
 						.contentType(MediaType.APPLICATION_JSON)
-						.content(assignJson(operationId, "worker-a", "ROUND_ROBIN")))
+						.content(assignJson(operationId, "worker-a", "ROUND_ROBIN", "LEXICOGRAPHIC")))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("UNSUPPORTED_POLICY"));
+
+		mockMvc.perform(post("/internal/scheduler/assign")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(assignJson(operationId, "worker-a", "FIFO", "LEAST_LOADED")))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("UNSUPPORTED_POLICY"));
 	}
@@ -460,9 +496,13 @@ class SchedulerApiIntegrationTest {
 	}
 
 	private static String assignJson(UUID operationId, String workerId, String policy) {
+		return assignJson(operationId, workerId, policy, "LEXICOGRAPHIC");
+	}
+
+	private static String assignJson(UUID operationId, String workerId, String operationPolicy, String workerPolicy) {
 		return """
-				{"operationId":"%s","workerId":"%s","policy":"%s"}
-				""".formatted(operationId, workerId, policy);
+				{"operationId":"%s","workerId":"%s","operationPolicy":"%s","workerPolicy":"%s"}
+				""".formatted(operationId, workerId, operationPolicy, workerPolicy);
 	}
 
 	private static void await(CountDownLatch latch) {

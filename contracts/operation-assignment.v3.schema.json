@@ -37,7 +37,13 @@
     },
     "policy": {
       "type": "string",
-      "const": "FIFO"
+      "const": "FIFO",
+      "description": "Operation ordering policy. Always FIFO in this phase."
+    },
+    "workerPolicy": {
+      "type": "string",
+      "enum": ["LEXICOGRAPHIC", "ROUND_ROBIN"],
+      "description": "Worker placement policy. Extra v3 field ignored by workers; PostgreSQL assignment identity is still assignmentId."
     },
     "assignmentId": {
       "type": "string",

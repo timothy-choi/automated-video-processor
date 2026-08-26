@@ -68,9 +68,10 @@ func (c *Client) Snapshot(ctx context.Context) (model.Snapshot, error) {
 
 func (c *Client) Assign(ctx context.Context, placement model.Placement) (model.AssignResponse, error) {
 	payload, err := json.Marshal(model.AssignRequest{
-		OperationID: placement.OperationID,
-		WorkerID:    placement.WorkerID,
-		Policy:      placement.Policy,
+		OperationID:     placement.OperationID,
+		WorkerID:        placement.WorkerID,
+		OperationPolicy: placement.OperationPolicy,
+		WorkerPolicy:    placement.WorkerPolicy,
 	})
 	if err != nil {
 		return model.AssignResponse{}, err

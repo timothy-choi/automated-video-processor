@@ -12,7 +12,7 @@ import (
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/policy"
 )
 
-func TestTickAssignsFIFOPlacement(t *testing.T) {
+func TestTickAssignsLexicographicPlacement(t *testing.T) {
 	ctrl := &fakeControl{
 		snapshot: model.Snapshot{
 			Operations: []model.Operation{
@@ -23,14 +23,37 @@ func TestTickAssignsFIFOPlacement(t *testing.T) {
 				{ID: "worker-a", Status: "AVAILABLE", SupportedOperations: []string{"METADATA"}},
 			},
 		},
-		assign: model.AssignResponse{DecisionID: "dec-1", OperationID: "op-1", WorkerID: "worker-a", Policy: "FIFO"},
+		assign: model.AssignResponse{DecisionID: "dec-1", OperationID: "op-1", WorkerID: "worker-a", OperationPolicy: "FIFO", WorkerPolicy: "LEXICOGRAPHIC"},
 	}
-	loop := &Loop{Client: ctrl, Policy: policy.FIFOPolicy{}}
+	loop := &Loop{Client: ctrl, Selector: mustSelector(t, policy.FIFO, policy.Lexicographic)}
 	if wait := loop.tick(context.Background()); wait != 0 {
 		t.Fatalf("wait=%s", wait)
 	}
-	if ctrl.assignCalls != 1 || ctrl.last.WorkerID != "worker-a" {
+	if ctrl.assignCalls != 1 || ctrl.last.WorkerID != "worker-a" || ctrl.last.WorkerPolicy != policy.Lexicographic {
 		t.Fatalf("assignCalls=%d last=%+v", ctrl.assignCalls, ctrl.last)
+	}
+}
+
+func TestTickAssignsRoundRobinFromCursor(t *testing.T) {
+	ctrl := &fakeControl{
+		snapshot: model.Snapshot{
+			Operations: []model.Operation{
+				{OperationID: "op-1", Type: "METADATA", CreatedAt: time.Now()},
+			},
+			RoundRobinCursors: map[string]string{"METADATA": "worker-a"},
+			Workers: []model.Worker{
+				{ID: "worker-a", Status: "AVAILABLE", SupportedOperations: []string{"METADATA"}},
+				{ID: "worker-b", Status: "AVAILABLE", SupportedOperations: []string{"METADATA"}},
+			},
+		},
+		assign: model.AssignResponse{DecisionID: "dec-2", OperationID: "op-1", WorkerID: "worker-b", OperationPolicy: "FIFO", WorkerPolicy: "ROUND_ROBIN"},
+	}
+	loop := &Loop{Client: ctrl, Selector: mustSelector(t, policy.FIFO, policy.RoundRobin)}
+	if wait := loop.tick(context.Background()); wait != 0 {
+		t.Fatalf("wait=%s", wait)
+	}
+	if ctrl.last.WorkerID != "worker-b" || ctrl.last.WorkerPolicy != policy.RoundRobin {
+		t.Fatalf("last=%+v", ctrl.last)
 	}
 }
 
@@ -42,7 +65,7 @@ func TestTickConflictDoesNotCrash(t *testing.T) {
 		},
 		assignErr: &client.StatusError{Status: http.StatusConflict, Body: `{"code":"INVALID_OPERATION_STATE"}`},
 	}
-	loop := &Loop{Client: ctrl, Policy: policy.FIFOPolicy{}, PollInterval: time.Second}
+	loop := &Loop{Client: ctrl, Selector: mustSelector(t, policy.FIFO, policy.Lexicographic), PollInterval: time.Second}
 	if wait := loop.tick(context.Background()); wait != 0 {
 		t.Fatalf("conflict should retry immediately, wait=%s", wait)
 	}
@@ -58,7 +81,7 @@ func TestTickNoEligibleWorkerSleeps(t *testing.T) {
 			Workers:    []model.Worker{{ID: "worker-a", Status: "AVAILABLE", SupportedOperations: []string{"METADATA"}}},
 		},
 	}
-	loop := &Loop{Client: ctrl, Policy: policy.FIFOPolicy{}, PollInterval: 200 * time.Millisecond}
+	loop := &Loop{Client: ctrl, Selector: mustSelector(t, policy.FIFO, policy.RoundRobin), PollInterval: 200 * time.Millisecond}
 	if wait := loop.tick(context.Background()); wait != 200*time.Millisecond {
 		t.Fatalf("wait=%s", wait)
 	}
@@ -76,7 +99,7 @@ func TestRunStopsOnCancelAfterConflict(t *testing.T) {
 		assignErr: &client.StatusError{Status: http.StatusConflict, Body: "ALREADY_ASSIGNED"},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	loop := &Loop{Client: ctrl, Policy: policy.FIFOPolicy{}}
+	loop := &Loop{Client: ctrl, Selector: mustSelector(t, policy.FIFO, policy.Lexicographic)}
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		cancel()
@@ -85,6 +108,15 @@ func TestRunStopsOnCancelAfterConflict(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err=%v", err)
 	}
+}
+
+func mustSelector(t *testing.T, operation, worker string) policy.Selector {
+	t.Helper()
+	got, err := policy.New(operation, worker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
 }
 
 type fakeControl struct {

@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,19 +20,20 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	selected, err := policy.New(cfg.policy)
+	selected, err := policy.New(cfg.operationPolicy, cfg.workerPolicy)
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Printf(
-		"event=scheduler_start policy=%s control=%s poll_interval=%s",
-		selected.Name(),
+		"event=scheduler_start operation_policy=%s worker_policy=%s control=%s poll_interval=%s",
+		selected.OperationPolicy,
+		selected.WorkerPolicy,
 		cfg.controlURL,
 		cfg.pollInterval,
 	)
 	loop := &scheduler.Loop{
 		Client:       client.New(cfg.controlURL, 15*time.Second),
-		Policy:       selected,
+		Selector:     selected,
 		PollInterval: cfg.pollInterval,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -41,9 +44,10 @@ func main() {
 }
 
 type config struct {
-	controlURL   string
-	pollInterval time.Duration
-	policy       string
+	controlURL      string
+	pollInterval    time.Duration
+	operationPolicy string
+	workerPolicy    string
 }
 
 func loadConfig() (config, error) {
@@ -51,10 +55,26 @@ func loadConfig() (config, error) {
 	if err != nil {
 		return config{}, err
 	}
+	operationPolicy := envOr("OPERATION_POLICY", "")
+	workerPolicy := envOr("WORKER_PLACEMENT_POLICY", "")
+	legacy := envOr("SCHEDULING_POLICY", "")
+	if operationPolicy == "" {
+		if legacy == "" {
+			operationPolicy = policy.FIFO
+		} else if strings.EqualFold(strings.TrimSpace(legacy), policy.FIFO) {
+			operationPolicy = policy.FIFO
+		} else {
+			return config{}, fmt.Errorf("SCHEDULING_POLICY is operation ordering only; implemented: FIFO. Use WORKER_PLACEMENT_POLICY=ROUND_ROBIN for worker rotation")
+		}
+	}
+	if workerPolicy == "" {
+		workerPolicy = policy.Lexicographic
+	}
 	return config{
-		controlURL:   envOr("CONTROL_SERVICE_URL", "http://localhost:8080"),
-		pollInterval: interval,
-		policy:       envOr("SCHEDULING_POLICY", "FIFO"),
+		controlURL:      envOr("CONTROL_SERVICE_URL", "http://localhost:8080"),
+		pollInterval:    interval,
+		operationPolicy: operationPolicy,
+		workerPolicy:    workerPolicy,
 	}, nil
 }
 
