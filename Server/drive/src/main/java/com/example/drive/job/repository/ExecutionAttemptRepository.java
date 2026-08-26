@@ -30,4 +30,18 @@ public interface ExecutionAttemptRepository extends JpaRepository<ExecutionAttem
 			@Param("running") AttemptStatus running,
 			@Param("cutoff") Instant cutoff
 	);
+
+	@Query("""
+			select a.workerId as workerId, count(a) as runningCount
+			from ExecutionAttempt a
+			where a.status = :status
+			group by a.workerId
+			""")
+	List<WorkerRunningCount> countRunningByWorker(@Param("status") AttemptStatus status);
+
+	interface WorkerRunningCount {
+		String getWorkerId();
+
+		long getRunningCount();
+	}
 }

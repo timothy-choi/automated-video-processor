@@ -116,12 +116,16 @@ func TestNewRejectsUnimplementedPolicies(t *testing.T) {
 	if _, err := New("ROUND_ROBIN", Lexicographic); err == nil {
 		t.Fatal("expected operation policy error")
 	}
-	if _, err := New(FIFO, "LEAST_LOADED"); err == nil {
+	if _, err := New(FIFO, "SJF"); err == nil {
 		t.Fatal("expected worker policy error")
 	}
-	got, err := New(FIFO, RoundRobin)
-	if err != nil || got.Name() != "FIFO+ROUND_ROBIN" {
+	got, err := New(FIFO, LeastLoaded)
+	if err != nil || got.Name() != "FIFO+LEAST_LOADED" {
 		t.Fatalf("got=%v err=%v", got, err)
+	}
+	rr, err := New(FIFO, RoundRobin)
+	if err != nil || rr.Name() != "FIFO+ROUND_ROBIN" {
+		t.Fatalf("got=%v err=%v", rr, err)
 	}
 }
 

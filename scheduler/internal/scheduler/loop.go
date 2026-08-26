@@ -102,12 +102,13 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 		return interval
 	}
 	log.Printf(
-		"event=assigned operationId=%s workerId=%s operation_policy=%s worker_policy=%s operation_type=%s decisionId=%s routingKey=%s",
+		"event=assigned operationId=%s workerId=%s operation_policy=%s worker_policy=%s operation_type=%s selected_load=%d decisionId=%s routingKey=%s",
 		assigned.OperationID,
 		assigned.WorkerID,
 		assigned.OperationPolicy,
 		assigned.WorkerPolicy,
 		operationType(snapshot, assigned.OperationID),
+		placement.ActiveOperations,
 		assigned.DecisionID,
 		assigned.RoutingKey,
 	)

@@ -3,6 +3,7 @@ package com.example.drive.scheduler;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -22,9 +23,11 @@ import com.example.drive.job.IllegalOperationStateException;
 import com.example.drive.job.InvalidJobRequestException;
 import com.example.drive.job.OperationNotFoundException;
 import com.example.drive.job.WorkerNotEligibleException;
+import com.example.drive.job.domain.AttemptStatus;
 import com.example.drive.job.domain.Operation;
 import com.example.drive.job.domain.OperationStatus;
 import com.example.drive.job.domain.OperationType;
+import com.example.drive.job.repository.ExecutionAttemptRepository;
 import com.example.drive.job.repository.OperationRepository;
 import com.example.drive.scheduler.domain.SchedulingDecision;
 import com.example.drive.scheduler.dto.AssignOperationRequest;
@@ -51,6 +54,7 @@ public class SchedulerService {
 	private final EntityManager entityManager;
 	private final OperationRepository operationRepository;
 	private final WorkerRepository workerRepository;
+	private final ExecutionAttemptRepository attemptRepository;
 	private final SchedulingDecisionRepository decisionRepository;
 	private final DispatchOutboxRepository outboxRepository;
 	private final Clock clock;
@@ -59,6 +63,7 @@ public class SchedulerService {
 			EntityManager entityManager,
 			OperationRepository operationRepository,
 			WorkerRepository workerRepository,
+			ExecutionAttemptRepository attemptRepository,
 			SchedulingDecisionRepository decisionRepository,
 			DispatchOutboxRepository outboxRepository,
 			Clock clock
@@ -66,6 +71,7 @@ public class SchedulerService {
 		this.entityManager = entityManager;
 		this.operationRepository = operationRepository;
 		this.workerRepository = workerRepository;
+		this.attemptRepository = attemptRepository;
 		this.decisionRepository = decisionRepository;
 		this.outboxRepository = outboxRepository;
 		this.clock = clock;
@@ -76,8 +82,9 @@ public class SchedulerService {
 		List<SchedulableOperationResponse> operations = operationRepository.findSchedulableQueued().stream()
 				.map(SchedulableOperationResponse::from)
 				.toList();
+		Map<String, Integer> running = runningAttemptCounts();
 		List<WorkerResponse> workers = workerRepository.findAllByOrderByIdAsc().stream()
-				.map(WorkerResponse::from)
+				.map(worker -> WorkerResponse.from(worker, running.getOrDefault(worker.getId(), 0)))
 				.toList();
 		Map<String, String> cursors = new LinkedHashMap<>();
 		putCursor(cursors, OperationType.METADATA);
@@ -152,14 +159,16 @@ public class SchedulerService {
 				workerPolicy,
 				now
 		));
+		int selectedLoad = runningAttemptCounts().getOrDefault(workerId, 0);
 		log.info(
-				"event=scheduling_decision operationId={} jobId={} workerId={} operationType={} operation_policy={} worker_policy={} decisionId={} routingKey={}",
+				"event=scheduling_decision operationId={} jobId={} workerId={} operationType={} operation_policy={} worker_policy={} selected_load={} decisionId={} routingKey={}",
 				operation.getId(),
 				operation.getJob().getId(),
 				workerId,
 				operation.getType(),
 				operationPolicy,
 				workerPolicy,
+				selectedLoad,
 				decision.getId(),
 				routingKey
 		);
@@ -189,6 +198,15 @@ public class SchedulerService {
 					"No AVAILABLE capable worker for " + type
 			);
 		}
+		if (WorkerPlacement.LEAST_LOADED.equals(workerPolicy)) {
+			if (!eligible.contains(workerId)) {
+				throw new WorkerNotEligibleException(
+						"WORKER_NOT_ELIGIBLE",
+						"Worker " + workerId + " is not currently eligible for " + type
+				);
+			}
+			return;
+		}
 		String last = WorkerPlacement.ROUND_ROBIN.equals(workerPolicy)
 				? decisionRepository.findLatestWorker(WorkerPlacement.ROUND_ROBIN, type.name()).orElse(null)
 				: null;
@@ -199,6 +217,14 @@ public class SchedulerService {
 					"Worker " + workerId + " is not the current " + workerPolicy + " placement; expected " + expected
 			);
 		}
+	}
+
+	private Map<String, Integer> runningAttemptCounts() {
+		Map<String, Integer> counts = new HashMap<>();
+		for (ExecutionAttemptRepository.WorkerRunningCount row : attemptRepository.countRunningByWorker(AttemptStatus.RUNNING)) {
+			counts.put(row.getWorkerId(), (int) row.getRunningCount());
+		}
+		return counts;
 	}
 
 	private List<String> eligibleWorkerIds(OperationType type) {
@@ -261,12 +287,12 @@ public class SchedulerService {
 			throw new InvalidJobRequestException("UNSUPPORTED_POLICY", "workerPolicy is required");
 		}
 		String value = raw.trim().toUpperCase(Locale.ROOT);
-		if (WorkerPlacement.LEXICOGRAPHIC.equals(value) || WorkerPlacement.ROUND_ROBIN.equals(value)) {
+		if (WorkerPlacement.isSupported(value)) {
 			return value;
 		}
 		throw new InvalidJobRequestException(
 				"UNSUPPORTED_POLICY",
-				"Unsupported worker placement policy '" + raw.trim() + "'; implemented: LEXICOGRAPHIC, ROUND_ROBIN"
+				"Unsupported worker placement policy '" + raw.trim() + "'; implemented: LEXICOGRAPHIC, ROUND_ROBIN, LEAST_LOADED"
 		);
 	}
 

@@ -103,7 +103,9 @@ class SchedulerApiIntegrationTest {
 				.andExpect(jsonPath("$.operations[1].operationId").value(laterOp.toString()))
 				.andExpect(jsonPath("$.workers.length()").value(2))
 				.andExpect(jsonPath("$.workers[0].id").value("worker-a"))
-				.andExpect(jsonPath("$.workers[1].id").value("worker-b"));
+				.andExpect(jsonPath("$.workers[0].activeOperations").value(0))
+				.andExpect(jsonPath("$.workers[1].id").value("worker-b"))
+				.andExpect(jsonPath("$.workers[1].activeOperations").value(0));
 	}
 
 	@Test
@@ -437,6 +439,31 @@ class SchedulerApiIntegrationTest {
 	}
 
 	@Test
+	void leastLoadedAssignRecordsBothPolicyDimensions() throws Exception {
+		WorkerTestSupport.register(mockMvc, "worker-a");
+		WorkerTestSupport.register(mockMvc, "worker-b");
+		UUID operationId = operationId(createJob("""
+				{
+				  "inputUri": "s3://media-input/video.mp4",
+				  "operations": [{"type": "METADATA"}]
+				}
+				"""));
+		mockMvc.perform(post("/internal/scheduler/assign")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(assignJson(operationId, "worker-b", "FIFO", "LEAST_LOADED")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.policy").value("FIFO"))
+				.andExpect(jsonPath("$.operationPolicy").value("FIFO"))
+				.andExpect(jsonPath("$.workerPolicy").value("LEAST_LOADED"))
+				.andExpect(jsonPath("$.workerId").value("worker-b"));
+		assertThat(jdbcTemplate.queryForObject(
+				"select count(*) from scheduling_decisions where operation_id = ? and operation_policy = 'FIFO' and worker_policy = 'LEAST_LOADED' and worker_id = 'worker-b'",
+				Integer.class,
+				operationId
+		)).isEqualTo(1);
+	}
+
+	@Test
 	void unsupportedPolicyIsRejected() throws Exception {
 		WorkerTestSupport.register(mockMvc, "worker-a");
 		UUID operationId = operationId(createJob("""
@@ -453,7 +480,7 @@ class SchedulerApiIntegrationTest {
 
 		mockMvc.perform(post("/internal/scheduler/assign")
 						.contentType(MediaType.APPLICATION_JSON)
-						.content(assignJson(operationId, "worker-a", "FIFO", "LEAST_LOADED")))
+						.content(assignJson(operationId, "worker-a", "FIFO", "SJF")))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("UNSUPPORTED_POLICY"));
 	}

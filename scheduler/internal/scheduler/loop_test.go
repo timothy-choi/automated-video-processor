@@ -57,6 +57,28 @@ func TestTickAssignsRoundRobinFromCursor(t *testing.T) {
 	}
 }
 
+func TestTickAssignsLeastLoadedWorker(t *testing.T) {
+	ctrl := &fakeControl{
+		snapshot: model.Snapshot{
+			Operations: []model.Operation{
+				{OperationID: "op-1", Type: "METADATA", CreatedAt: time.Now()},
+			},
+			Workers: []model.Worker{
+				{ID: "worker-a", Status: "AVAILABLE", SupportedOperations: []string{"METADATA"}, ActiveOperations: 2},
+				{ID: "worker-b", Status: "AVAILABLE", SupportedOperations: []string{"METADATA"}, ActiveOperations: 0},
+			},
+		},
+		assign: model.AssignResponse{DecisionID: "dec-3", OperationID: "op-1", WorkerID: "worker-b", OperationPolicy: "FIFO", WorkerPolicy: "LEAST_LOADED"},
+	}
+	loop := &Loop{Client: ctrl, Selector: mustSelector(t, policy.FIFO, policy.LeastLoaded)}
+	if wait := loop.tick(context.Background()); wait != 0 {
+		t.Fatalf("wait=%s", wait)
+	}
+	if ctrl.last.WorkerID != "worker-b" || ctrl.last.WorkerPolicy != policy.LeastLoaded || ctrl.last.ActiveOperations != 0 {
+		t.Fatalf("last=%+v", ctrl.last)
+	}
+}
+
 func TestTickConflictDoesNotCrash(t *testing.T) {
 	ctrl := &fakeControl{
 		snapshot: model.Snapshot{

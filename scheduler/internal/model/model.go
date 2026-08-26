@@ -19,6 +19,7 @@ type Worker struct {
 	CPUArchitecture     string   `json:"cpuArchitecture"`
 	CPUCores            int      `json:"cpuCores"`
 	MemoryBytes         int64    `json:"memoryBytes"`
+	ActiveOperations    int      `json:"activeOperations"`
 }
 
 type Snapshot struct {
@@ -46,8 +47,9 @@ type AssignResponse struct {
 }
 
 type Placement struct {
-	OperationID     string
-	WorkerID        string
-	OperationPolicy string
-	WorkerPolicy    string
+	OperationID      string
+	WorkerID         string
+	OperationPolicy  string
+	WorkerPolicy     string
+	ActiveOperations int
 }
