@@ -42,6 +42,9 @@ func TestHandleAcksAfterSuccessfulComplete(t *testing.T) {
 	if ctrl.lastStartWorkerID != "worker-a" {
 		t.Fatalf("start workerId=%s", ctrl.lastStartWorkerID)
 	}
+	if ctrl.lastStartAssignmentID != "" {
+		t.Fatalf("v1 start assignmentId=%s", ctrl.lastStartAssignmentID)
+	}
 	if ctrl.lastComplete.AttemptID != "attempt-1" {
 		t.Fatalf("complete attemptId=%s", ctrl.lastComplete.AttemptID)
 	}
@@ -131,14 +134,15 @@ func TestHandleDropsWhenStartedWithoutAttemptID(t *testing.T) {
 
 func TestHandleDropsWorkerIDMismatchWithoutExecuting(t *testing.T) {
 	body := []byte(`{
-		"schemaVersion": 2,
+		"schemaVersion": 3,
 		"operationId": "11111111-1111-1111-1111-111111111111",
 		"jobId": "22222222-2222-2222-2222-222222222222",
 		"type": "METADATA",
 		"inputUri": "s3://media-input/sample.mp4",
 		"workerId": "worker-a",
 		"scheduledAt": "2026-08-25T18:00:00Z",
-		"policy": "FIFO"
+		"policy": "FIFO",
+		"assignmentId": "33333333-3333-3333-3333-333333333333"
 	}`)
 	ctrl := &fakeControl{start: startedOK()}
 	decision := Handle(context.Background(), "worker-b", body, ctrl, unexpectedExec(t))
@@ -150,7 +154,34 @@ func TestHandleDropsWorkerIDMismatchWithoutExecuting(t *testing.T) {
 	}
 }
 
-func TestHandleAcceptsMatchingV2WorkerID(t *testing.T) {
+func TestHandleAcceptsMatchingV3AssignmentAndSendsAssignmentID(t *testing.T) {
+	body := []byte(`{
+		"schemaVersion": 3,
+		"operationId": "11111111-1111-1111-1111-111111111111",
+		"jobId": "22222222-2222-2222-2222-222222222222",
+		"type": "METADATA",
+		"inputUri": "s3://media-input/sample.mp4",
+		"workerId": "worker-a",
+		"scheduledAt": "2026-08-25T18:00:00Z",
+		"policy": "FIFO",
+		"assignmentId": "33333333-3333-3333-3333-333333333333"
+	}`)
+	ctrl := &fakeControl{start: startedOK()}
+	decision := Handle(context.Background(), "worker-a", body, ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+		return run.Result{RuntimeMs: 1}, nil
+	})
+	if decision != Ack {
+		t.Fatalf("decision=%s", decision)
+	}
+	if ctrl.completes != 1 {
+		t.Fatalf("completes=%d", ctrl.completes)
+	}
+	if ctrl.lastStartAssignmentID != "33333333-3333-3333-3333-333333333333" {
+		t.Fatalf("start assignmentId=%s", ctrl.lastStartAssignmentID)
+	}
+}
+
+func TestHandleDropsObsoleteV2WithoutExecuting(t *testing.T) {
 	body := []byte(`{
 		"schemaVersion": 2,
 		"operationId": "11111111-1111-1111-1111-111111111111",
@@ -162,14 +193,37 @@ func TestHandleAcceptsMatchingV2WorkerID(t *testing.T) {
 		"policy": "FIFO"
 	}`)
 	ctrl := &fakeControl{start: startedOK()}
-	decision := Handle(context.Background(), "worker-a", body, ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
-		return run.Result{RuntimeMs: 1}, nil
-	})
-	if decision != Ack {
+	decision := Handle(context.Background(), "worker-a", body, ctrl, unexpectedExec(t))
+	if decision != NackDrop {
 		t.Fatalf("decision=%s", decision)
 	}
-	if ctrl.completes != 1 {
-		t.Fatalf("completes=%d", ctrl.completes)
+	if ctrl.starts != 0 {
+		t.Fatalf("starts=%d", ctrl.starts)
+	}
+}
+
+func TestHandleDropsStaleAssignmentStartWithoutExecuting(t *testing.T) {
+	body := []byte(`{
+		"schemaVersion": 3,
+		"operationId": "11111111-1111-1111-1111-111111111111",
+		"jobId": "22222222-2222-2222-2222-222222222222",
+		"type": "METADATA",
+		"inputUri": "s3://media-input/sample.mp4",
+		"workerId": "worker-a",
+		"scheduledAt": "2026-08-25T18:00:00Z",
+		"policy": "FIFO",
+		"assignmentId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	}`)
+	ctrl := &fakeControl{startErr: &client.StatusError{Status: http.StatusConflict, Body: `{"code":"STALE_ASSIGNMENT"}`}}
+	decision := Handle(context.Background(), "worker-a", body, ctrl, unexpectedExec(t))
+	if decision != NackDrop {
+		t.Fatalf("decision=%s", decision)
+	}
+	if ctrl.starts != 1 {
+		t.Fatalf("starts=%d", ctrl.starts)
+	}
+	if ctrl.lastStartAssignmentID != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
+		t.Fatalf("assignmentId=%s", ctrl.lastStartAssignmentID)
 	}
 }
 
@@ -268,23 +322,25 @@ func startedOK() model.StartResponse {
 }
 
 type fakeControl struct {
-	start             model.StartResponse
-	startErr          error
-	completeErrs      []error
-	failErrs          []error
-	renewErrs         []error
-	completes         int
-	fails             int
-	starts            int
-	renews            int
-	lastStartWorkerID string
-	lastComplete      model.CompleteRequest
-	lastFailAttemptID string
+	start                 model.StartResponse
+	startErr              error
+	completeErrs          []error
+	failErrs              []error
+	renewErrs             []error
+	completes             int
+	fails                 int
+	starts                int
+	renews                int
+	lastStartWorkerID     string
+	lastStartAssignmentID string
+	lastComplete          model.CompleteRequest
+	lastFailAttemptID     string
 }
 
-func (f *fakeControl) Start(ctx context.Context, operationID, workerID string) (model.StartResponse, error) {
+func (f *fakeControl) Start(ctx context.Context, operationID, workerID, assignmentID string) (model.StartResponse, error) {
 	f.starts++
 	f.lastStartWorkerID = workerID
+	f.lastStartAssignmentID = assignmentID
 	if f.startErr != nil {
 		return model.StartResponse{}, f.startErr
 	}

@@ -1,5 +1,6 @@
 package com.example.drive.job.repository;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -35,4 +36,13 @@ public interface OperationRepository extends JpaRepository<Operation, UUID> {
 			order by o.createdAt asc, o.operationOrder asc, o.id asc
 			""")
 	List<Operation> findSchedulableQueued();
+
+	@Query("""
+			select o.id from Operation o
+			where o.status = com.example.drive.job.domain.OperationStatus.ASSIGNED
+			  and o.currentAttemptId is null
+			  and o.assignedAt is not null
+			  and o.assignedAt < :cutoff
+			""")
+	List<UUID> findExpiredUnstartedAssignedIds(@Param("cutoff") Instant cutoff);
 }

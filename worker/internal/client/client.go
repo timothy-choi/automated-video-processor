@@ -87,8 +87,8 @@ func (c *Client) Claim(ctx context.Context) (*model.ClaimedOperation, bool, erro
 	return &claimed, true, nil
 }
 
-func (c *Client) Start(ctx context.Context, operationID, workerID string) (model.StartResponse, error) {
-	payload, err := json.Marshal(model.StartRequest{WorkerID: workerID})
+func (c *Client) Start(ctx context.Context, operationID, workerID, assignmentID string) (model.StartResponse, error) {
+	payload, err := json.Marshal(model.StartRequest{WorkerID: workerID, AssignmentID: assignmentID})
 	if err != nil {
 		return model.StartResponse{}, err
 	}

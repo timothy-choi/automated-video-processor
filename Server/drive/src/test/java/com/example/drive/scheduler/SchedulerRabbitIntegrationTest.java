@@ -39,7 +39,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 		"drive.dispatch.publisher-enabled=true",
 		"drive.dispatch.http-claim-enabled=false",
 		"drive.worker.heartbeat-sweep-enabled=false",
-		"drive.execution.lease-sweep-enabled=false"
+		"drive.execution.lease-sweep-enabled=false",
+		"drive.assignment.sweep-enabled=false"
 })
 @ImportAutoConfiguration(RabbitAutoConfiguration.class)
 @AutoConfigureMockMvc
@@ -108,6 +109,7 @@ class SchedulerRabbitIntegrationTest {
 		String body = new String(forA.getBody(), StandardCharsets.UTF_8);
 		assertThat(body).contains("schemaVersion").contains("worker-a").contains("FIFO");
 		assertThat(body).contains(operationId.toString());
+		assertThat(body).contains("assignmentId");
 		assertThat(body).doesNotContain("attemptId");
 
 		Message forB = rabbitTemplate.receive(DispatchTopology.workerQueue("worker-b"), 500);

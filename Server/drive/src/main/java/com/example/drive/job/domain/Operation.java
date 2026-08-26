@@ -70,6 +70,15 @@ public class Operation {
 	@Column(name = "current_attempt_id")
 	private UUID currentAttemptId;
 
+	@Column(name = "assigned_at")
+	private Instant assignedAt;
+
+	@Column(name = "assigned_worker_id", length = 64)
+	private String assignedWorkerId;
+
+	@Column(name = "current_assignment_id")
+	private UUID currentAssignmentId;
+
 	protected Operation() {
 	}
 
@@ -138,7 +147,23 @@ public class Operation {
 		return currentAttemptId;
 	}
 
+	public Instant getAssignedAt() {
+		return assignedAt;
+	}
+
+	public String getAssignedWorkerId() {
+		return assignedWorkerId;
+	}
+
+	public UUID getCurrentAssignmentId() {
+		return currentAssignmentId;
+	}
+
 	public void markAssigned(Instant now) {
+		markAssigned(now, null, null);
+	}
+
+	public void markAssigned(Instant now, String workerId, UUID assignmentId) {
 		if (status != OperationStatus.QUEUED) {
 			throw new IllegalOperationStateException(
 					id,
@@ -146,6 +171,9 @@ public class Operation {
 			);
 		}
 		status = OperationStatus.ASSIGNED;
+		assignedAt = assignmentId == null ? null : now;
+		assignedWorkerId = workerId;
+		currentAssignmentId = assignmentId;
 		updatedAt = now;
 	}
 
@@ -158,6 +186,9 @@ public class Operation {
 		}
 		status = OperationStatus.RUNNING;
 		startedAt = now;
+		assignedAt = null;
+		assignedWorkerId = null;
+		currentAssignmentId = null;
 		updatedAt = now;
 	}
 
@@ -179,6 +210,23 @@ public class Operation {
 		failureReason = null;
 		resultJson = null;
 		currentAttemptId = null;
+		assignedAt = null;
+		assignedWorkerId = null;
+		currentAssignmentId = null;
+		updatedAt = now;
+	}
+
+	public void markUnstartedAssignmentExpired(Instant now) {
+		if (status != OperationStatus.ASSIGNED) {
+			throw new IllegalOperationStateException(
+					id,
+					"Operation " + id + " cannot move from " + status + " to QUEUED"
+			);
+		}
+		status = OperationStatus.QUEUED;
+		assignedAt = null;
+		assignedWorkerId = null;
+		currentAssignmentId = null;
 		updatedAt = now;
 	}
 

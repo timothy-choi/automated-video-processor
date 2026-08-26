@@ -6,6 +6,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 import com.example.drive.dispatch.DispatchProperties;
+import com.example.drive.job.OperationAssignmentProperties;
 import com.example.drive.job.OperationLeaseProperties;
 import com.example.drive.worker.WorkerHeartbeatProperties;
 
@@ -14,7 +15,8 @@ import com.example.drive.worker.WorkerHeartbeatProperties;
 @EnableConfigurationProperties({
 		DispatchProperties.class,
 		WorkerHeartbeatProperties.class,
-		OperationLeaseProperties.class
+		OperationLeaseProperties.class,
+		OperationAssignmentProperties.class
 })
 public class DriveApplication {
 

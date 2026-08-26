@@ -109,17 +109,19 @@ public class SchedulerService {
 			);
 		}
 
-		operation.markAssigned(now);
+		UUID assignmentId = UUID.randomUUID();
+		operation.markAssigned(now, workerId, assignmentId);
 		operation.getJob().refreshStatusFromOperations(now);
 		String routingKey = DispatchTopology.workerRoutingKey(workerId);
-		String payload = AssignmentJson.v2(
+		String payload = AssignmentJson.v3(
 				operation.getId(),
 				operation.getJob().getId(),
 				operation.getType().name(),
 				operation.getJob().getInputUri(),
 				workerId,
 				now,
-				policy
+				policy,
+				assignmentId
 		);
 		outboxRepository.save(new DispatchOutbox(
 				UUID.randomUUID(),
@@ -130,7 +132,7 @@ public class SchedulerService {
 				workerId
 		));
 		SchedulingDecision decision = decisionRepository.save(new SchedulingDecision(
-				UUID.randomUUID(),
+				assignmentId,
 				operationId,
 				workerId,
 				policy,

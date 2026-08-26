@@ -202,7 +202,7 @@ func publishAssignment(t *testing.T, url, workerID, operationID, opType string) 
 }
 
 func assignmentJSON(operationID, opType, workerID string) string {
-	return fmt.Sprintf(`{"schemaVersion":2,"operationId":"%s","jobId":"22222222-2222-2222-2222-222222222222","type":"%s","inputUri":"s3://media-input/sample.mp4","workerId":"%s","scheduledAt":"2026-08-25T18:00:00Z","policy":"FIFO"}`, operationID, opType, workerID)
+	return fmt.Sprintf(`{"schemaVersion":3,"operationId":"%s","jobId":"22222222-2222-2222-2222-222222222222","type":"%s","inputUri":"s3://media-input/sample.mp4","workerId":"%s","scheduledAt":"2026-08-25T18:00:00Z","policy":"FIFO","assignmentId":"33333333-3333-3333-3333-333333333333"}`, operationID, opType, workerID)
 }
 
 func publishRaw(t *testing.T, url, workerID, body string) {
@@ -260,7 +260,7 @@ func (r *recordingControl) completeCount() int {
 	return r.completes
 }
 
-func (r *recordingControl) Start(ctx context.Context, operationID, workerID string) (model.StartResponse, error) {
+func (r *recordingControl) Start(ctx context.Context, operationID, workerID, assignmentID string) (model.StartResponse, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	outcome := r.outcomes[operationID]

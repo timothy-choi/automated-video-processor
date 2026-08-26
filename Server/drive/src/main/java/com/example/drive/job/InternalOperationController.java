@@ -50,7 +50,7 @@ public class InternalOperationController {
 			@PathVariable("operationId") UUID operationId,
 			@Valid @RequestBody WorkerIdentityRequest request
 	) {
-		return internalOperationService.start(operationId, request.workerId());
+		return internalOperationService.start(operationId, request.workerId(), request.assignmentId());
 	}
 
 	@PostMapping("/{operationId}/attempts/{attemptId}/renew")
