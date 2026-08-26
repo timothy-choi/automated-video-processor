@@ -15,7 +15,7 @@ Published to RabbitMQ as persistent JSON. Java dispatcher and Go workers must ke
 }
 ```
 
-`type` is typically `METADATA` or `THUMBNAIL` today. Unknown extra fields must be ignored so later `attemptId` / `workerId` / `leaseToken` / trace context can be added without a breaking change. A worker that receives a type it did not register (for example `TRANSCODE_1080P`) must not execute it; it dead-letters the message.
+`type` is typically `METADATA` or `THUMBNAIL` today. **v1 does not include `attemptId` or `workerId`.** The control service still publishes to a shared competing-consumer queue; RabbitMQ selects the worker. Concrete ownership is created when that worker calls `POST /internal/operations/{id}/start` with its `workerId`. Extra JSON fields must still be ignored. A worker that receives a type it did not register (for example `TRANSCODE_1080P`) must not execute it; it dead-letters the message.
 
 ## RabbitMQ topology (Phase 3A)
 

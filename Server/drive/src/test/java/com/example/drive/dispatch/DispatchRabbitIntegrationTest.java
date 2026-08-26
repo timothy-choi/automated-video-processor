@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import com.example.drive.support.PostgresTestcontainersConfig;
 import com.example.drive.support.RabbitTestcontainersConfig;
+import com.example.drive.support.WorkerTestSupport;
 import com.jayway.jsonpath.JsonPath;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -34,7 +35,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 		"drive.dispatch.scheduling-enabled=false",
 		"drive.dispatch.publisher-enabled=true",
 		"drive.dispatch.http-claim-enabled=false",
-		"drive.worker.heartbeat-sweep-enabled=false"
+		"drive.worker.heartbeat-sweep-enabled=false",
+		"drive.execution.lease-sweep-enabled=false"
 })
 @ImportAutoConfiguration(RabbitAutoConfiguration.class)
 @AutoConfigureMockMvc
@@ -57,11 +59,16 @@ class DispatchRabbitIntegrationTest {
 	private RabbitTemplate rabbitTemplate;
 
 	@BeforeEach
-	void clearTablesAndQueue() {
+	void clearTablesAndQueue() throws Exception {
 		jdbcTemplate.update("delete from artifacts");
+		jdbcTemplate.update("delete from execution_attempts");
 		jdbcTemplate.update("delete from dispatch_outbox");
 		jdbcTemplate.update("delete from operations");
 		jdbcTemplate.update("delete from jobs");
+		jdbcTemplate.execute("delete from worker_supported_codecs");
+		jdbcTemplate.execute("delete from worker_supported_operations");
+		jdbcTemplate.execute("delete from workers");
+		WorkerTestSupport.register(mockMvc, "worker-a");
 		drain(DispatchTopology.QUEUE);
 		drain(DispatchTopology.DEAD_LETTER_QUEUE);
 	}
@@ -92,14 +99,20 @@ class DispatchRabbitIntegrationTest {
 		assertThat(sent).isEqualTo(1);
 
 		UUID operationId = UUID.fromString(JsonPath.read(body, "$.operationId"));
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+		MvcResult started = mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.outcome").value("STARTED"));
+				.andExpect(jsonPath("$.outcome").value("STARTED"))
+				.andReturn();
+		String attemptId = JsonPath.read(started.getResponse().getContentAsString(), "$.attemptId");
 
 		rabbitTemplate.send(DispatchTopology.EXCHANGE, DispatchTopology.ROUTING_KEY, message);
 		Message duplicate = rabbitTemplate.receive(DispatchTopology.QUEUE, 5000);
 		assertThat(duplicate).isNotNull();
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+		mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.outcome").value("ALREADY_RUNNING"));
 
@@ -107,14 +120,17 @@ class DispatchRabbitIntegrationTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
+								  "attemptId": "%s",
 								  "actualRuntimeMs": 11,
 								  "metadata": {"formatName": "mp4"}
 								}
-								"""))
+								""".formatted(attemptId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"));
 
-		mockMvc.perform(post("/internal/operations/" + operationId + "/start"))
+		mockMvc.perform(post("/internal/operations/" + operationId + "/start")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(jsonPath("$.outcome").value("ALREADY_TERMINAL"));
 		mockMvc.perform(get("/jobs/" + jobId))
 				.andExpect(jsonPath("$.status").value("COMPLETED"));

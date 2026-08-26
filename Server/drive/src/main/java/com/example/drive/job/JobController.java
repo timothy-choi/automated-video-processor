@@ -15,6 +15,7 @@ import com.example.drive.job.dto.CreateJobRequest;
 import com.example.drive.job.dto.JobArtifactsResponse;
 import com.example.drive.job.dto.JobOperationsResponse;
 import com.example.drive.job.dto.JobResponse;
+import com.example.drive.job.dto.OperationAttemptsResponse;
 
 import jakarta.validation.Valid;
 
@@ -41,6 +42,14 @@ public class JobController {
 	@GetMapping("/{id}/operations")
 	public JobOperationsResponse getOperations(@PathVariable("id") UUID id) {
 		return jobService.getOperations(id);
+	}
+
+	@GetMapping("/{id}/operations/{operationId}/attempts")
+	public OperationAttemptsResponse getAttempts(
+			@PathVariable("id") UUID id,
+			@PathVariable("operationId") UUID operationId
+	) {
+		return jobService.getAttempts(id, operationId);
 	}
 
 	@GetMapping("/{id}/artifacts")

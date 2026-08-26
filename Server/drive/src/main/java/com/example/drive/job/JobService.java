@@ -10,12 +10,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.example.drive.job.domain.Job;
 import com.example.drive.job.domain.Operation;
+import com.example.drive.job.dto.AttemptResponse;
 import com.example.drive.job.dto.CreateJobRequest;
 import com.example.drive.job.dto.CreateOperationRequest;
 import com.example.drive.job.dto.JobArtifactsResponse;
 import com.example.drive.job.dto.JobOperationsResponse;
 import com.example.drive.job.dto.JobResponse;
+import com.example.drive.job.dto.OperationAttemptsResponse;
 import com.example.drive.job.repository.ArtifactRepository;
+import com.example.drive.job.repository.ExecutionAttemptRepository;
 import com.example.drive.job.repository.JobRepository;
 import com.example.drive.job.repository.OperationRepository;
 
@@ -25,17 +28,20 @@ public class JobService {
 	private final JobRepository jobRepository;
 	private final OperationRepository operationRepository;
 	private final ArtifactRepository artifactRepository;
+	private final ExecutionAttemptRepository attemptRepository;
 	private final Clock clock;
 
 	public JobService(
 			JobRepository jobRepository,
 			OperationRepository operationRepository,
 			ArtifactRepository artifactRepository,
+			ExecutionAttemptRepository attemptRepository,
 			Clock clock
 	) {
 		this.jobRepository = jobRepository;
 		this.operationRepository = operationRepository;
 		this.artifactRepository = artifactRepository;
+		this.attemptRepository = attemptRepository;
 		this.clock = clock;
 	}
 
@@ -76,6 +82,25 @@ public class JobService {
 			throw new JobNotFoundException(jobId);
 		}
 		return JobOperationsResponse.from(jobId, operationRepository.findByJob_IdOrderByOperationOrderAsc(jobId));
+	}
+
+	@Transactional(readOnly = true)
+	public OperationAttemptsResponse getAttempts(UUID jobId, UUID operationId) {
+		if (!jobRepository.existsById(jobId)) {
+			throw new JobNotFoundException(jobId);
+		}
+		Operation operation = operationRepository.findById(operationId)
+				.orElseThrow(() -> new OperationNotFoundException(operationId));
+		if (!operation.getJob().getId().equals(jobId)) {
+			throw new OperationNotFoundException(operationId);
+		}
+		return new OperationAttemptsResponse(
+				jobId,
+				operationId,
+				attemptRepository.findByOperation_IdOrderByAttemptNumberAsc(operationId).stream()
+						.map(AttemptResponse::from)
+						.toList()
+		);
 	}
 
 	@Transactional(readOnly = true)

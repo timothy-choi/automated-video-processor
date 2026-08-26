@@ -8,6 +8,7 @@ import (
 
 	"github.com/timothy-choi/automated-video-processor/worker/internal/capability"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/client"
+	"github.com/timothy-choi/automated-video-processor/worker/internal/lease"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/model"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/storage"
 )
@@ -22,6 +23,9 @@ func TestNewDefaultsPrefetch(t *testing.T) {
 	}
 	if w.cfg.HeartbeatInterval != DefaultHeartbeatInterval {
 		t.Fatalf("heartbeat interval=%s", w.cfg.HeartbeatInterval)
+	}
+	if w.cfg.LeaseRenewInterval != lease.DefaultRenewInterval {
+		t.Fatalf("lease renew interval=%s", w.cfg.LeaseRenewInterval)
 	}
 }
 

@@ -38,6 +38,7 @@ func main() {
 		FfmpegPath:          envOr("FFMPEG_PATH", "ffmpeg"),
 		OutputBucket:        envOr("OUTPUT_BUCKET", "media-output"),
 		HeartbeatInterval:   heartbeatInterval(),
+		LeaseRenewInterval:  leaseRenewInterval(),
 		SupportedOperations: restrict,
 		ObjectStore: storage.Config{
 			Endpoint:       envOr("OBJECT_STORE_ENDPOINT", "http://localhost:9000"),
@@ -65,6 +66,14 @@ func main() {
 
 func heartbeatInterval() time.Duration {
 	parsed, err := worker.ParseHeartbeatInterval(os.Getenv("HEARTBEAT_INTERVAL"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	return parsed
+}
+
+func leaseRenewInterval() time.Duration {
+	parsed, err := worker.ParseLeaseRenewInterval(os.Getenv("LEASE_RENEW_INTERVAL"))
 	if err != nil {
 		log.Fatal(err)
 	}

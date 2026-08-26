@@ -87,11 +87,16 @@ func (c *Client) Claim(ctx context.Context) (*model.ClaimedOperation, bool, erro
 	return &claimed, true, nil
 }
 
-func (c *Client) Start(ctx context.Context, operationID string) (model.StartResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/internal/operations/"+operationID+"/start", nil)
+func (c *Client) Start(ctx context.Context, operationID, workerID string) (model.StartResponse, error) {
+	payload, err := json.Marshal(model.StartRequest{WorkerID: workerID})
 	if err != nil {
 		return model.StartResponse{}, err
 	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/internal/operations/"+operationID+"/start", bytes.NewReader(payload))
+	if err != nil {
+		return model.StartResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return model.StartResponse{}, err
@@ -117,6 +122,39 @@ func (c *Client) Start(ctx context.Context, operationID string) (model.StartResp
 	return started, nil
 }
 
+func (c *Client) Renew(ctx context.Context, operationID, attemptID, workerID string) (model.RenewResponse, error) {
+	payload, err := json.Marshal(model.RenewRequest{WorkerID: workerID})
+	if err != nil {
+		return model.RenewResponse{}, err
+	}
+	path := "/internal/operations/" + operationID + "/attempts/" + attemptID + "/renew"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(payload))
+	if err != nil {
+		return model.RenewResponse{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return model.RenewResponse{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return model.RenewResponse{}, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return model.RenewResponse{}, &StatusError{Status: resp.StatusCode, Body: string(body)}
+	}
+	var renewed model.RenewResponse
+	if err := json.Unmarshal(body, &renewed); err != nil {
+		return model.RenewResponse{}, fmt.Errorf("renew response is invalid JSON: %w", err)
+	}
+	if renewed.AttemptID == "" {
+		return model.RenewResponse{}, fmt.Errorf("renew response is missing attemptId")
+	}
+	return renewed, nil
+}
+
 func (c *Client) Complete(ctx context.Context, operationID string, request model.CompleteRequest) error {
 	payload, err := json.Marshal(request)
 	if err != nil {
@@ -125,8 +163,9 @@ func (c *Client) Complete(ctx context.Context, operationID string, request model
 	return c.postJSON(ctx, "/internal/operations/"+operationID+"/complete", payload)
 }
 
-func (c *Client) Fail(ctx context.Context, operationID string, runtimeMs *int64, reason string) error {
+func (c *Client) Fail(ctx context.Context, operationID string, runtimeMs *int64, reason, attemptID string) error {
 	payload, err := json.Marshal(model.FailRequest{
+		AttemptID:       attemptID,
 		ActualRuntimeMs: runtimeMs,
 		Reason:          reason,
 	})

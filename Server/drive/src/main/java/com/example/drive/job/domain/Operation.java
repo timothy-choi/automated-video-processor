@@ -67,6 +67,9 @@ public class Operation {
 	@Column(name = "result_json")
 	private Map<String, Object> resultJson;
 
+	@Column(name = "current_attempt_id")
+	private UUID currentAttemptId;
+
 	protected Operation() {
 	}
 
@@ -131,6 +134,10 @@ public class Operation {
 		return resultJson;
 	}
 
+	public UUID getCurrentAttemptId() {
+		return currentAttemptId;
+	}
+
 	public void markAssigned(Instant now) {
 		if (status != OperationStatus.QUEUED) {
 			throw new IllegalOperationStateException(
@@ -151,6 +158,27 @@ public class Operation {
 		}
 		status = OperationStatus.RUNNING;
 		startedAt = now;
+		updatedAt = now;
+	}
+
+	public void attachRunningAttempt(UUID attemptId) {
+		this.currentAttemptId = attemptId;
+	}
+
+	public void markRequeued(Instant now) {
+		if (status != OperationStatus.RUNNING) {
+			throw new IllegalOperationStateException(
+					id,
+					"Operation " + id + " cannot move from " + status + " to QUEUED"
+			);
+		}
+		status = OperationStatus.QUEUED;
+		startedAt = null;
+		completedAt = null;
+		actualRuntimeMs = null;
+		failureReason = null;
+		resultJson = null;
+		currentAttemptId = null;
 		updatedAt = now;
 	}
 

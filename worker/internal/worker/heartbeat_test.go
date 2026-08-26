@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/timothy-choi/automated-video-processor/worker/internal/capability"
+	"github.com/timothy-choi/automated-video-processor/worker/internal/lease"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/model"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/storage"
 )
@@ -36,6 +37,20 @@ func TestParseHeartbeatInterval(t *testing.T) {
 	}
 	if _, err = ParseHeartbeatInterval("5"); err == nil {
 		t.Fatal("expected error for unitless 5")
+	}
+}
+
+func TestParseLeaseRenewInterval(t *testing.T) {
+	got, err := ParseLeaseRenewInterval("")
+	if err != nil || got != lease.DefaultRenewInterval {
+		t.Fatalf("empty: got=%s err=%v", got, err)
+	}
+	got, err = ParseLeaseRenewInterval("10s")
+	if err != nil || got != 10*time.Second {
+		t.Fatalf("10s: got=%s err=%v", got, err)
+	}
+	if _, err = ParseLeaseRenewInterval("0s"); err == nil {
+		t.Fatal("expected error for 0s")
 	}
 }
 

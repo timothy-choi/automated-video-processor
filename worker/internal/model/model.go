@@ -55,23 +55,43 @@ type ArtifactResult struct {
 }
 
 type CompleteRequest struct {
+	AttemptID       string          `json:"attemptId"`
 	ActualRuntimeMs int64           `json:"actualRuntimeMs"`
 	Metadata        *MetadataResult `json:"metadata,omitempty"`
 	Artifact        *ArtifactResult `json:"artifact,omitempty"`
 }
 
 type FailRequest struct {
+	AttemptID       string `json:"attemptId"`
 	ActualRuntimeMs *int64 `json:"actualRuntimeMs,omitempty"`
 	Reason          string `json:"reason"`
 }
 
+type StartRequest struct {
+	WorkerID string `json:"workerId"`
+}
+
 type StartResponse struct {
-	Outcome     string `json:"outcome"`
-	OperationID string `json:"operationId"`
-	JobID       string `json:"jobId"`
-	Type        string `json:"type"`
-	InputURI    string `json:"inputUri"`
-	Status      string `json:"status"`
+	Outcome        string     `json:"outcome"`
+	OperationID    string     `json:"operationId"`
+	JobID          string     `json:"jobId"`
+	Type           string     `json:"type"`
+	InputURI       string     `json:"inputUri"`
+	Status         string     `json:"status"`
+	AttemptID      string     `json:"attemptId"`
+	WorkerID       string     `json:"workerId"`
+	LeaseExpiresAt *time.Time `json:"leaseExpiresAt"`
+}
+
+type RenewRequest struct {
+	WorkerID string `json:"workerId"`
+}
+
+type RenewResponse struct {
+	AttemptID      string     `json:"attemptId"`
+	WorkerID       string     `json:"workerId"`
+	Status         string     `json:"status"`
+	LeaseExpiresAt *time.Time `json:"leaseExpiresAt"`
 }
 
 const (

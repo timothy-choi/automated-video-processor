@@ -13,16 +13,28 @@ public record ClaimedOperationResponse(
 		OperationType type,
 		String inputUri,
 		Instant claimedAt,
-		OperationStatus status
+		OperationStatus status,
+		UUID attemptId,
+		String workerId,
+		Instant leaseExpiresAt
 ) {
-	public static ClaimedOperationResponse from(Operation operation, Instant claimedAt) {
+	public static ClaimedOperationResponse from(
+			Operation operation,
+			Instant claimedAt,
+			UUID attemptId,
+			String workerId,
+			Instant leaseExpiresAt
+	) {
 		return new ClaimedOperationResponse(
 				operation.getId(),
 				operation.getJob().getId(),
 				operation.getType(),
 				operation.getJob().getInputUri(),
 				claimedAt,
-				operation.getStatus()
+				operation.getStatus(),
+				attemptId,
+				workerId,
+				leaseExpiresAt
 		);
 	}
 }

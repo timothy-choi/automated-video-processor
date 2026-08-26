@@ -6,6 +6,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"github.com/timothy-choi/automated-video-processor/worker/internal/lease"
 )
 
 const (
@@ -23,6 +25,20 @@ func ParseHeartbeatInterval(raw string) (time.Duration, error) {
 	}
 	if parsed <= 0 {
 		return 0, fmt.Errorf("invalid HEARTBEAT_INTERVAL %q: must be greater than 0", raw)
+	}
+	return parsed, nil
+}
+
+func ParseLeaseRenewInterval(raw string) (time.Duration, error) {
+	if strings.TrimSpace(raw) == "" {
+		return lease.DefaultRenewInterval, nil
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid LEASE_RENEW_INTERVAL %q: %w", raw, err)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("invalid LEASE_RENEW_INTERVAL %q: must be greater than 0", raw)
 	}
 	return parsed, nil
 }
