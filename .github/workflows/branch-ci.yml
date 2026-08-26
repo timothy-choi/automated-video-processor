@@ -38,9 +38,6 @@ jobs:
     name: Go tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: worker
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -50,8 +47,18 @@ jobs:
         with:
           go-version-file: worker/go.mod
 
-      - name: Vet
+      - name: Worker vet
+        working-directory: worker
         run: go vet ./...
 
-      - name: Test
+      - name: Worker test
+        working-directory: worker
+        run: go test ./...
+
+      - name: Scheduler vet
+        working-directory: scheduler
+        run: go vet ./...
+
+      - name: Scheduler test
+        working-directory: scheduler
         run: go test ./...

@@ -65,6 +65,13 @@ func HandleWithOptions(ctx context.Context, workerID string, body []byte, ctrl C
 	if supported == nil {
 		supported = []string{"METADATA", "THUMBNAIL"}
 	}
+	if parsed.WorkerID != "" && parsed.WorkerID != workerID {
+		log.Printf(
+			"worker=%s assignment_worker=%s job=%s operation=%s type=%s event=worker_id_mismatch decision=%s",
+			workerID, parsed.WorkerID, parsed.JobID, parsed.OperationID, parsed.Type, NackDrop,
+		)
+		return NackDrop
+	}
 	if !supportsOperation(supported, parsed.Type) {
 		log.Printf(
 			"worker=%s job=%s operation=%s type=%s event=capability_mismatch decision=%s",

@@ -36,13 +36,14 @@ type Config struct {
 }
 
 type Worker struct {
-	cfg       Config
-	client    *client.Client
-	deps      run.Deps
-	detect    func(context.Context) (capability.Snapshot, error)
-	register  func(context.Context, model.RegisterWorkerRequest) (model.RegisterWorkerResponse, error)
-	heartbeat func(context.Context) error
-	consume   func(context.Context, []string) error
+	cfg          Config
+	client       *client.Client
+	deps         run.Deps
+	detect       func(context.Context) (capability.Snapshot, error)
+	declareQueue func() error
+	register     func(context.Context, model.RegisterWorkerRequest) (model.RegisterWorkerResponse, error)
+	heartbeat    func(context.Context) error
+	consume      func(context.Context, []string) error
 }
 
 func New(cfg Config, store storage.ObjectStore) *Worker {
@@ -68,6 +69,12 @@ func New(cfg Config, store storage.ObjectStore) *Worker {
 			ImplementedOperations: capability.ImplementedOperations(),
 			RestrictOperations:    cfg.SupportedOperations,
 		})
+	}
+	w.declareQueue = func() error {
+		if strings.TrimSpace(cfg.RabbitMQURL) == "" {
+			return nil
+		}
+		return broker.DeclareWorkerTopology(cfg.RabbitMQURL, cfg.WorkerID)
 	}
 	w.register = w.client.RegisterWorker
 	w.heartbeat = func(ctx context.Context) error {
@@ -109,6 +116,11 @@ func (w *Worker) Run(ctx context.Context) error {
 		strings.Join(req.SupportedOperations, ","),
 		strings.Join(req.SupportedCodecs, ","),
 	)
+	if w.declareQueue != nil {
+		if err := w.declareQueue(); err != nil {
+			return fmt.Errorf("declare worker queue: %w", err)
+		}
+	}
 	registered, err := w.registerWithRetry(ctx, req)
 	if err != nil {
 		return err

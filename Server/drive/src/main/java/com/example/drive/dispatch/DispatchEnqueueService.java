@@ -18,6 +18,12 @@ import com.example.drive.job.repository.OperationRepository;
 
 import jakarta.persistence.EntityManager;
 
+/**
+ * Legacy Java operation-selection path used by tests. Production Phase 4A
+ * keeps {@code drive.dispatch.scheduling-enabled=false} so this loop does
+ * not compete with the Go scheduler. Callers still invoke
+ * {@link #enqueueDispatchableOperations()} directly.
+ */
 @Service
 @ConditionalOnProperty(name = "drive.dispatch.enabled", havingValue = "true")
 public class DispatchEnqueueService {

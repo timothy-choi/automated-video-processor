@@ -15,7 +15,10 @@ type Assignment struct {
 	JobID         string    `json:"jobId"`
 	Type          string    `json:"type"`
 	InputURI      string    `json:"inputUri"`
+	WorkerID      string    `json:"workerId"`
+	Policy        string    `json:"policy"`
 	DispatchedAt  time.Time `json:"dispatchedAt"`
+	ScheduledAt   time.Time `json:"scheduledAt"`
 }
 
 func Parse(body []byte) (Assignment, error) {
@@ -23,7 +26,7 @@ func Parse(body []byte) (Assignment, error) {
 	if err := json.Unmarshal(body, &assignment); err != nil {
 		return Assignment{}, fmt.Errorf("malformed assignment JSON: %w", err)
 	}
-	if assignment.SchemaVersion != 1 {
+	if assignment.SchemaVersion != 1 && assignment.SchemaVersion != 2 {
 		return Assignment{}, fmt.Errorf("unsupported schemaVersion %d", assignment.SchemaVersion)
 	}
 	if strings.TrimSpace(assignment.OperationID) == "" {
@@ -38,6 +41,16 @@ func Parse(body []byte) (Assignment, error) {
 	assignment.Type = strings.TrimSpace(assignment.Type)
 	if strings.TrimSpace(assignment.InputURI) == "" {
 		return Assignment{}, fmt.Errorf("inputUri is required")
+	}
+	if assignment.SchemaVersion == 2 {
+		assignment.WorkerID = strings.TrimSpace(assignment.WorkerID)
+		if assignment.WorkerID == "" {
+			return Assignment{}, fmt.Errorf("workerId is required")
+		}
+		assignment.Policy = strings.TrimSpace(assignment.Policy)
+		if assignment.Policy == "" {
+			return Assignment{}, fmt.Errorf("policy is required")
+		}
 	}
 	return assignment, nil
 }

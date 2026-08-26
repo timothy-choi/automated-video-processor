@@ -14,6 +14,7 @@ import org.springframework.context.annotation.Import;
 @SpringBootTest(properties = {
 		"drive.dispatch.enabled=false",
 		"drive.dispatch.scheduling-enabled=false",
+		"drive.dispatch.publish-loop-enabled=false",
 		"drive.dispatch.publisher-enabled=false",
 		"drive.dispatch.http-claim-enabled=true",
 		"drive.worker.heartbeat-sweep-enabled=false",

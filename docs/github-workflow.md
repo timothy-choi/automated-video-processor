@@ -37,7 +37,7 @@ Do not push feature work directly to `main`. Open a pull request instead.
 
 | File | Workflow name | When it runs | What it validates |
 | --- | --- | --- | --- |
-| `.github/workflows/branch-ci.yml` | **Branch CI** | Pushes to every branch except `main` | **Java tests**: Java 21 + `./mvnw clean test` in `Server/drive`. **Go tests**: `go vet` / `go test` in `worker/` |
+| `.github/workflows/branch-ci.yml` | **Branch CI** | Pushes to every branch except `main` | **Java tests**: Java 21 + `./mvnw clean test` in `Server/drive`. **Go tests**: `go vet` / `go test` in `worker/` and `scheduler/` |
 | `.github/workflows/main-ci.yml` | **PR / Main CI** | Pull requests targeting `main`, and pushes/merges to `main` | The same Java and Go jobs |
 
 The Java job is still named **Java tests**. That remains the existing required status check on `main`. The new job is named **Go tests**. After it has appeared on a pull request, add it as a required check too. Do not rename **Java tests**; that would break existing branch protection.
@@ -57,6 +57,13 @@ CI uses `--batch-mode` and `--no-transfer-progress` so Maven does not prompt and
 Java tests use Testcontainers PostgreSQL. GitHub-hosted `ubuntu-latest` runners already provide Docker. A local `./mvnw clean test` also needs a running Docker daemon. Phase 3A Java tests also start a RabbitMQ Testcontainers broker for dispatch integration tests. Existing job/claim tests disable the dispatcher and do not require RabbitMQ.
 
 From `worker/`:
+
+```bash
+go vet ./...
+go test ./...
+```
+
+From `scheduler/`:
 
 ```bash
 go vet ./...

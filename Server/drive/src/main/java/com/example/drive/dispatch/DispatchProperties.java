@@ -12,10 +12,19 @@ public class DispatchProperties {
 	private boolean enabled = true;
 
 	/**
-	 * Runs the enqueue/publish loops on a timer. Disable in tests that invoke
-	 * those methods explicitly.
+	 * Legacy Java operation-selection loop. Off by default in Phase 4A; the Go
+	 * scheduler owns placement. Tests may still call
+	 * {@link DispatchEnqueueService} directly.
 	 */
-	private boolean schedulingEnabled = true;
+	private boolean schedulingEnabled = false;
+
+	/**
+	 * Runs the outbox publish loop. Keep this on in production so targeted
+	 * assignments still leave PostgreSQL through the transactional outbox.
+	 * Disable in tests that invoke {@link DispatchPublisher#publishPending()}
+	 * explicitly.
+	 */
+	private boolean publishLoopEnabled = true;
 
 	/**
 	 * Temporary Phase 2 HTTP claim. Off by default so it does not compete with
@@ -45,6 +54,14 @@ public class DispatchProperties {
 
 	public void setSchedulingEnabled(boolean schedulingEnabled) {
 		this.schedulingEnabled = schedulingEnabled;
+	}
+
+	public boolean isPublishLoopEnabled() {
+		return publishLoopEnabled;
+	}
+
+	public void setPublishLoopEnabled(boolean publishLoopEnabled) {
+		this.publishLoopEnabled = publishLoopEnabled;
 	}
 
 	public boolean isHttpClaimEnabled() {
