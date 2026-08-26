@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/timothy-choi/automated-video-processor/worker/internal/executor"
@@ -18,10 +19,12 @@ type Deps struct {
 	OutputBucket string
 	FfprobePath  string
 	FfmpegPath   string
+	AV1Encoder   string
 	Probe        func(ctx context.Context, ffprobePath, inputPath string) (model.MetadataResult, error)
 	Thumbnail    func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error
 	Audio        func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error
 	Transcode    func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error
+	TranscodeAV1 func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error
 	NewWorkspace func(operationID string) (*workspace.Workspace, error)
 }
 
@@ -91,9 +94,48 @@ func Execute(ctx context.Context, claimed *model.ClaimedOperation, deps Deps) (R
 			return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
 		}
 		return finishArtifact(ctx, claimed, deps, outputPath, storage.Transcode1080pObjectKey(claimed.JobID, claimed.OperationID), executor.TranscodeContentType, start)
+	case "H264_TO_AV1":
+		if err := requireH264Video(ctx, inputPath, deps); err != nil {
+			return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
+		}
+		outputPath := ws.File("video-av1.mp4")
+		encode := deps.TranscodeAV1
+		if encode == nil {
+			if deps.AV1Encoder == "" {
+				return Result{RuntimeMs: time.Since(start).Milliseconds()}, fmt.Errorf("AV1 encoder is not available")
+			}
+			encode = func(ctx context.Context, ffmpegPath, in, out string) error {
+				return executor.TranscodeAV1(ctx, ffmpegPath, in, out, deps.AV1Encoder)
+			}
+		}
+		if err := encode(ctx, deps.FfmpegPath, inputPath, outputPath); err != nil {
+			return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
+		}
+		return finishArtifact(ctx, claimed, deps, outputPath, storage.AV1ObjectKey(claimed.JobID, claimed.OperationID), executor.AV1ContentType, start)
 	default:
 		return Result{RuntimeMs: time.Since(start).Milliseconds()}, fmt.Errorf("unsupported operation type %s", claimed.Type)
 	}
+}
+
+func requireH264Video(ctx context.Context, inputPath string, deps Deps) error {
+	if deps.Probe == nil {
+		return fmt.Errorf("probe is not configured")
+	}
+	meta, err := deps.Probe(ctx, deps.FfprobePath, inputPath)
+	if err != nil {
+		return err
+	}
+	if meta.VideoCodec == nil || strings.TrimSpace(*meta.VideoCodec) == "" {
+		return fmt.Errorf("input has no video stream")
+	}
+	if !isH264(*meta.VideoCodec) {
+		return fmt.Errorf("input video codec is not h264")
+	}
+	return nil
+}
+
+func isH264(codec string) bool {
+	return strings.EqualFold(strings.TrimSpace(codec), "h264")
 }
 
 func finishArtifact(

@@ -56,8 +56,8 @@ class ExecutionAttemptIntegrationTest {
 		jdbcTemplate.execute("delete from worker_supported_codecs");
 		jdbcTemplate.execute("delete from worker_supported_operations");
 		jdbcTemplate.execute("delete from workers");
-		WorkerTestSupport.register(mockMvc, "worker-a", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P");
-		WorkerTestSupport.register(mockMvc, "worker-b", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P");
+		WorkerTestSupport.register(mockMvc, "worker-a", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P", "H264_TO_AV1");
+		WorkerTestSupport.register(mockMvc, "worker-b", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P", "H264_TO_AV1");
 	}
 
 	@Test
@@ -415,6 +415,51 @@ class ExecutionAttemptIntegrationTest {
 				liveUri
 		);
 		assertThat(stored).isEqualTo(1);
+		assertThat(jobStatus(jobId)).isEqualTo("COMPLETED");
+	}
+
+	@Test
+	void staleAv1CompletionDoesNotWriteArtifact() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "s3://media-input/video.mp4",
+				  "operations": [{"type": "H264_TO_AV1"}]
+				}
+				""");
+		enqueueService.enqueueDispatchableOperations();
+		UUID operationId = operationId(jobId);
+		UUID attempt1 = start(operationId, "worker-a");
+		expireLease(attempt1);
+		markUnavailable("worker-a");
+		internalOperationService.reclaimExpiredAttempts();
+		enqueueService.enqueueDispatchableOperations();
+		UUID attempt2 = start(operationId, "worker-b");
+
+		String staleUri = "s3://media-output/jobs/" + jobId + "/operations/" + operationId + "/stale-av1.mp4";
+		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(transcodeJson(attempt1, staleUri)))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("STALE_EXECUTION_ATTEMPT"));
+		Integer artifacts = jdbcTemplate.queryForObject(
+				"select count(*) from artifacts where operation_id = ?",
+				Integer.class,
+				operationId
+		);
+		assertThat(artifacts).isZero();
+
+		String liveUri = "s3://media-output/jobs/" + jobId + "/operations/" + operationId + "/video-av1.mp4";
+		mockMvc.perform(post("/internal/operations/" + operationId + "/complete")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(transcodeJson(attempt2, liveUri)))
+				.andExpect(status().isOk());
+		Integer storedAv1 = jdbcTemplate.queryForObject(
+				"select count(*) from artifacts where operation_id = ? and object_uri = ? and artifact_type = 'H264_TO_AV1'",
+				Integer.class,
+				operationId,
+				liveUri
+		);
+		assertThat(storedAv1).isEqualTo(1);
 		assertThat(jobStatus(jobId)).isEqualTo("COMPLETED");
 	}
 

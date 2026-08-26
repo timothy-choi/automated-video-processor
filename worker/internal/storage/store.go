@@ -19,6 +19,10 @@ func Transcode1080pObjectKey(jobID, operationID string) string {
 	return "jobs/" + jobID + "/operations/" + operationID + "/video-1080p.mp4"
 }
 
+func AV1ObjectKey(jobID, operationID string) string {
+	return "jobs/" + jobID + "/operations/" + operationID + "/video-av1.mp4"
+}
+
 func ObjectURI(bucket, key string) string {
 	return "s3://" + bucket + "/" + key
 }

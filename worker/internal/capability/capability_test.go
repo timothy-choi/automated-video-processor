@@ -10,13 +10,13 @@ import (
 
 func TestImplementedOperations(t *testing.T) {
 	got := ImplementedOperations()
-	if strings.Join(got, ",") != "METADATA,THUMBNAIL,AUDIO_EXTRACTION,TRANSCODE_1080P" {
+	if strings.Join(got, ",") != "METADATA,THUMBNAIL,AUDIO_EXTRACTION,TRANSCODE_1080P,H264_TO_AV1" {
 		t.Fatalf("implemented=%v", got)
 	}
 }
 
 func TestRestrictOperationsCannotAddUnsupported(t *testing.T) {
-	if _, err := RestrictOperations(ImplementedOperations(), []string{"H264_TO_AV1"}); err == nil {
+	if _, err := RestrictOperations(ImplementedOperations(), []string{"TRANSCODE_4K_TO_1080P"}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -53,7 +53,14 @@ func TestParseSupportedOperationsEnv(t *testing.T) {
 	if strings.Join(got, ",") != "METADATA,TRANSCODE_1080P" {
 		t.Fatalf("got=%v", got)
 	}
-	if _, err := ParseSupportedOperationsEnv("H264_TO_AV1"); err == nil {
+	got, err = ParseSupportedOperationsEnv("H264_TO_AV1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "H264_TO_AV1" {
+		t.Fatalf("got=%v", got)
+	}
+	if _, err := ParseSupportedOperationsEnv("TRANSCODE_4K_TO_1080P"); err == nil {
 		t.Fatal("expected unimplemented error")
 	}
 }
@@ -85,6 +92,21 @@ Encoders:
 	got := ParseSupportedCodecs(output)
 	if strings.Join(got, ",") != "av1,h264,hevc,vp9" {
 		t.Fatalf("got=%v", got)
+	}
+}
+
+func TestSelectAV1EncoderPrefersSvtThenAom(t *testing.T) {
+	both := " V..... libaom-av1           Alliance for Open Media AV1\n V..... libsvtav1            SVT-AV1\n V..... librav1e             rav1e\n"
+	if got := SelectAV1Encoder(both); got != EncoderLibSvtAV1 {
+		t.Fatalf("got=%s", got)
+	}
+	aomOnly := " V..... libaom-av1           Alliance for Open Media AV1\n V..... librav1e             rav1e\n"
+	if got := SelectAV1Encoder(aomOnly); got != EncoderLibAomAV1 {
+		t.Fatalf("got=%s", got)
+	}
+	rav1eOnly := " V..... librav1e             rav1e\n V..... av1_videotoolbox\n"
+	if got := SelectAV1Encoder(rav1eOnly); got != "" {
+		t.Fatalf("librav1e/hardware must not be selected, got=%s", got)
 	}
 }
 
@@ -222,7 +244,7 @@ func TestDetectRejectsUnsupportedConfiguredOperation(t *testing.T) {
 		Arch:               "amd64",
 		Cores:              2,
 		MemoryBytes:        1024,
-		RestrictOperations: []string{"H264_TO_AV1"},
+		RestrictOperations: []string{"TRANSCODE_4K_TO_1080P"},
 		Command:            fakeBinaries(true, true, ""),
 	})
 	if err == nil || !strings.Contains(err.Error(), "unimplemented") {
@@ -272,6 +294,92 @@ func TestDetectAdvertisesTranscodeWhenLibx264Present(t *testing.T) {
 	}
 	if strings.Join(snap.SupportedOperations, ",") != "METADATA,TRANSCODE_1080P" {
 		t.Fatalf("operations=%v", snap.SupportedOperations)
+	}
+}
+
+func TestDetectSkipsH264ToAV1WhenNoSoftwareAV1Encoder(t *testing.T) {
+	snap, err := Detect(context.Background(), Probe{
+		Hostname:    "host",
+		Arch:        "arm64",
+		Cores:       4,
+		MemoryBytes: 1024,
+		Command:     fakeBinaries(true, true, " V..... libx264\n V..... librav1e\n V..... av1_videotoolbox\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(snap.SupportedOperations, ",") != "METADATA,THUMBNAIL,AUDIO_EXTRACTION,TRANSCODE_1080P" {
+		t.Fatalf("operations=%v", snap.SupportedOperations)
+	}
+	if snap.SelectedAV1Encoder != "" {
+		t.Fatalf("encoder=%s", snap.SelectedAV1Encoder)
+	}
+}
+
+func TestDetectAdvertisesH264ToAV1WhenLibsvtav1Present(t *testing.T) {
+	snap, err := Detect(context.Background(), Probe{
+		Hostname:    "host",
+		Arch:        "arm64",
+		Cores:       4,
+		MemoryBytes: 1024,
+		Command:     fakeBinaries(true, true, " V..... libx264\n V..... libsvtav1\n V..... libaom-av1\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(snap.SupportedOperations, ",") != "METADATA,THUMBNAIL,AUDIO_EXTRACTION,TRANSCODE_1080P,H264_TO_AV1" {
+		t.Fatalf("operations=%v", snap.SupportedOperations)
+	}
+	if snap.SelectedAV1Encoder != EncoderLibSvtAV1 {
+		t.Fatalf("encoder=%s", snap.SelectedAV1Encoder)
+	}
+}
+
+func TestDetectAdvertisesH264ToAV1WhenOnlyLibaomPresent(t *testing.T) {
+	snap, err := Detect(context.Background(), Probe{
+		Hostname:           "host",
+		Arch:               "amd64",
+		Cores:              2,
+		MemoryBytes:        1024,
+		RestrictOperations: []string{"H264_TO_AV1"},
+		Command:            fakeBinaries(true, true, " V..... libaom-av1\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(snap.SupportedOperations, ",") != "H264_TO_AV1" {
+		t.Fatalf("operations=%v", snap.SupportedOperations)
+	}
+	if snap.SelectedAV1Encoder != EncoderLibAomAV1 {
+		t.Fatalf("encoder=%s", snap.SelectedAV1Encoder)
+	}
+}
+
+func TestDetectFailsWhenH264ToAV1RequestedWithoutEncoder(t *testing.T) {
+	_, err := Detect(context.Background(), Probe{
+		Hostname:           "host",
+		Arch:               "amd64",
+		Cores:              2,
+		MemoryBytes:        1024,
+		RestrictOperations: []string{"H264_TO_AV1"},
+		Command:            fakeBinaries(true, true, " V..... libx264\n V..... librav1e\n"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "H264_TO_AV1 requires AV1 encoder (libsvtav1 or libaom-av1)") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestDetectFailsWhenH264ToAV1RequestedWithoutFFmpeg(t *testing.T) {
+	_, err := Detect(context.Background(), Probe{
+		Hostname:           "host",
+		Arch:               "amd64",
+		Cores:              2,
+		MemoryBytes:        1024,
+		RestrictOperations: []string{"H264_TO_AV1"},
+		Command:            fakeBinaries(true, false, ""),
+	})
+	if err == nil || !strings.Contains(err.Error(), "H264_TO_AV1 requires ffmpeg") {
+		t.Fatalf("err=%v", err)
 	}
 }
 

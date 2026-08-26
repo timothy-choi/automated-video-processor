@@ -66,6 +66,31 @@ class WorkerApiIntegrationTest {
 	}
 
 	@Test
+	void registrationAcceptsH264ToAv1() throws Exception {
+		mockMvc.perform(post("/internal/workers/register")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{
+								  "workerId": "worker-av1",
+								  "hostname": "mac-worker-av1",
+								  "supportedOperations": ["H264_TO_AV1"],
+								  "supportedCodecs": ["av1"],
+								  "cpuArchitecture": "arm64",
+								  "cpuCores": 8,
+								  "memoryBytes": 17179869184,
+								  "ffmpegVersion": "7.1"
+								}
+								"""))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.workerId").value("worker-av1"));
+		Integer ops = jdbcTemplate.queryForObject(
+				"select count(*) from worker_supported_operations where worker_id = 'worker-av1' and operation_type = 'H264_TO_AV1'",
+				Integer.class
+		);
+		assertThat(ops).isEqualTo(1);
+	}
+
+	@Test
 	void reregistrationUpdatesCapabilitiesWithoutDuplicatingIdentity() throws Exception {
 		MvcResult first = mockMvc.perform(post("/internal/workers/register")
 						.contentType(MediaType.APPLICATION_JSON)
@@ -241,6 +266,23 @@ class WorkerApiIntegrationTest {
 								  "workerId": "worker-bad-op",
 								  "hostname": "host",
 								  "supportedOperations": ["NOT_A_REAL_OPERATION"],
+								  "supportedCodecs": ["h264"],
+								  "cpuArchitecture": "arm64",
+								  "cpuCores": 8,
+								  "memoryBytes": 1024,
+								  "ffmpegVersion": "7.1"
+								}
+								"""))
+								.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("INVALID_WORKER_CAPABILITY"));
+
+		mockMvc.perform(post("/internal/workers/register")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{
+								  "workerId": "worker-retired-op",
+								  "hostname": "host",
+								  "supportedOperations": ["TRANSCODE_4K_TO_1080P"],
 								  "supportedCodecs": ["h264"],
 								  "cpuArchitecture": "arm64",
 								  "cpuCores": 8,

@@ -13,6 +13,7 @@ import com.example.drive.support.ControlServiceTest;
 import com.jayway.jsonpath.JsonPath;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -103,7 +104,7 @@ class JobApiIntegrationTest {
 				  "operations": [
 				    {"type": "METADATA"},
 				    {"type": "H264_TO_AV1"},
-				    {"type": "TRANSCODE_4K_TO_1080P"}
+				    {"type": "TRANSCODE_1080P"}
 				  ]
 				}
 				""");
@@ -116,7 +117,7 @@ class JobApiIntegrationTest {
 				.andExpect(jsonPath("$.operations[0].order").value(0))
 				.andExpect(jsonPath("$.operations[1].type").value("H264_TO_AV1"))
 				.andExpect(jsonPath("$.operations[1].order").value(1))
-				.andExpect(jsonPath("$.operations[2].type").value("TRANSCODE_4K_TO_1080P"))
+				.andExpect(jsonPath("$.operations[2].type").value("TRANSCODE_1080P"))
 				.andExpect(jsonPath("$.operations[2].order").value(2));
 	}
 
@@ -173,6 +174,35 @@ class JobApiIntegrationTest {
 								"""))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("INVALID_ENUM_VALUE"));
+	}
+
+	@Test
+	void retiredTranscode4kTo1080pReturns400() throws Exception {
+		mockMvc.perform(post("/jobs")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{
+								  "inputUri": "s3://bucket/video.mp4",
+								  "operations": [{"type": "TRANSCODE_4K_TO_1080P"}]
+								}
+								"""))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("INVALID_ENUM_VALUE"));
+	}
+
+	@Test
+	void operationsTypeCheckRejectsRetiredTranscode4k() throws Exception {
+		UUID jobId = createJob("""
+				{
+				  "inputUri": "s3://media-input/clip.mp4",
+				  "operations": [{"type": "METADATA"}]
+				}
+				""");
+		assertThatThrownBy(() -> jdbcTemplate.update("""
+				insert into operations (id, job_id, operation_type, status, operation_order, created_at, updated_at)
+				values (?, ?, 'TRANSCODE_4K_TO_1080P', 'QUEUED', 1, now(), now())
+				""", UUID.randomUUID(), jobId))
+				.hasMessageContaining("operations_type_check");
 	}
 
 	@Test

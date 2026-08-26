@@ -363,6 +363,146 @@ func TestTranscodeFailsWhenInputHasNoVideo(t *testing.T) {
 	}
 }
 
+func TestAV1ArgsLibsvtav1AreMp4WithoutScale(t *testing.T) {
+	args := AV1Args("/tmp/in.mp4", "/tmp/out.mp4", AV1EncoderLibSvt)
+	if !containsAll(args, "-i", "/tmp/in.mp4", "-map", "0:v:0", "0:a?", "-c:v", AV1EncoderLibSvt, "-preset", "8", "-crf", "35", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", "/tmp/out.mp4") {
+		t.Fatalf("args=%v", args)
+	}
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "scale=") || strings.Contains(joined, ScaleFilter1080p) {
+		t.Fatalf("H264_TO_AV1 must not resize: %v", args)
+	}
+}
+
+func TestAV1ArgsLibaomAreMp4WithoutScale(t *testing.T) {
+	args := AV1Args("/tmp/in.mp4", "/tmp/out.mp4", AV1EncoderLibAom)
+	if !containsAll(args, "-c:v", AV1EncoderLibAom, "-crf", "32", "-b:v", "0", "-cpu-used", "8", "-row-mt", "1", "-pix_fmt", "yuv420p") {
+		t.Fatalf("args=%v", args)
+	}
+	if strings.Contains(strings.Join(args, " "), "scale=") {
+		t.Fatalf("must not resize: %v", args)
+	}
+}
+
+func TestTranscodeAV1RejectsUnknownEncoder(t *testing.T) {
+	err := TranscodeAV1(context.Background(), "ffmpeg", "/tmp/in.mp4", "/tmp/out.mp4", "librav1e")
+	if err == nil || !strings.Contains(err.Error(), "AV1 encoder is not available") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestFfmpegFailureMessageDropsSvtInfoBanner(t *testing.T) {
+	stderr := "Svt[info]: -------------------------------------------\nSvt[info]: SVT [version]:\tSVT-AV1 Encoder Lib v4.1.0\nError while opening encoder\n"
+	got := ffmpegFailureMessage(stderr, fmt.Errorf("exit status 1"))
+	if strings.Contains(got, "Svt[info]") || strings.Contains(got, "\t") {
+		t.Fatalf("banner leaked: %q", got)
+	}
+	if got != "Error while opening encoder" {
+		t.Fatalf("got %q", got)
+	}
+	got = ffmpegFailureMessage("Svt[info]: banner only\n", fmt.Errorf("signal: killed"))
+	if got != "signal: killed" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestTranscodeAV1FromH264Sample(t *testing.T) {
+	encoder := requireAV1Encoder(t)
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+
+	dir := t.TempDir()
+	sample := filepath.Join(dir, "h264.mp4")
+	generateSample(t, sample, "testsrc=duration=0.4:size=1280x720:rate=10", true)
+	output := filepath.Join(dir, "out.mp4")
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	if err := TranscodeAV1(ctx, "ffmpeg", sample, output, encoder); err != nil {
+		t.Fatal(err)
+	}
+	w, h, vcodec, acodec, vstreams, astreams := probeMedia(t, output)
+	if vcodec != "av1" {
+		t.Fatalf("codec=%s", vcodec)
+	}
+	if w != 1280 || h != 720 {
+		t.Fatalf("resolution must be preserved, got %dx%d", w, h)
+	}
+	if vstreams != 1 || astreams != 1 || acodec != "aac" {
+		t.Fatalf("streams video=%d audio=%d acodec=%s", vstreams, astreams, acodec)
+	}
+}
+
+func TestTranscodeAV1SucceedsWithoutAudio(t *testing.T) {
+	encoder := requireAV1Encoder(t)
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+
+	dir := t.TempDir()
+	sample := filepath.Join(dir, "silent.mp4")
+	generateSample(t, sample, "testsrc=duration=0.4:size=320x240:rate=10", false)
+	output := filepath.Join(dir, "out.mp4")
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	if err := TranscodeAV1(ctx, "ffmpeg", sample, output, encoder); err != nil {
+		t.Fatal(err)
+	}
+	_, _, vcodec, _, vstreams, astreams := probeMedia(t, output)
+	if vcodec != "av1" || vstreams != 1 || astreams != 0 {
+		t.Fatalf("expected video-only av1, video=%d audio=%d codec=%s", vstreams, astreams, vcodec)
+	}
+}
+
+func TestTranscodeAV1FailsWhenInputHasNoVideo(t *testing.T) {
+	encoder := requireAV1Encoder(t)
+
+	dir := t.TempDir()
+	sample := filepath.Join(dir, "audio-only.m4a")
+	generate := exec.Command(
+		"ffmpeg",
+		"-y",
+		"-f", "lavfi",
+		"-i", "sine=frequency=440:duration=0.4",
+		"-c:a", "aac",
+		sample,
+	)
+	if out, err := generate.CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg generate failed: %v\n%s", err, out)
+	}
+
+	output := filepath.Join(dir, "out.mp4")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	err := TranscodeAV1(ctx, "ffmpeg", sample, output, encoder)
+	if err == nil {
+		t.Fatal("expected no-video failure")
+	}
+	if !strings.Contains(err.Error(), "no video stream") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func requireAV1Encoder(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	out, err := exec.Command("ffmpeg", "-encoders").CombinedOutput()
+	if err != nil {
+		t.Skip("ffmpeg -encoders failed")
+	}
+	text := string(out)
+	if strings.Contains(text, "libsvtav1") {
+		return AV1EncoderLibSvt
+	}
+	if strings.Contains(text, "libaom-av1") {
+		return AV1EncoderLibAom
+	}
+	t.Skip("no usable AV1 encoder (libsvtav1 or libaom-av1)")
+	return ""
+}
+
 func generateSample(t *testing.T, path, videoSpec string, withAudio bool) {
 	t.Helper()
 	args := []string{"-y", "-f", "lavfi", "-i", videoSpec}

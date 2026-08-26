@@ -296,8 +296,163 @@ func TestExecuteTranscodeUploadFailure(t *testing.T) {
 	}
 }
 
+func TestExecuteAV1UploadsArtifact(t *testing.T) {
+	store := storage.NewMemoryStore()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.mp4")
+	if err := os.WriteFile(source, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps := testDeps(store)
+	codec := "h264"
+	deps.Probe = func(ctx context.Context, ffprobePath, inputPath string) (model.MetadataResult, error) {
+		return model.MetadataResult{VideoCodec: &codec}, nil
+	}
+	av1 := []byte("fake-av1-bytes")
+	deps.TranscodeAV1 = func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
+		if inputPath != source {
+			t.Fatalf("input=%s", inputPath)
+		}
+		if !strings.HasSuffix(outputPath, "video-av1.mp4") {
+			t.Fatalf("output=%s", outputPath)
+		}
+		return os.WriteFile(outputPath, av1, 0o600)
+	}
+
+	result, err := Execute(context.Background(), &model.ClaimedOperation{
+		OperationID: "op-6",
+		JobID:       "job-6",
+		Type:        "H264_TO_AV1",
+		InputURI:    "file://" + source,
+	}, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Artifact == nil {
+		t.Fatal("expected artifact")
+	}
+	wantURI := "s3://media-output/jobs/job-6/operations/op-6/video-av1.mp4"
+	if result.Artifact.ObjectURI != wantURI {
+		t.Fatalf("uri=%s", result.Artifact.ObjectURI)
+	}
+	if result.Artifact.ContentType != "video/mp4" || result.Artifact.SizeBytes != int64(len(av1)) {
+		t.Fatalf("artifact=%+v", result.Artifact)
+	}
+	sum := sha256.Sum256(av1)
+	if result.Artifact.Checksum != "sha256:"+hex.EncodeToString(sum[:]) {
+		t.Fatalf("checksum=%s", result.Artifact.Checksum)
+	}
+	uploaded, ok := store.Get("media-output", "jobs/job-6/operations/op-6/video-av1.mp4")
+	if !ok || string(uploaded) != string(av1) {
+		t.Fatalf("uploaded=%q ok=%v", uploaded, ok)
+	}
+}
+
+func TestExecuteAV1RejectsNonH264(t *testing.T) {
+	store := storage.NewMemoryStore()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.mp4")
+	if err := os.WriteFile(source, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps := testDeps(store)
+	codec := "hevc"
+	deps.Probe = func(ctx context.Context, ffprobePath, inputPath string) (model.MetadataResult, error) {
+		return model.MetadataResult{VideoCodec: &codec}, nil
+	}
+	deps.TranscodeAV1 = func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
+		t.Fatal("must not encode non-h264")
+		return nil
+	}
+	_, err := Execute(context.Background(), &model.ClaimedOperation{
+		OperationID: "op",
+		JobID:       "job",
+		Type:        "H264_TO_AV1",
+		InputURI:    "file://" + source,
+	}, deps)
+	if err == nil || err.Error() != "input video codec is not h264" {
+		t.Fatalf("got %v", err)
+	}
+	if _, ok := store.Get("media-output", "jobs/job/operations/op/video-av1.mp4"); ok {
+		t.Fatal("must not upload")
+	}
+}
+
+func TestExecuteAV1RejectsNoVideo(t *testing.T) {
+	store := storage.NewMemoryStore()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.m4a")
+	if err := os.WriteFile(source, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps := testDeps(store)
+	audio := "aac"
+	deps.Probe = func(ctx context.Context, ffprobePath, inputPath string) (model.MetadataResult, error) {
+		return model.MetadataResult{AudioCodec: &audio}, nil
+	}
+	_, err := Execute(context.Background(), &model.ClaimedOperation{
+		Type:     "H264_TO_AV1",
+		InputURI: "file://" + source,
+	}, deps)
+	if err == nil || !strings.Contains(err.Error(), "no video stream") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestExecuteAV1EmptyOutputRejected(t *testing.T) {
+	store := storage.NewMemoryStore()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.mp4")
+	if err := os.WriteFile(source, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps := testDeps(store)
+	codec := "h264"
+	deps.Probe = func(ctx context.Context, ffprobePath, inputPath string) (model.MetadataResult, error) {
+		return model.MetadataResult{VideoCodec: &codec}, nil
+	}
+	deps.TranscodeAV1 = func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
+		return os.WriteFile(outputPath, []byte{}, 0o600)
+	}
+	_, err := Execute(context.Background(), &model.ClaimedOperation{
+		OperationID: "op",
+		JobID:       "job",
+		Type:        "H264_TO_AV1",
+		InputURI:    "file://" + source,
+	}, deps)
+	if err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("got %v", err)
+	}
+	if _, ok := store.Get("media-output", "jobs/job/operations/op/video-av1.mp4"); ok {
+		t.Fatal("empty AV1 must not be uploaded")
+	}
+}
+
+func TestExecuteAV1MissingEncoder(t *testing.T) {
+	store := storage.NewMemoryStore()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.mp4")
+	if err := os.WriteFile(source, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps := testDeps(store)
+	deps.AV1Encoder = ""
+	deps.TranscodeAV1 = nil
+	codec := "h264"
+	deps.Probe = func(ctx context.Context, ffprobePath, inputPath string) (model.MetadataResult, error) {
+		return model.MetadataResult{VideoCodec: &codec}, nil
+	}
+	_, err := Execute(context.Background(), &model.ClaimedOperation{
+		Type:     "H264_TO_AV1",
+		InputURI: "file://" + source,
+	}, deps)
+	if err == nil || !strings.Contains(err.Error(), "AV1 encoder is not available") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestExecuteUnsupportedType(t *testing.T) {
-	_, err := Execute(context.Background(), &model.ClaimedOperation{Type: "H264_TO_AV1", InputURI: "file:///tmp/x.mp4"}, testDeps(storage.NewMemoryStore()))
+	_, err := Execute(context.Background(), &model.ClaimedOperation{Type: "TRANSCODE_4K_TO_1080P", InputURI: "file:///tmp/x.mp4"}, testDeps(storage.NewMemoryStore()))
 	if err == nil || !strings.Contains(err.Error(), "unsupported operation type") {
 		t.Fatalf("got %v", err)
 	}

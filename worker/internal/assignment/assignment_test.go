@@ -115,14 +115,14 @@ func TestParseAcceptsUnknownOperationType(t *testing.T) {
 		"schemaVersion": 1,
 		"operationId": "11111111-1111-1111-1111-111111111111",
 		"jobId": "22222222-2222-2222-2222-222222222222",
-		"type": "H264_TO_AV1",
+		"type": "TRANSCODE_4K_TO_1080P",
 		"inputUri": "s3://media-input/sample.mp4",
 		"dispatchedAt": "2026-08-25T02:00:00Z"
 	}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Type != "H264_TO_AV1" {
+	if got.Type != "TRANSCODE_4K_TO_1080P" {
 		t.Fatalf("type=%s", got.Type)
 	}
 }
