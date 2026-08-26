@@ -167,3 +167,24 @@ func TestRoundRobinPlacesAudioExtractionAmongCapableWorkers(t *testing.T) {
 		t.Fatalf("got %+v ok=%t", second, ok)
 	}
 }
+
+func TestRoundRobinPlacesTranscode1080pAmongCapableWorkers(t *testing.T) {
+	sel := mustSelector(t, FIFO, RoundRobin)
+	snap := model.Snapshot{
+		Operations: []model.Operation{{OperationID: "op-1", Type: "TRANSCODE_1080P", CreatedAt: time.Now()}},
+		Workers: []model.Worker{
+			available("worker-a", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P"),
+			available("worker-b", "METADATA"),
+			available("worker-c", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P"),
+		},
+	}
+	first, ok := sel.Select(snap)
+	if !ok || first.WorkerID != "worker-a" {
+		t.Fatalf("got %+v ok=%t", first, ok)
+	}
+	snap.RoundRobinCursors = map[string]string{"TRANSCODE_1080P": "worker-a"}
+	second, ok := sel.Select(snap)
+	if !ok || second.WorkerID != "worker-c" {
+		t.Fatalf("got %+v ok=%t", second, ok)
+	}
+}

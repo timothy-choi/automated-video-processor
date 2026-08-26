@@ -72,6 +72,52 @@ func wrapAudioError(err error) error {
 	return err
 }
 
+const TranscodeContentType = "video/mp4"
+
+// ScaleFilter1080p fits within 1920x1080 without upscaling, preserves aspect
+// ratio, and rounds to even dimensions required by H.264 yuv420p.
+const ScaleFilter1080p = "scale='min(iw,1920)':'min(ih,1080)':force_original_aspect_ratio=decrease:force_divisible_by=2"
+
+func TranscodeArgs(inputPath, outputPath string) []string {
+	return []string{
+		"-y",
+		"-v", "error",
+		"-i", inputPath,
+		"-map", "0:v:0",
+		"-map", "0:a?",
+		"-vf", ScaleFilter1080p,
+		"-c:v", "libx264",
+		"-preset", "medium",
+		"-crf", "23",
+		"-pix_fmt", "yuv420p",
+		"-c:a", "aac",
+		"-b:a", "192k",
+		"-movflags", "+faststart",
+		outputPath,
+	}
+}
+
+func Transcode1080p(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
+	err := runFFmpeg(ctx, ffmpegPath, TranscodeArgs(inputPath, outputPath)...)
+	if err != nil {
+		return wrapTranscodeError(err)
+	}
+	if !nonEmpty(outputPath) {
+		return fmt.Errorf("ffmpeg produced empty transcode output")
+	}
+	return nil
+}
+
+func wrapTranscodeError(err error) error {
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "matches no streams") ||
+		strings.Contains(msg, "does not contain any stream") ||
+		strings.Contains(msg, "does not contain a video stream") {
+		return fmt.Errorf("input has no video stream")
+	}
+	return err
+}
+
 func runFFmpeg(ctx context.Context, ffmpegPath string, args ...string) error {
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 	var stderr bytes.Buffer

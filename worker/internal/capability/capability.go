@@ -15,6 +15,7 @@ const (
 	OperationMetadata        = "METADATA"
 	OperationThumbnail       = "THUMBNAIL"
 	OperationAudioExtraction = "AUDIO_EXTRACTION"
+	OperationTranscode1080P  = "TRANSCODE_1080P"
 )
 
 type Snapshot struct {
@@ -41,7 +42,7 @@ type Probe struct {
 }
 
 func ImplementedOperations() []string {
-	return []string{OperationMetadata, OperationThumbnail, OperationAudioExtraction}
+	return []string{OperationMetadata, OperationThumbnail, OperationAudioExtraction, OperationTranscode1080P}
 }
 
 func Detect(ctx context.Context, probe Probe) (Snapshot, error) {
@@ -107,19 +108,22 @@ func Detect(ctx context.Context, probe Probe) (Snapshot, error) {
 	ffmpegOutput, ffmpegErr := run(ctx, ffmpegPath, "-version")
 	ffprobeOK := ffprobeErr == nil
 	ffmpegOK := ffmpegErr == nil
-	advertised, err := advertiseOperations(operations, ffprobeOK, ffmpegOK)
-	if err != nil {
-		return Snapshot{}, err
-	}
 
 	version := ""
 	codecs := []string{}
+	encoderOutput := ""
 	if ffmpegOK {
 		version = ParseFFmpegVersion(ffmpegOutput)
-		encoderOutput, encoderErr := run(ctx, ffmpegPath, "-encoders")
+		out, encoderErr := run(ctx, ffmpegPath, "-encoders")
 		if encoderErr == nil {
+			encoderOutput = out
 			codecs = ParseSupportedCodecs(encoderOutput)
 		}
+	}
+
+	advertised, err := advertiseOperations(operations, ffprobeOK, ffmpegOK, encoderOutput)
+	if err != nil {
+		return Snapshot{}, err
 	}
 
 	return Snapshot{
@@ -133,7 +137,7 @@ func Detect(ctx context.Context, probe Probe) (Snapshot, error) {
 	}, nil
 }
 
-func advertiseOperations(configured []string, ffprobeOK, ffmpegOK bool) ([]string, error) {
+func advertiseOperations(configured []string, ffprobeOK, ffmpegOK bool, encoderOutput string) ([]string, error) {
 	var advertised []string
 	for _, op := range configured {
 		switch op {
@@ -150,6 +154,14 @@ func advertiseOperations(configured []string, ffprobeOK, ffmpegOK bool) ([]strin
 		case OperationAudioExtraction:
 			if !ffmpegOK {
 				return nil, fmt.Errorf("AUDIO_EXTRACTION requires ffmpeg")
+			}
+			advertised = append(advertised, op)
+		case OperationTranscode1080P:
+			if !ffmpegOK {
+				return nil, fmt.Errorf("TRANSCODE_1080P requires ffmpeg")
+			}
+			if !HasEncoder(encoderOutput, "libx264") {
+				return nil, fmt.Errorf("TRANSCODE_1080P requires H.264 encoder (libx264)")
 			}
 			advertised = append(advertised, op)
 		default:

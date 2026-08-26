@@ -200,8 +200,104 @@ func TestExecuteAudioUploadFailure(t *testing.T) {
 	}
 }
 
+func TestExecuteTranscodeUploadsArtifact(t *testing.T) {
+	store := storage.NewMemoryStore()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.mp4")
+	if err := os.WriteFile(source, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps := testDeps(store)
+	mp4 := []byte("fake-mp4-bytes")
+	deps.Transcode = func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
+		if inputPath != source {
+			t.Fatalf("input=%s", inputPath)
+		}
+		if !strings.HasSuffix(outputPath, "video-1080p.mp4") {
+			t.Fatalf("output=%s", outputPath)
+		}
+		return os.WriteFile(outputPath, mp4, 0o600)
+	}
+
+	result, err := Execute(context.Background(), &model.ClaimedOperation{
+		OperationID: "op-7",
+		JobID:       "job-7",
+		Type:        "TRANSCODE_1080P",
+		InputURI:    "file://" + source,
+	}, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Artifact == nil {
+		t.Fatal("expected artifact")
+	}
+	wantURI := "s3://media-output/jobs/job-7/operations/op-7/video-1080p.mp4"
+	if result.Artifact.ObjectURI != wantURI {
+		t.Fatalf("uri=%s", result.Artifact.ObjectURI)
+	}
+	if result.Artifact.ContentType != "video/mp4" || result.Artifact.SizeBytes != int64(len(mp4)) {
+		t.Fatalf("artifact=%+v", result.Artifact)
+	}
+	sum := sha256.Sum256(mp4)
+	if result.Artifact.Checksum != "sha256:"+hex.EncodeToString(sum[:]) {
+		t.Fatalf("checksum=%s", result.Artifact.Checksum)
+	}
+	uploaded, ok := store.Get("media-output", "jobs/job-7/operations/op-7/video-1080p.mp4")
+	if !ok || string(uploaded) != string(mp4) {
+		t.Fatalf("uploaded=%q ok=%v", uploaded, ok)
+	}
+}
+
+func TestExecuteTranscodeEmptyOutputRejected(t *testing.T) {
+	store := storage.NewMemoryStore()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.mp4")
+	if err := os.WriteFile(source, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps := testDeps(store)
+	deps.Transcode = func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
+		return os.WriteFile(outputPath, []byte{}, 0o600)
+	}
+	_, err := Execute(context.Background(), &model.ClaimedOperation{
+		OperationID: "op",
+		JobID:       "job",
+		Type:        "TRANSCODE_1080P",
+		InputURI:    "file://" + source,
+	}, deps)
+	if err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("got %v", err)
+	}
+	if _, ok := store.Get("media-output", "jobs/job/operations/op/video-1080p.mp4"); ok {
+		t.Fatal("empty transcode must not be uploaded")
+	}
+}
+
+func TestExecuteTranscodeUploadFailure(t *testing.T) {
+	store := storage.NewMemoryStore()
+	store.UploadErr = errors.New("upload s3://media-output/x failed: object store request failed")
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.mp4")
+	if err := os.WriteFile(source, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps := testDeps(store)
+	deps.Transcode = func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
+		return os.WriteFile(outputPath, []byte("mp4"), 0o600)
+	}
+	_, err := Execute(context.Background(), &model.ClaimedOperation{
+		OperationID: "op",
+		JobID:       "job",
+		Type:        "TRANSCODE_1080P",
+		InputURI:    "file://" + source,
+	}, deps)
+	if err == nil || !strings.Contains(err.Error(), "upload") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 func TestExecuteUnsupportedType(t *testing.T) {
-	_, err := Execute(context.Background(), &model.ClaimedOperation{Type: "TRANSCODE_1080P", InputURI: "file:///tmp/x.mp4"}, testDeps(storage.NewMemoryStore()))
+	_, err := Execute(context.Background(), &model.ClaimedOperation{Type: "H264_TO_AV1", InputURI: "file:///tmp/x.mp4"}, testDeps(storage.NewMemoryStore()))
 	if err == nil || !strings.Contains(err.Error(), "unsupported operation type") {
 		t.Fatalf("got %v", err)
 	}
@@ -266,6 +362,9 @@ func testDeps(store storage.ObjectStore) Deps {
 		},
 		Audio: func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
 			return os.WriteFile(outputPath, []byte("m4a"), 0o600)
+		},
+		Transcode: func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
+			return os.WriteFile(outputPath, []byte("mp4"), 0o600)
 		},
 		NewWorkspace: workspace.New,
 	}
