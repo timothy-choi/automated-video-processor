@@ -71,15 +71,17 @@ public class InternalOperationService {
 	}
 
 	@Transactional
-	public StartOperationResponse start(UUID operationId, String workerId) {
+	public StartOperationResponse start(UUID operationId, String workerId, UUID assignmentId) {
 		Worker worker = requireEligibleWorker(workerId);
 		lockJobForOperation(operationId);
+		worker = requireEligibleWorker(workerId);
 		Instant now = nowUtc();
 		Operation operation = operationRepository.findByIdWithJobAndOperations(operationId)
 				.orElseThrow(() -> new OperationNotFoundException(operationId));
 		requireSupportsOperation(worker, operation);
 		return switch (operation.getStatus()) {
 			case ASSIGNED -> {
+				requireCurrentAssignment(operation, worker.getId(), assignmentId);
 				ExecutionAttempt attempt = createRunningAttempt(operation, worker.getId(), now);
 				operation.markRunning(now);
 				operation.attachRunningAttempt(attempt.getId());
@@ -374,6 +376,34 @@ public class InternalOperationService {
 					"Worker " + worker.getId() + " does not advertise " + operation.getType()
 			);
 		}
+	}
+
+	private void requireCurrentAssignment(Operation operation, String workerId, UUID assignmentId) {
+		if (operation.getCurrentAssignmentId() == null && operation.getAssignedWorkerId() == null) {
+			return;
+		}
+		if (operation.getAssignedWorkerId() != null && !operation.getAssignedWorkerId().equals(workerId)) {
+			rejectStaleAssignment(operation, workerId, assignmentId);
+		}
+		if (operation.getCurrentAssignmentId() != null
+				&& !operation.getCurrentAssignmentId().equals(assignmentId)) {
+			rejectStaleAssignment(operation, workerId, assignmentId);
+		}
+	}
+
+	private void rejectStaleAssignment(Operation operation, String workerId, UUID assignmentId) {
+		log.info(
+				"event=stale_assignment_start_rejected operationId={} workerId={} assignmentId={} currentAssignmentId={} assignedWorkerId={}",
+				operation.getId(),
+				workerId,
+				assignmentId,
+				operation.getCurrentAssignmentId(),
+				operation.getAssignedWorkerId()
+		);
+		throw new StaleAssignmentException(
+				operation.getId(),
+				"Assignment is not the current placement for operation " + operation.getId()
+		);
 	}
 
 	private boolean completeMetadata(

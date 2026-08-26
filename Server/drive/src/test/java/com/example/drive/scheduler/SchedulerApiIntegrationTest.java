@@ -191,7 +191,10 @@ class SchedulerApiIntegrationTest {
 				String.class,
 				operationId
 		);
+		String decisionId = JsonPath.read(assigned.getResponse().getContentAsString(), "$.decisionId");
 		assertThat(payload).contains("schemaVersion").contains("worker-a").contains("FIFO");
+		assertThat(payload).contains(decisionId);
+		assertThat(payload).contains("assignmentId");
 		assertThat(payload).doesNotContain("attemptId");
 		String routingKey = jdbcTemplate.queryForObject(
 				"select routing_key from dispatch_outbox where operation_id = ?",
@@ -206,6 +209,21 @@ class SchedulerApiIntegrationTest {
 		);
 		assertThat(decisions).isEqualTo(1);
 		assertThat((String) JsonPath.read(assigned.getResponse().getContentAsString(), "$.decisionId")).isNotBlank();
+		assertThat(jdbcTemplate.queryForObject(
+				"select assigned_worker_id from operations where id = ?",
+				String.class,
+				operationId
+		)).isEqualTo("worker-a");
+		assertThat(jdbcTemplate.queryForObject(
+				"select current_assignment_id::text from operations where id = ?",
+				String.class,
+				operationId
+		)).isEqualTo(decisionId);
+		assertThat(jdbcTemplate.queryForObject(
+				"select assigned_at from operations where id = ?",
+				Timestamp.class,
+				operationId
+		)).isNotNull();
 	}
 
 	@Test
@@ -330,10 +348,10 @@ class SchedulerApiIntegrationTest {
 				}
 				""");
 		UUID operationId = operationId(jobId);
-		schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO"));
+		var assigned = schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO"));
 		MvcResult started = mockMvc.perform(post("/internal/operations/" + operationId + "/start")
 						.contentType(MediaType.APPLICATION_JSON)
-						.content(WorkerTestSupport.identityJson("worker-a")))
+						.content(WorkerTestSupport.startJson("worker-a", assigned.decisionId())))
 				.andExpect(jsonPath("$.outcome").value("STARTED"))
 				.andReturn();
 		UUID attemptId = UUID.fromString(JsonPath.read(started.getResponse().getContentAsString(), "$.attemptId"));

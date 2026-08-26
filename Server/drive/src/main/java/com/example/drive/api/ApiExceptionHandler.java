@@ -19,6 +19,7 @@ import com.example.drive.job.IllegalOperationStateException;
 import com.example.drive.job.InvalidJobRequestException;
 import com.example.drive.job.JobNotFoundException;
 import com.example.drive.job.OperationNotFoundException;
+import com.example.drive.job.StaleAssignmentException;
 import com.example.drive.job.StaleExecutionAttemptException;
 import com.example.drive.job.WorkerNotEligibleException;
 import com.example.drive.worker.InvalidRegistrationException;
@@ -51,6 +52,11 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(StaleExecutionAttemptException.class)
 	public ResponseEntity<ApiError> handleStaleAttempt(StaleExecutionAttemptException ex) {
 		return respond(HttpStatus.CONFLICT, "STALE_EXECUTION_ATTEMPT", ex.getMessage());
+	}
+
+	@ExceptionHandler(StaleAssignmentException.class)
+	public ResponseEntity<ApiError> handleStaleAssignment(StaleAssignmentException ex) {
+		return respond(HttpStatus.CONFLICT, "STALE_ASSIGNMENT", ex.getMessage());
 	}
 
 	@ExceptionHandler(WorkerNotEligibleException.class)

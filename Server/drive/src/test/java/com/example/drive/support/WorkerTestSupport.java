@@ -1,5 +1,7 @@
 package com.example.drive.support;
 
+import java.util.UUID;
+
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -14,6 +16,13 @@ public final class WorkerTestSupport {
 
 	public static String identityJson(String workerId) {
 		return "{\"workerId\":\"" + workerId + "\"}";
+	}
+
+	public static String startJson(String workerId, UUID assignmentId) {
+		if (assignmentId == null) {
+			return identityJson(workerId);
+		}
+		return "{\"workerId\":\"" + workerId + "\",\"assignmentId\":\"" + assignmentId + "\"}";
 	}
 
 	public static String registrationJson(String workerId) {

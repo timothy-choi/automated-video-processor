@@ -37,7 +37,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 		"drive.dispatch.publisher-enabled=true",
 		"drive.dispatch.http-claim-enabled=false",
 		"drive.worker.heartbeat-sweep-enabled=false",
-		"drive.execution.lease-sweep-enabled=false"
+		"drive.execution.lease-sweep-enabled=false",
+		"drive.assignment.sweep-enabled=false"
 })
 @ImportAutoConfiguration(RabbitAutoConfiguration.class)
 @AutoConfigureMockMvc

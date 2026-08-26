@@ -30,7 +30,8 @@ Assignment JSON contracts live at:
 
 ```text
 contracts/operation-assignment.v1.schema.json   (legacy shared-queue path)
-contracts/operation-assignment.v2.schema.json   (Phase 4A targeted placement)
+contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rejected at runtime)
+contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
 Phase 4A currently:
@@ -39,12 +40,14 @@ Phase 4A currently:
 - a **Go scheduler** polls `GET /internal/scheduler/snapshot`, selects the oldest eligible operation (FIFO) and an explicit worker, then commits with `POST /internal/scheduler/assign`
 - Java revalidates the decision in one transaction: operation still `QUEUED`, worker `AVAILABLE`, worker advertises the type, then `QUEUED -> ASSIGNED`, writes a `scheduling_decisions` row (`policy=FIFO`), and creates a **worker-targeted** outbox row
 - the Java outbox publisher sends that assignment to RabbitMQ with routing key `worker.{workerId}`
-- Go workers declare durable per-worker queues before they register, consume only their queue, and reject a v2 assignment whose `workerId` does not match
+- Go workers declare durable per-worker queues before they register, consume only their queue, and reject a v3 assignment whose `workerId` does not match
 - workers send **periodic heartbeats**; the control service marks them `AVAILABLE` or `UNAVAILABLE`
 - `GET /workers` lists workers, static capabilities, `status`, and `lastHeartbeat`
-- workers call `POST /internal/operations/{id}/start` with `workerId` so PostgreSQL creates an `ExecutionAttempt`, binds ownership, and issues a lease
+- workers call `POST /internal/operations/{id}/start` with `workerId` and `assignmentId` so PostgreSQL creates an `ExecutionAttempt` only for the **current** placement
 - workers renew that lease independently of heartbeats while media work runs
-- if a worker becomes `UNAVAILABLE` and its attempt lease expires, the attempt is `INTERRUPTED`, the operation is `QUEUED`, and the Go scheduler can place it on another eligible worker
+- if a selected worker never starts, assignment timeout plus `UNAVAILABLE` returns the operation to `QUEUED` for a new scheduler placement
+- a delayed old assignment is rejected (`409 STALE_ASSIGNMENT`) and cannot create an attempt
+- if a worker becomes `UNAVAILABLE` **after** start and its attempt lease expires, the attempt is `INTERRUPTED`, the operation is `QUEUED`, and the Go scheduler can place it on another eligible worker
 - a late result from an old attempt is rejected (`409 STALE_EXECUTION_ATTEMPT`)
 - downloads `s3://` inputs (and still accepts `file://`)
 - runs **real ffprobe** and **real FFmpeg**
@@ -66,12 +69,16 @@ Java Control Service
   v
 PostgreSQL  <--- worker registration (upsert by WORKER_ID)
   ^              <--- POST /internal/workers/{id}/heartbeat
-  ^              <--- start (creates ExecutionAttempt + lease)
+  ^              <--- start (assignmentId + workerId; creates ExecutionAttempt + lease)
   ^              <--- renew / complete / fail (attemptId required)
   ^              <--- scheduling_decisions + targeted dispatch_outbox
   |
   | stale-heartbeat sweeper
   |   AVAILABLE -> UNAVAILABLE when lastHeartbeat is older than timeout
+  |
+  | unstarted-assignment sweeper
+  |   ASSIGNED, no attempt, assignedAt expired, selected worker UNAVAILABLE
+  |     -> operation QUEUED (outbox row deleted)
   |
   | expired-lease sweeper
   |   RUNNING attempt + expired lease + UNAVAILABLE worker
@@ -255,7 +262,7 @@ publisher -> routing key worker.{workerId}
       ↓
 only that worker's queue receives the message
       ↓
-POST /internal/operations/{id}/start  (attempt + lease; unchanged from Phase 3D)
+POST /internal/operations/{id}/start  (current assignmentId + workerId; then attempt + lease)
 ```
 
 ### FIFO (operation ordering)
@@ -300,30 +307,29 @@ Two scheduler processes may propose the same operation; the Job row lock allows 
 | Dead-letter exchange | `media.operations.dlx` |
 | Dead-letter queue | `media.operations.execute.dlq` |
 
-Workers declare their queue **before** registration so they are not marked `AVAILABLE` with a missing queue. Offline `UNAVAILABLE` workers are not assigned. Durable queues are **not** deleted when a worker becomes `UNAVAILABLE` (cleanup is later technical debt). Messages for a worker that dies after publish can sit on that durable queue until the worker returns; after `start`, Phase 3D lease recovery still applies.
+Workers declare their queue **before** registration so they are not marked `AVAILABLE` with a missing queue. Offline `UNAVAILABLE` workers are not assigned. Durable queues are **not** deleted when a worker becomes `UNAVAILABLE` (cleanup is later technical debt). Messages for a worker that dies after publish can sit on that durable queue until the worker returns or assignment recovery requeues the operation. An old delayed message cannot start a later placement: `/start` checks `assignmentId`. After a successful `start`, Phase 3D lease recovery still applies.
 
 A scheduler snapshot can be stale (worker dies between snapshot and commit). Commit revalidation plus leases provide eventual progress; this phase does not eliminate every race.
 
 The legacy Java enqueue loop (`drive.dispatch.scheduling-enabled=true`) can still select `QUEUED` work onto the old shared queue for tests. Production default is **off**. Do not run it together with the Go scheduler.
 
-### Assignment v2
+### Assignment v3
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "operationId": "...",
   "jobId": "...",
   "type": "THUMBNAIL",
   "inputUri": "s3://...",
   "workerId": "worker-a",
   "scheduledAt": "...",
-  "policy": "FIFO"
+  "policy": "FIFO",
+  "assignmentId": "..."
 }
 ```
 
-No `attemptId`. Ownership still begins at `start`. The worker drops a v2 message whose `workerId` does not match `WORKER_ID`.
-
-## Workers
+No `attemptId`. `assignmentId` is `SchedulingDecision.id`. Ownership still begins at `start`, which must send the same `assignmentId`. The worker drops a v3 message whose `workerId` does not match `WORKER_ID`. Obsolete v2 messages are rejected so they cannot skip identity checks. This environment does not keep v2 compatibility.
 
 ## Workers
 
@@ -423,7 +429,7 @@ Successful execution:
 QUEUED -> ASSIGNED -> RUNNING -> COMPLETED
 ```
 
-Observe worker logs for `event=registered`, then `event=consuming queue=media.worker.{id}`, `event=received`, `event=execution_start`, `event=execution_completed` / `event=execution_failure`, and `event=ack` / `event=nack_requeue`. A v2 assignment whose `workerId` does not match is dropped (`event=worker_id_mismatch`). An assignment this worker did not advertise (for example `TRANSCODE_1080P`) is not executed; the message is dead-lettered (`event=capability_mismatch`). Scheduler logs include `event=assigned` and `event=no_eligible_worker`.
+Observe worker logs for `event=registered`, then `event=consuming queue=media.worker.{id}`, `event=received`, `event=execution_start`, `event=execution_completed` / `event=execution_failure`, and `event=ack` / `event=nack_requeue`. A v3 assignment whose `workerId` does not match is dropped (`event=worker_id_mismatch`). A stale recovered assignment is dropped (`event=stale_assignment_start_rejected`) and does not run media. An assignment this worker did not advertise (for example `TRANSCODE_1080P`) is not executed; the message is dead-lettered (`event=capability_mismatch`). Scheduler logs include `event=assigned` and `event=no_eligible_worker`.
 
 `METADATA` stores parsed probe JSON on the operation. `THUMBNAIL` extracts one JPEG frame (seek ~1s, falling back to the first frame on short clips) and uploads:
 
@@ -629,19 +635,21 @@ Operation THUMBNAIL
     +-- Attempt 2 worker-b COMPLETED   → Operation COMPLETED
 ```
 
-The scheduler selects the worker **before** RabbitMQ delivery. The assignment JSON records that worker (`workerId`) and policy (`FIFO`) but still does **not** include `attemptId`. Ownership is established only at start:
+The scheduler selects the worker **before** RabbitMQ delivery. The assignment JSON records that worker (`workerId`), policy (`FIFO`), and `assignmentId` (`SchedulingDecision.id`). It still does **not** include `attemptId`. Ownership is established only at start:
 
 ```text
 Go scheduler: choose operation + worker
-Java: Operation QUEUED -> ASSIGNED, persist scheduling_decisions, targeted outbox
+Java: Operation QUEUED -> ASSIGNED, persist scheduling_decisions, assigned_at, current_assignment_id, targeted outbox
 publisher: routing key worker.{workerId}
-selected worker receives v2 assignment
+selected worker receives v3 assignment
     ↓
-POST /internal/operations/{id}/start  {"workerId":"worker-a"}
+POST /internal/operations/{id}/start  {"workerId":"worker-a","assignmentId":"<decision-id>"}
     ↓
 control service (Job row lock):
     worker exists, AVAILABLE, advertises the type
     Operation ASSIGNED
+    assigned worker matches
+    current assignmentId matches
     no RUNNING attempt already
     create ExecutionAttempt RUNNING, attemptNumber, leaseExpiresAt
     Operation RUNNING
@@ -667,6 +675,15 @@ OPERATION_LEASE_SWEEP_INTERVAL=5s
 MAX_EXECUTION_ATTEMPTS=3
 ```
 
+Unstarted assignment recovery (before any ExecutionAttempt exists):
+
+```text
+OPERATION_ASSIGNMENT_START_TIMEOUT=15s
+OPERATION_ASSIGNMENT_SWEEP_INTERVAL=5s
+```
+
+These are **not** the lease settings. Assignment timeout applies only while the operation is `ASSIGNED` with no attempt. Lease duration applies only after `/start`.
+
 Worker:
 
 ```text
@@ -676,6 +693,30 @@ LEASE_RENEW_INTERVAL=10s
 Keep `LEASE_RENEW_INTERVAL` less than half of `OPERATION_LEASE_DURATION`. Transient renew failures are logged and retried on the next interval; they do not kill media work. If renewals stop and the worker is later `UNAVAILABLE`, the control plane may reclaim the attempt. A late `complete`/`fail` from that attempt is then `409 STALE_EXECUTION_ATTEMPT`.
 
 ### Recovery after worker failure
+
+There are two separate failure windows.
+
+#### Before start
+
+```text
+Operation ASSIGNED
+no ExecutionAttempt
+assignment timeout expires
+selected worker UNAVAILABLE
+    ↓
+sweeper: assignment_expired
+    ↓
+Operation QUEUED, assignment fields cleared, dispatch_outbox row deleted
+scheduling_decisions row kept for history
+    ↓
+Go scheduler sees QUEUED again, FIFO selects it
+    ↓
+new SchedulingDecision + targeted assignment
+```
+
+An expired assignment on an `AVAILABLE` worker is **not** reclaimed. That avoids requeueing while a delayed message is still about to be consumed.
+
+#### After start
 
 ```text
 worker-a starts Attempt 1
@@ -717,6 +758,14 @@ Complete and fail require `attemptId`. If that attempt is not the current `RUNNI
 
 Attempt 1 cannot complete Attempt 2's work.
 
+Start requires the current assignment. If `assignmentId` or `workerId` does not match the live placement:
+
+- HTTP `409` `STALE_ASSIGNMENT`
+- no ExecutionAttempt created
+- no media execution on the worker (the message is dropped)
+
+A delayed worker-a message cannot start after the operation has been reassigned to worker-b. Delivery is **at-least-once**, not exactly-once.
+
 ### Artifact retries
 
 Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operationId>/thumbnail.jpg`. A retry may overwrite the same key. If a worker uploads then dies before `complete` persists, the object can exist without an Artifact row. That orphan is **not** garbage-collected in this phase. Execution is **at-least-once**, not exactly-once.
@@ -733,7 +782,6 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 - no OpenTelemetry / Prometheus / Grafana / Jaeger
 - no benchmark framework
 - worker queues are not deleted when a worker becomes `UNAVAILABLE`
-- `ASSIGNED` operations with no attempt are not auto-requeued if the selected worker never returns (durable queue may still be consumed on restart)
 - the legacy Java enqueue path remains for tests (`drive.dispatch.scheduling-enabled`); keep it off in production
 
 ## What is inactive

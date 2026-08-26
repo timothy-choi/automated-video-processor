@@ -68,7 +68,8 @@ type FailRequest struct {
 }
 
 type StartRequest struct {
-	WorkerID string `json:"workerId"`
+	WorkerID     string `json:"workerId"`
+	AssignmentID string `json:"assignmentId,omitempty"`
 }
 
 type StartResponse struct {

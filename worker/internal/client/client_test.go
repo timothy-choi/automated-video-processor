@@ -127,7 +127,7 @@ func TestStartSendsWorkerIDAndParsesAttempt(t *testing.T) {
 	}))
 	defer server.Close()
 
-	started, err := New(server.URL, 5*time.Second).Start(context.Background(), "op-9", "worker-a")
+	started, err := New(server.URL, 5*time.Second).Start(context.Background(), "op-9", "worker-a", "33333333-3333-3333-3333-333333333333")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +140,9 @@ func TestStartSendsWorkerIDAndParsesAttempt(t *testing.T) {
 	if gotBody["workerId"] != "worker-a" {
 		t.Fatalf("body=%v", gotBody)
 	}
+	if gotBody["assignmentId"] != "33333333-3333-3333-3333-333333333333" {
+		t.Fatalf("body=%v", gotBody)
+	}
 }
 
 func TestStartNotFoundIsStatusError(t *testing.T) {
@@ -149,7 +152,7 @@ func TestStartNotFoundIsStatusError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := New(server.URL, 5*time.Second).Start(context.Background(), "missing", "worker-a")
+	_, err := New(server.URL, 5*time.Second).Start(context.Background(), "missing", "worker-a", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}

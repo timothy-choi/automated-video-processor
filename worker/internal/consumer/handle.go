@@ -34,7 +34,7 @@ func (d Decision) String() string {
 }
 
 type Control interface {
-	Start(ctx context.Context, operationID, workerID string) (model.StartResponse, error)
+	Start(ctx context.Context, operationID, workerID, assignmentID string) (model.StartResponse, error)
 	Complete(ctx context.Context, operationID string, request model.CompleteRequest) error
 	Fail(ctx context.Context, operationID string, runtimeMs *int64, reason, attemptID string) error
 	Renew(ctx context.Context, operationID, attemptID, workerID string) (model.RenewResponse, error)
@@ -84,7 +84,7 @@ func HandleWithOptions(ctx context.Context, workerID string, body []byte, ctrl C
 		workerID, parsed.JobID, parsed.OperationID, parsed.Type, parsed.InputURI,
 	)
 
-	start, err := ctrl.Start(ctx, parsed.OperationID, workerID)
+	start, err := ctrl.Start(ctx, parsed.OperationID, workerID, parsed.AssignmentID)
 	if err != nil {
 		if client.IsUnavailable(err) {
 			log.Printf(
@@ -92,6 +92,13 @@ func HandleWithOptions(ctx context.Context, workerID string, body []byte, ctrl C
 				workerID, parsed.JobID, parsed.OperationID, parsed.Type, err, NackRequeue,
 			)
 			return NackRequeue
+		}
+		if client.IsConflict(err) {
+			log.Printf(
+				"worker=%s job=%s operation=%s assignment=%s type=%s event=stale_assignment_start_rejected err=%v decision=%s",
+				workerID, parsed.JobID, parsed.OperationID, parsed.AssignmentID, parsed.Type, err, NackDrop,
+			)
+			return NackDrop
 		}
 		log.Printf(
 			"worker=%s job=%s operation=%s type=%s event=start_rejected err=%v decision=%s",
