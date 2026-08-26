@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 4A**: a Go scheduler makes explicit FIFO placement decisions. RabbitMQ only transports those decisions to the selected worker. Later policies (Round Robin, Least Loaded, SJF, EDF, Adaptive) are not implemented.
+This repository is currently at **Phase 4B**: FIFO still chooses the next operation. Worker placement can be lexicographic (Phase 4A baseline) or Round Robin among currently eligible workers. RabbitMQ only transports that decision. Least Loaded, SJF, EDF, and adaptive scoring are not implemented.
 
-## Current status: Phase 4A — FIFO scheduler + explicit worker placement
+## Current status: Phase 4B — FIFO operations + Round Robin worker placement
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,11 +34,11 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
-Phase 4A currently:
+Phase 4B currently:
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write and does **not** publish RabbitMQ)
-- a **Go scheduler** polls `GET /internal/scheduler/snapshot`, selects the oldest eligible operation (FIFO) and an explicit worker, then commits with `POST /internal/scheduler/assign`
-- Java revalidates the decision in one transaction: operation still `QUEUED`, worker `AVAILABLE`, worker advertises the type, then `QUEUED -> ASSIGNED`, writes a `scheduling_decisions` row (`policy=FIFO`), and creates a **worker-targeted** outbox row
+- a **Go scheduler** polls `GET /internal/scheduler/snapshot`, selects the oldest eligible operation (**FIFO**), then chooses a worker with **LEXICOGRAPHIC** or **ROUND_ROBIN** placement
+- Java revalidates the decision in one transaction: operation still `QUEUED`, worker `AVAILABLE`, worker advertises the type, and the proposed worker matches the current placement rule (including RR cursor), then `QUEUED -> ASSIGNED`, writes a `scheduling_decisions` row (`operationPolicy=FIFO`, `workerPolicy=...`), and creates a **worker-targeted** outbox row
 - the Java outbox publisher sends that assignment to RabbitMQ with routing key `worker.{workerId}`
 - Go workers declare durable per-worker queues before they register, consume only their queue, and reject a v3 assignment whose `workerId` does not match
 - workers send **periodic heartbeats**; the control service marks them `AVAILABLE` or `UNAVAILABLE`
@@ -53,9 +53,16 @@ Phase 4A currently:
 - runs **real ffprobe** and **real FFmpeg**
 - uploads JPEG thumbnails to `s3://media-output/...` and persists `Artifact` metadata
 
-FIFO is a **control baseline**, not a performance claim. It does not use job priority, deadline, CPU, memory, queue depth, or runtime estimates.
+FIFO is a **control baseline** for operation order, not a performance claim. It does not use job priority, deadline, CPU, memory, queue depth, or runtime estimates.
 
-Worker placement in this phase is a separate, deliberately simple rule: among `AVAILABLE` workers that advertise the operation type, choose the lexicographically first worker ID. **This is not Round Robin or adaptive placement.**
+Worker placement is a separate dimension:
+
+```text
+LEXICOGRAPHIC  (default)  first eligible worker ID
+ROUND_ROBIN               rotate among currently eligible workers per operation type
+```
+
+Round Robin is baseline fairness, not load balancing. It does not claim better throughput or latency.
 
 ```text
 Client
@@ -97,7 +104,7 @@ RabbitMQ  media.operations
 
 Go Scheduler (placement authority)
   |
-  +--> snapshot --> FIFO operation --> lex-first eligible worker --> assign
+  +--> snapshot --> FIFO operation --> LEXICOGRAPHIC or ROUND_ROBIN worker --> assign
 ```
 
 Stack: **Java 21**, **Spring Boot 4.1.1**, **Maven**, **PostgreSQL**, **Flyway**, **Spring Data JPA**, **Spring AMQP**, **Go**, **amqp091-go**, **ffprobe/FFmpeg**, **MinIO**, **RabbitMQ**. The Maven `artifactId` remains `drive`.
@@ -185,11 +192,12 @@ In another terminal, start the scheduler:
 cd scheduler
 CONTROL_SERVICE_URL=http://localhost:8080 \
 SCHEDULER_POLL_INTERVAL=500ms \
-SCHEDULING_POLICY=FIFO \
+OPERATION_POLICY=FIFO \
+WORKER_PLACEMENT_POLICY=ROUND_ROBIN \
 go run ./cmd/scheduler
 ```
 
-`SCHEDULING_POLICY` must be `FIFO`. Other names (including `ROUND_ROBIN`) fail startup; those policies are not implemented. Then start workers (see below).
+`OPERATION_POLICY` must be `FIFO`. `WORKER_PLACEMENT_POLICY` is `LEXICOGRAPHIC` (default, Phase 4A baseline) or `ROUND_ROBIN`. Unknown values fail startup. `SCHEDULING_POLICY=FIFO` is still accepted as an alias for operation ordering only; it does **not** enable Round Robin. Then start workers (see below).
 
 Override the control-service port with `SERVER_PORT`:
 
@@ -252,7 +260,7 @@ The scheduler decides **placement**. RabbitMQ **transports** that placement. The
 ```text
 queued operation
       ↓
-Go scheduler (FIFO + lex-first eligible worker)
+Go scheduler (FIFO operation + LEXICOGRAPHIC or ROUND_ROBIN worker)
       ↓
 POST /internal/scheduler/assign
       ↓
@@ -275,27 +283,23 @@ createdAt ASC, operationOrder ASC, id ASC
 
 Job `priority` and `deadline` are persisted but **intentionally ignored** so FIFO stays a pure baseline. This phase does not skip an older unschedulable operation to run a younger one; if the oldest queued `THUMBNAIL` has no eligible worker, it stays `QUEUED` and the scheduler logs `no_eligible_worker` (no hot loop — it sleeps `SCHEDULER_POLL_INTERVAL`). Worker registration/recovery may make it schedulable later. The operation is not failed.
 
-### Worker placement (not a performance algorithm)
+### Worker placement
 
-After FIFO picks the operation:
+After FIFO picks the operation, placement considers only workers that are `AVAILABLE` and advertise the type.
 
-```text
-eligible workers
-    ↓
-status == AVAILABLE
-    ↓
-supports the operation type
-    ↓
-sort worker IDs lexicographically
-    ↓
-choose first
-```
+**LEXICOGRAPHIC** (default): sort eligible IDs and take the first. Example: `worker-a` and `worker-b` both eligible → `worker-a`.
 
-Example: `worker-a` and `worker-b` both `AVAILABLE` and both advertise `METADATA` → `worker-a` wins. If `worker-a` is `UNAVAILABLE`, `worker-b` wins. **This is not Round Robin, Least Loaded, or adaptive scoring.**
+**ROUND_ROBIN**: among that eligible set, take the next ID after the last **committed** Round Robin decision for the same operation type, wrapping to the first. If there is no previous RR decision, start at the lexicographically first eligible worker.
 
-Java revalidates worker existence, `AVAILABLE`, and capability at assign commit. A stale snapshot is rejected (`409`), and the scheduler continues.
+Eligibility sets differ by type. `METADATA` and `THUMBNAIL` rotate independently. A metadata-only worker is never selected for `THUMBNAIL`. `UNAVAILABLE` workers are dropped from the current rotation and may rejoin later; there is no downtime-compensation credit.
 
-Two scheduler processes may propose the same operation; the Job row lock allows only one `QUEUED -> ASSIGNED`. The loser gets `409` and retries the next loop.
+Cursor state is the latest `scheduling_decisions` row with `worker_policy=ROUND_ROBIN` for that type. Scheduler restarts keep rotating; they do not reset to `worker-a`. Failed or missing assignments do not advance the cursor. Java serializes RR commits with a transaction-scoped advisory lock and rejects a proposal that is not the current next worker (`409 WORKER_PLACEMENT_CONFLICT`).
+
+Round Robin is not load-aware and is not an optimality claim.
+
+Java also revalidates worker existence, `AVAILABLE`, and capability. A stale snapshot is rejected (`409`), and the scheduler continues.
+
+Two scheduler processes may propose the same operation; the Job row lock allows only one `QUEUED -> ASSIGNED`. The loser gets `409` and retries the next loop. For Round Robin, two processes proposing the same next worker for different operations are serialized so committed history is `a, b` rather than `a, a`.
 
 ### Targeted RabbitMQ
 
@@ -325,6 +329,7 @@ The legacy Java enqueue loop (`drive.dispatch.scheduling-enabled=true`) can stil
   "workerId": "worker-a",
   "scheduledAt": "...",
   "policy": "FIFO",
+  "workerPolicy": "ROUND_ROBIN",
   "assignmentId": "..."
 }
 ```
@@ -711,6 +716,8 @@ scheduling_decisions row kept for history
     ↓
 Go scheduler sees QUEUED again, FIFO selects it
     ↓
+current worker policy places it on an eligible worker
+    ↓
 new SchedulingDecision + targeted assignment
 ```
 
@@ -733,11 +740,11 @@ Attempt 1 INTERRUPTED, Operation QUEUED
     ↓
 outbox row for that operation is cleared
     ↓
-Go scheduler sees QUEUED again, FIFO selects it
+Go scheduler sees QUEUED again, FIFO selects the operation
     ↓
 worker-a is UNAVAILABLE so it is not eligible
     ↓
-lex-first remaining AVAILABLE capable worker (for example worker-b)
+current worker policy places it (lex-first, or next RR worker among remaining)
     ↓
 worker-b start -> Attempt 2
 ```
@@ -772,10 +779,11 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 
 `GET /jobs/{jobId}/operations/{operationId}/attempts` is a read-only history API (no lease internals).
 
-### Phase 4A limitations
+### Phase 4B limitations
 
-- only FIFO operation ordering; no Round Robin, Least Loaded, SJF, EDF, or adaptive scoring
-- worker placement is lexicographic among eligible workers, not load-aware
+- only FIFO operation ordering; no SJF, EDF, or adaptive scoring
+- worker placement is LEXICOGRAPHIC or ROUND_ROBIN; not Least Loaded or load-aware
+- Round Robin is not a throughput or latency claim
 - FIFO ignores persisted priority and deadline
 - no runtime estimator, queue-wait prediction, or utilization telemetry
 - no CPU/memory scoring even though static cores/memory are registered

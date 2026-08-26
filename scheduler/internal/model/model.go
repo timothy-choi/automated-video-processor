@@ -22,27 +22,32 @@ type Worker struct {
 }
 
 type Snapshot struct {
-	Operations []Operation `json:"operations"`
-	Workers    []Worker    `json:"workers"`
+	Operations        []Operation       `json:"operations"`
+	Workers           []Worker          `json:"workers"`
+	RoundRobinCursors map[string]string `json:"roundRobinCursors"`
 }
 
 type AssignRequest struct {
-	OperationID string `json:"operationId"`
-	WorkerID    string `json:"workerId"`
-	Policy      string `json:"policy"`
+	OperationID     string `json:"operationId"`
+	WorkerID        string `json:"workerId"`
+	OperationPolicy string `json:"operationPolicy"`
+	WorkerPolicy    string `json:"workerPolicy"`
 }
 
 type AssignResponse struct {
-	DecisionID  string `json:"decisionId"`
-	OperationID string `json:"operationId"`
-	JobID       string `json:"jobId"`
-	WorkerID    string `json:"workerId"`
-	Policy      string `json:"policy"`
-	RoutingKey  string `json:"routingKey"`
+	DecisionID      string `json:"decisionId"`
+	OperationID     string `json:"operationId"`
+	JobID           string `json:"jobId"`
+	WorkerID        string `json:"workerId"`
+	Policy          string `json:"policy"`
+	OperationPolicy string `json:"operationPolicy"`
+	WorkerPolicy    string `json:"workerPolicy"`
+	RoutingKey      string `json:"routingKey"`
 }
 
 type Placement struct {
-	OperationID string
-	WorkerID    string
-	Policy      string
+	OperationID     string
+	WorkerID        string
+	OperationPolicy string
+	WorkerPolicy    string
 }

@@ -7,6 +7,7 @@ import java.util.UUID;
  * Assignment JSON envelopes. v1 is the legacy shared-queue contract.
  * v2 is the historical Phase 4A targeted contract without assignment identity.
  * v3 is the current targeted contract ({@code contracts/operation-assignment.v3.schema.json}).
+ * {@code policy} is operation ordering (FIFO). {@code workerPolicy} is placement.
  */
 public final class AssignmentJson {
 
@@ -51,6 +52,7 @@ public final class AssignmentJson {
 			String workerId,
 			Instant scheduledAt,
 			String policy,
+			String workerPolicy,
 			UUID assignmentId
 	) {
 		return "{\"schemaVersion\":3"
@@ -61,6 +63,7 @@ public final class AssignmentJson {
 				+ ",\"workerId\":" + quote(workerId)
 				+ ",\"scheduledAt\":" + quote(scheduledAt.toString())
 				+ ",\"policy\":" + quote(policy)
+				+ ",\"workerPolicy\":" + quote(workerPolicy)
 				+ ",\"assignmentId\":" + quote(assignmentId.toString())
 				+ "}";
 	}

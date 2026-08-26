@@ -73,7 +73,7 @@ class AssignmentRecoveryIntegrationTest {
 		WorkerTestSupport.register(mockMvc, "worker-a");
 		UUID jobId = createJob();
 		UUID operationId = operationId(jobId);
-		var assigned = schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO"));
+		var assigned = schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO", "LEXICOGRAPHIC"));
 		expireAssignment(operationId);
 		markUnavailable("worker-a");
 
@@ -98,7 +98,7 @@ class AssignmentRecoveryIntegrationTest {
 	void assignmentThatHasNotTimedOutStaysAssigned() throws Exception {
 		WorkerTestSupport.register(mockMvc, "worker-a");
 		UUID operationId = operationId(createJob());
-		schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO"));
+		schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO", "LEXICOGRAPHIC"));
 		markUnavailable("worker-a");
 
 		assertThat(assignmentRecoveryService.reclaimUnstartedAssignments()).isZero();
@@ -110,7 +110,7 @@ class AssignmentRecoveryIntegrationTest {
 	void expiredAssignmentOnAvailableWorkerIsNotReclaimed() throws Exception {
 		WorkerTestSupport.register(mockMvc, "worker-a");
 		UUID operationId = operationId(createJob());
-		schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO"));
+		schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO", "LEXICOGRAPHIC"));
 		expireAssignment(operationId);
 
 		assertThat(assignmentRecoveryService.reclaimUnstartedAssignments()).isZero();
@@ -123,7 +123,7 @@ class AssignmentRecoveryIntegrationTest {
 		WorkerTestSupport.register(mockMvc, "worker-a");
 		UUID jobId = createJob();
 		UUID operationId = operationId(jobId);
-		var assigned = schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO"));
+		var assigned = schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO", "LEXICOGRAPHIC"));
 		start(operationId, "worker-a", assigned.decisionId());
 		expireAssignment(operationId);
 		markUnavailable("worker-a");
@@ -140,7 +140,7 @@ class AssignmentRecoveryIntegrationTest {
 		WorkerTestSupport.register(mockMvc, "worker-b");
 		UUID jobId = createJob();
 		UUID operationId = operationId(jobId);
-		schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO"));
+		schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO", "LEXICOGRAPHIC"));
 		expireAssignment(operationId);
 		markUnavailable("worker-a");
 		assertThat(assignmentRecoveryService.reclaimUnstartedAssignments()).isEqualTo(1);
@@ -149,7 +149,7 @@ class AssignmentRecoveryIntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.operations[0].operationId").value(operationId.toString()));
 
-		var reassigned = schedulerService.assign(new AssignOperationRequest(operationId, "worker-b", "FIFO"));
+		var reassigned = schedulerService.assign(new AssignOperationRequest(operationId, "worker-b", "FIFO", "LEXICOGRAPHIC"));
 		assertThat(reassigned.workerId()).isEqualTo("worker-b");
 		assertThat(operationStatus(operationId)).isEqualTo("ASSIGNED");
 		assertThat(jobStatus(jobId)).isEqualTo("ASSIGNED");
@@ -164,11 +164,11 @@ class AssignmentRecoveryIntegrationTest {
 		WorkerTestSupport.register(mockMvc, "worker-a");
 		WorkerTestSupport.register(mockMvc, "worker-b");
 		UUID operationId = operationId(createJob());
-		var first = schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO"));
+		var first = schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO", "LEXICOGRAPHIC"));
 		expireAssignment(operationId);
 		markUnavailable("worker-a");
 		assertThat(assignmentRecoveryService.reclaimUnstartedAssignments()).isEqualTo(1);
-		var second = schedulerService.assign(new AssignOperationRequest(operationId, "worker-b", "FIFO"));
+		var second = schedulerService.assign(new AssignOperationRequest(operationId, "worker-b", "FIFO", "LEXICOGRAPHIC"));
 		jdbcTemplate.update("update workers set status = 'AVAILABLE' where id = 'worker-a'");
 
 		mockMvc.perform(post("/internal/operations/" + operationId + "/start")
@@ -201,7 +201,7 @@ class AssignmentRecoveryIntegrationTest {
 	void startWithoutCurrentAssignmentIdIsRejectedForSchedulerPlacement() throws Exception {
 		WorkerTestSupport.register(mockMvc, "worker-a");
 		UUID operationId = operationId(createJob());
-		schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO"));
+		schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO", "LEXICOGRAPHIC"));
 
 		mockMvc.perform(post("/internal/operations/" + operationId + "/start")
 						.contentType(MediaType.APPLICATION_JSON)
@@ -216,7 +216,7 @@ class AssignmentRecoveryIntegrationTest {
 	void concurrentStartAndAssignmentRecoveryDoNotDuplicateOwnership() throws Exception {
 		WorkerTestSupport.register(mockMvc, "worker-a");
 		UUID operationId = operationId(createJob());
-		var assigned = schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO"));
+		var assigned = schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO", "LEXICOGRAPHIC"));
 		expireAssignment(operationId);
 
 		AtomicReference<StartOperationResponse> startResult = new AtomicReference<>();
@@ -272,7 +272,7 @@ class AssignmentRecoveryIntegrationTest {
 		WorkerTestSupport.register(mockMvc, "worker-a");
 		WorkerTestSupport.register(mockMvc, "worker-b");
 		UUID operationId = operationId(createJob());
-		var assigned = schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO"));
+		var assigned = schedulerService.assign(new AssignOperationRequest(operationId, "worker-a", "FIFO", "LEXICOGRAPHIC"));
 		MvcResult started = start(operationId, "worker-a", assigned.decisionId());
 		UUID attemptId = UUID.fromString(JsonPath.read(started.getResponse().getContentAsString(), "$.attemptId"));
 

@@ -24,17 +24,32 @@ public class SchedulingDecision {
 	@Column(nullable = false, length = 32)
 	private String policy;
 
+	@Column(name = "operation_policy", nullable = false, length = 32)
+	private String operationPolicy;
+
+	@Column(name = "worker_policy", nullable = false, length = 32)
+	private String workerPolicy;
+
 	@Column(name = "created_at", nullable = false)
 	private Instant createdAt;
 
 	protected SchedulingDecision() {
 	}
 
-	public SchedulingDecision(UUID id, UUID operationId, String workerId, String policy, Instant createdAt) {
+	public SchedulingDecision(
+			UUID id,
+			UUID operationId,
+			String workerId,
+			String operationPolicy,
+			String workerPolicy,
+			Instant createdAt
+	) {
 		this.id = id;
 		this.operationId = operationId;
 		this.workerId = workerId;
-		this.policy = policy;
+		this.policy = operationPolicy;
+		this.operationPolicy = operationPolicy;
+		this.workerPolicy = workerPolicy;
 		this.createdAt = createdAt;
 	}
 
@@ -52,6 +67,14 @@ public class SchedulingDecision {
 
 	public String getPolicy() {
 		return policy;
+	}
+
+	public String getOperationPolicy() {
+		return operationPolicy;
+	}
+
+	public String getWorkerPolicy() {
+		return workerPolicy;
 	}
 
 	public Instant getCreatedAt() {

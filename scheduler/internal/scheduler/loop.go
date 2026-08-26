@@ -17,7 +17,7 @@ type ControlClient interface {
 
 type Loop struct {
 	Client       ControlClient
-	Policy       policy.Policy
+	Selector     policy.Selector
 	PollInterval time.Duration
 }
 
@@ -54,10 +54,14 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 		return interval
 	}
 	if len(snapshot.Operations) == 0 {
-		log.Printf("event=scheduler_idle policy=%s operations=0", l.Policy.Name())
+		log.Printf(
+			"event=scheduler_idle operation_policy=%s worker_policy=%s operations=0",
+			l.Selector.OperationPolicy,
+			l.Selector.WorkerPolicy,
+		)
 		return interval
 	}
-	placement, ok := l.Policy.Select(snapshot.Operations, snapshot.Workers)
+	placement, ok := l.Selector.Select(snapshot)
 	if !ok {
 		opType := ""
 		for _, op := range snapshot.Operations {
@@ -67,8 +71,9 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 			}
 		}
 		log.Printf(
-			"event=no_eligible_worker policy=%s operationId=%s type=%s queued=%d",
-			l.Policy.Name(),
+			"event=no_eligible_worker operation_policy=%s worker_policy=%s operationId=%s type=%s queued=%d",
+			l.Selector.OperationPolicy,
+			l.Selector.WorkerPolicy,
 			placement.OperationID,
 			opType,
 			len(snapshot.Operations),
@@ -79,9 +84,11 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 	if err != nil {
 		if client.IsConflict(err) {
 			log.Printf(
-				"event=assign_conflict operationId=%s workerId=%s err=%v",
+				"event=assign_conflict operationId=%s workerId=%s operation_policy=%s worker_policy=%s err=%v",
 				placement.OperationID,
 				placement.WorkerID,
+				placement.OperationPolicy,
+				placement.WorkerPolicy,
 				err,
 			)
 			return 0
@@ -95,12 +102,23 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 		return interval
 	}
 	log.Printf(
-		"event=assigned operationId=%s workerId=%s policy=%s decisionId=%s routingKey=%s",
+		"event=assigned operationId=%s workerId=%s operation_policy=%s worker_policy=%s operation_type=%s decisionId=%s routingKey=%s",
 		assigned.OperationID,
 		assigned.WorkerID,
-		assigned.Policy,
+		assigned.OperationPolicy,
+		assigned.WorkerPolicy,
+		operationType(snapshot, assigned.OperationID),
 		assigned.DecisionID,
 		assigned.RoutingKey,
 	)
 	return 0
+}
+
+func operationType(snapshot model.Snapshot, operationID string) string {
+	for _, op := range snapshot.Operations {
+		if op.OperationID == operationID {
+			return op.Type
+		}
+	}
+	return ""
 }

@@ -72,11 +72,12 @@ class AssignmentJsonTest {
 				"worker-a",
 				scheduledAt,
 				"FIFO",
+				"ROUND_ROBIN",
 				assignmentId
 		);
 
 		assertThat(json).isEqualTo(
-				"{\"schemaVersion\":3,\"operationId\":\"11111111-1111-1111-1111-111111111111\",\"jobId\":\"22222222-2222-2222-2222-222222222222\",\"type\":\"THUMBNAIL\",\"inputUri\":\"s3://media-input/sample.mp4\",\"workerId\":\"worker-a\",\"scheduledAt\":\"2026-08-25T18:00:00Z\",\"policy\":\"FIFO\",\"assignmentId\":\"33333333-3333-3333-3333-333333333333\"}"
+				"{\"schemaVersion\":3,\"operationId\":\"11111111-1111-1111-1111-111111111111\",\"jobId\":\"22222222-2222-2222-2222-222222222222\",\"type\":\"THUMBNAIL\",\"inputUri\":\"s3://media-input/sample.mp4\",\"workerId\":\"worker-a\",\"scheduledAt\":\"2026-08-25T18:00:00Z\",\"policy\":\"FIFO\",\"workerPolicy\":\"ROUND_ROBIN\",\"assignmentId\":\"33333333-3333-3333-3333-333333333333\"}"
 		);
 		assertThat(json).doesNotContain("attemptId").doesNotContain("hibernate");
 	}

@@ -9,6 +9,8 @@ public record AssignOperationResponse(
 		UUID jobId,
 		String workerId,
 		String policy,
+		String operationPolicy,
+		String workerPolicy,
 		Instant scheduledAt,
 		String routingKey
 ) {
