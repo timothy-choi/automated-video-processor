@@ -110,18 +110,20 @@ public class Job {
 		// transitions serialize and recompute from the same committed operation set.
 		boolean anyFailed = false;
 		boolean anyRunning = false;
+		boolean anyCancelRequested = false;
 		boolean anyAssigned = false;
 		boolean anyQueued = false;
 		boolean anyCompleted = false;
+		boolean anyCancelled = false;
 		for (Operation operation : operations) {
 			switch (operation.getStatus()) {
 				case FAILED -> anyFailed = true;
 				case RUNNING -> anyRunning = true;
+				case CANCEL_REQUESTED -> anyCancelRequested = true;
 				case ASSIGNED -> anyAssigned = true;
 				case QUEUED -> anyQueued = true;
 				case COMPLETED -> anyCompleted = true;
-				case CANCELLED -> {
-				}
+				case CANCELLED -> anyCancelled = true;
 			}
 		}
 
@@ -129,14 +131,26 @@ public class Job {
 		if (anyFailed) {
 			next = JobStatus.FAILED;
 		}
-		else if (!anyQueued && !anyAssigned && !anyRunning && anyCompleted) {
-			next = JobStatus.COMPLETED;
+		else if (anyRunning) {
+			next = JobStatus.RUNNING;
 		}
-		else if (anyRunning || anyCompleted) {
+		else if (anyCancelRequested) {
+			next = JobStatus.CANCEL_REQUESTED;
+		}
+		else if (anyCompleted && (anyQueued || anyAssigned)) {
 			next = JobStatus.RUNNING;
 		}
 		else if (anyAssigned) {
 			next = JobStatus.ASSIGNED;
+		}
+		else if (anyQueued) {
+			next = JobStatus.QUEUED;
+		}
+		else if (anyCancelled) {
+			next = JobStatus.CANCELLED;
+		}
+		else if (anyCompleted) {
+			next = JobStatus.COMPLETED;
 		}
 		else {
 			next = JobStatus.QUEUED;

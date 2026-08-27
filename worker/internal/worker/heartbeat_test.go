@@ -54,6 +54,31 @@ func TestParseLeaseRenewInterval(t *testing.T) {
 	}
 }
 
+func TestParseExecutionTimeout(t *testing.T) {
+	got, err := ParseExecutionTimeout("")
+	if err != nil || got != 0 {
+		t.Fatalf("empty: got=%s err=%v", got, err)
+	}
+	got, err = ParseExecutionTimeout("0")
+	if err != nil || got != 0 {
+		t.Fatalf("0: got=%s err=%v", got, err)
+	}
+	got, err = ParseExecutionTimeout("0s")
+	if err != nil || got != 0 {
+		t.Fatalf("0s: got=%s err=%v", got, err)
+	}
+	got, err = ParseExecutionTimeout("15m")
+	if err != nil || got != 15*time.Minute {
+		t.Fatalf("15m: got=%s err=%v", got, err)
+	}
+	if _, err = ParseExecutionTimeout("-1s"); err == nil {
+		t.Fatal("expected error for -1s")
+	}
+	if _, err = ParseExecutionTimeout("abc"); err == nil {
+		t.Fatal("expected error for abc")
+	}
+}
+
 func TestHeartbeatLoopStartsAfterRegistrationAndWhileIdle(t *testing.T) {
 	var heartbeats atomic.Int64
 	started := make(chan struct{})

@@ -5,5 +5,6 @@ public enum AttemptStatus {
 	RUNNING,
 	COMPLETED,
 	FAILED,
-	INTERRUPTED
+	INTERRUPTED,
+	CANCELLED
 }

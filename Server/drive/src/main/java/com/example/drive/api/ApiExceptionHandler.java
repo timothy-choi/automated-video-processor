@@ -17,6 +17,7 @@ import com.example.drive.job.AttemptNotFoundException;
 import com.example.drive.job.HttpClaimDisabledException;
 import com.example.drive.job.IllegalOperationStateException;
 import com.example.drive.job.InvalidJobRequestException;
+import com.example.drive.job.JobAlreadyTerminalException;
 import com.example.drive.job.JobNotFoundException;
 import com.example.drive.job.OperationNotFoundException;
 import com.example.drive.job.StaleAssignmentException;
@@ -47,6 +48,11 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(AttemptNotFoundException.class)
 	public ResponseEntity<ApiError> handleAttemptNotFound(AttemptNotFoundException ex) {
 		return respond(HttpStatus.NOT_FOUND, "ATTEMPT_NOT_FOUND", ex.getMessage());
+	}
+
+	@ExceptionHandler(JobAlreadyTerminalException.class)
+	public ResponseEntity<ApiError> handleJobAlreadyTerminal(JobAlreadyTerminalException ex) {
+		return respond(HttpStatus.CONFLICT, ex.getCode(), ex.getMessage());
 	}
 
 	@ExceptionHandler(StaleExecutionAttemptException.class)

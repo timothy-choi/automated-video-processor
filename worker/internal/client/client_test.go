@@ -191,8 +191,53 @@ func TestRenewSendsWorkerAndAttempt(t *testing.T) {
 	if renewed.AttemptID != "attempt-9" {
 		t.Fatalf("renewed=%+v", renewed)
 	}
+	if renewed.CancelRequested {
+		t.Fatal("missing cancelRequested must default to false")
+	}
 	if gotBody["workerId"] != "worker-a" {
 		t.Fatalf("body=%v", gotBody)
+	}
+}
+
+func TestRenewParsesCancelRequested(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"attemptId": "attempt-9",
+			"workerId": "worker-a",
+			"status": "RUNNING",
+			"leaseExpiresAt": "2026-08-25T18:01:00Z",
+			"cancelRequested": true
+		}`)
+	}))
+	defer server.Close()
+	renewed, err := New(server.URL, 5*time.Second).Renew(context.Background(), "op-9", "attempt-9", "worker-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !renewed.CancelRequested {
+		t.Fatalf("renewed=%+v", renewed)
+	}
+}
+
+func TestCancelledPostsAttemptPath(t *testing.T) {
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/operations/op-1/attempts/attempt-1/cancelled" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"id":"op-1","status":"CANCELLED"}`)
+	}))
+	defer server.Close()
+	if err := New(server.URL, 5*time.Second).Cancelled(context.Background(), "op-1", "attempt-1", "worker-a", 42); err != nil {
+		t.Fatal(err)
+	}
+	if got["workerId"] != "worker-a" || got["actualRuntimeMs"].(float64) != 42 {
+		t.Fatalf("body=%v", got)
 	}
 }
 

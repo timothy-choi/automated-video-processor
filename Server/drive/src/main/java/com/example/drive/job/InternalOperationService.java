@@ -102,7 +102,8 @@ public class InternalOperationService {
 				);
 			}
 			case RUNNING -> StartOperationResponse.from(StartOutcome.ALREADY_RUNNING, operation);
-			case COMPLETED, FAILED, CANCELLED -> StartOperationResponse.from(StartOutcome.ALREADY_TERMINAL, operation);
+			case COMPLETED, FAILED, CANCELLED, CANCEL_REQUESTED ->
+					StartOperationResponse.from(StartOutcome.ALREADY_TERMINAL, operation);
 			case QUEUED -> StartOperationResponse.from(StartOutcome.INVALID_STATE, operation);
 		};
 	}
@@ -153,7 +154,7 @@ public class InternalOperationService {
 		ExecutionAttempt attempt = attemptRepository.findByIdAndOperation_Id(attemptId, operationId)
 				.orElseThrow(() -> new AttemptNotFoundException(attemptId));
 		if (attempt.getStatus() != AttemptStatus.RUNNING
-				|| operation.getStatus() != com.example.drive.job.domain.OperationStatus.RUNNING
+				|| !isRenewableOperation(operation)
 				|| !attemptId.equals(operation.getCurrentAttemptId())
 				|| !attempt.getWorkerId().equals(workerId)) {
 			throw new StaleExecutionAttemptException(
@@ -168,14 +169,55 @@ public class InternalOperationService {
 		}
 		Instant leaseExpiresAt = now.plus(leaseProperties.getLeaseDuration());
 		attempt.renewLease(leaseExpiresAt);
+		boolean cancelRequested = operation.getStatus() == com.example.drive.job.domain.OperationStatus.CANCEL_REQUESTED;
 		log.debug(
-				"event=lease_renewed operationId={} attemptId={} workerId={} leaseExpiresAt={}",
+				"event=lease_renewed operationId={} attemptId={} workerId={} leaseExpiresAt={} cancelRequested={}",
 				operationId,
 				attemptId,
 				workerId,
-				leaseExpiresAt
+				leaseExpiresAt,
+				cancelRequested
 		);
-		return new RenewAttemptResponse(attempt.getId(), worker.getId(), attempt.getStatus(), leaseExpiresAt);
+		return new RenewAttemptResponse(
+				attempt.getId(),
+				worker.getId(),
+				attempt.getStatus(),
+				leaseExpiresAt,
+				cancelRequested
+		);
+	}
+
+	@Transactional
+	public OperationResponse acknowledgeCancelled(UUID operationId, UUID attemptId, String workerId, Long runtimeMs) {
+		lockJobForOperation(operationId);
+		Instant now = nowUtc();
+		Operation operation = operationRepository.findByIdWithJobAndOperations(operationId)
+				.orElseThrow(() -> new OperationNotFoundException(operationId));
+		ExecutionAttempt attempt = attemptRepository.findByIdAndOperation_Id(attemptId, operationId)
+				.orElseThrow(() -> new AttemptNotFoundException(attemptId));
+		if (operation.getStatus() == com.example.drive.job.domain.OperationStatus.CANCELLED
+				&& attempt.getStatus() == AttemptStatus.CANCELLED
+				&& attemptId.equals(operation.getCurrentAttemptId())
+				&& attempt.getWorkerId().equals(workerId)) {
+			return OperationResponse.from(operation);
+		}
+		if (attempt.getStatus() != AttemptStatus.RUNNING
+				|| operation.getStatus() != com.example.drive.job.domain.OperationStatus.CANCEL_REQUESTED
+				|| !attemptId.equals(operation.getCurrentAttemptId())
+				|| !attempt.getWorkerId().equals(workerId)) {
+			rejectStale(attemptId, operationId);
+		}
+		attempt.markCancelled(now, runtimeMs, null);
+		operation.markCancelled(now);
+		operation.getJob().refreshStatusFromOperations(now);
+		log.info(
+				"event=attempt_cancelled operationId={} attemptId={} workerId={} runtimeMs={}",
+				operation.getId(),
+				attempt.getId(),
+				attempt.getWorkerId(),
+				runtimeMs
+		);
+		return OperationResponse.from(operation);
 	}
 
 	@Transactional
@@ -260,8 +302,22 @@ public class InternalOperationService {
 		if (attempt == null
 				|| attempt.getStatus() != AttemptStatus.RUNNING
 				|| !attemptId.equals(operation.getCurrentAttemptId())
-				|| !attempt.getLeaseExpiresAt().isBefore(now)
-				|| operation.getStatus() != com.example.drive.job.domain.OperationStatus.RUNNING) {
+				|| !attempt.getLeaseExpiresAt().isBefore(now)) {
+			return false;
+		}
+		if (operation.getStatus() == com.example.drive.job.domain.OperationStatus.CANCEL_REQUESTED) {
+			attempt.markCancelled(now, null, "cancellation acknowledged by lease expiry");
+			operation.markCancelled(now);
+			operation.getJob().refreshStatusFromOperations(now);
+			log.info(
+					"event=attempt_cancelled_by_lease operationId={} attemptId={} workerId={}",
+					operation.getId(),
+					attempt.getId(),
+					attempt.getWorkerId()
+			);
+			return true;
+		}
+		if (operation.getStatus() != com.example.drive.job.domain.OperationStatus.RUNNING) {
 			return false;
 		}
 		Worker worker = workerRepository.findById(attempt.getWorkerId()).orElse(null);
@@ -353,6 +409,11 @@ public class InternalOperationService {
 				attemptId,
 				"Attempt " + attemptId + " is not the current execution owner for operation " + operationId
 		);
+	}
+
+	private static boolean isRenewableOperation(Operation operation) {
+		return operation.getStatus() == com.example.drive.job.domain.OperationStatus.RUNNING
+				|| operation.getStatus() == com.example.drive.job.domain.OperationStatus.CANCEL_REQUESTED;
 	}
 
 	private Worker requireEligibleWorker(String rawWorkerId) {

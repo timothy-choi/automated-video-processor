@@ -406,6 +406,85 @@ func TestFfmpegFailureMessageDropsSvtInfoBanner(t *testing.T) {
 	}
 }
 
+func TestFFmpegCommandContextKillsLongEncode(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	dir := t.TempDir()
+	output := filepath.Join(dir, "out.mp4")
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runFFmpeg(ctx, "ffmpeg",
+			"-y",
+			"-f", "lavfi",
+			"-i", "testsrc=duration=120:size=320x240:rate=30",
+			"-c:v", "libx264",
+			"-preset", "ultrafast",
+			output,
+		)
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(output); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	started := time.Now()
+	cancel()
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected ffmpeg to fail after cancel")
+		}
+		if time.Since(started) > 5*time.Second {
+			t.Fatalf("ffmpeg took too long to die: %s", time.Since(started))
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("ffmpeg did not exit after cancel")
+	}
+}
+
+func TestTranscodeAV1ContextCancelStopsBeforeCompletion(t *testing.T) {
+	encoder := requireAV1Encoder(t)
+	dir := t.TempDir()
+	sample := filepath.Join(dir, "h264.mp4")
+	generateSample(t, sample, "testsrc=duration=4:size=640x360:rate=24", true)
+	output := filepath.Join(dir, "out.mp4")
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- TranscodeAV1(ctx, "ffmpeg", sample, output, encoder)
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(output); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	started := time.Now()
+	cancel()
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected AV1 encode to fail after cancel")
+		}
+		if time.Since(started) > 8*time.Second {
+			t.Fatalf("AV1 ffmpeg took too long to die: %s", time.Since(started))
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("AV1 ffmpeg did not exit after cancel")
+	}
+}
+
 func TestTranscodeAV1FromH264Sample(t *testing.T) {
 	encoder := requireAV1Encoder(t)
 	if _, err := exec.LookPath("ffprobe"); err != nil {

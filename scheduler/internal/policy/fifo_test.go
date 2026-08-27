@@ -7,6 +7,15 @@ import (
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/model"
 )
 
+func TestFIFOEmptyOperationsReturnsNoPlacement(t *testing.T) {
+	got, ok := mustSelector(t, FIFO, Lexicographic).Select(model.Snapshot{
+		Workers: []model.Worker{available("worker-a", "METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P", "H264_TO_AV1")},
+	})
+	if ok {
+		t.Fatalf("cancelled work must not be schedulable, got %+v", got)
+	}
+}
+
 func TestFIFOSelectsOldestOperation(t *testing.T) {
 	ten := time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC)
 	eleven := time.Date(2026, 8, 25, 10, 1, 0, 0, time.UTC)

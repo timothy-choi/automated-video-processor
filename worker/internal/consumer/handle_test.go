@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -309,6 +310,172 @@ func TestWorkerIDConfig(t *testing.T) {
 	}
 }
 
+func TestHandleStopsExecutorWhenRenewRequestsCancel(t *testing.T) {
+	ctrl := &fakeControl{start: startedOK(), cancelOnRenew: 1}
+	started := make(chan struct{})
+	decision := HandleWithOptions(context.Background(), "worker-a", []byte(validAssignment), ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+		close(started)
+		<-ctx.Done()
+		return run.Result{RuntimeMs: 9}, ctx.Err()
+	}, Options{RenewInterval: 5 * time.Millisecond})
+	if decision != Ack {
+		t.Fatalf("decision=%s", decision)
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("executor should have started")
+	}
+	if ctrl.cancelled != 1 || ctrl.completes != 0 || ctrl.fails != 0 {
+		t.Fatalf("cancelled=%d completes=%d fails=%d", ctrl.cancelled, ctrl.completes, ctrl.fails)
+	}
+	if ctrl.lastCancelledAttemptID != "attempt-1" {
+		t.Fatalf("cancelled attempt=%s", ctrl.lastCancelledAttemptID)
+	}
+}
+
+func TestHandleDoesNotCompleteWhenCancelWinsTheRaceWithFinishedWork(t *testing.T) {
+	ctrl := &fakeControl{start: startedOK(), cancelOnRenew: 1}
+	decision := HandleWithOptions(context.Background(), "worker-a", []byte(validAssignment), ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+		<-ctx.Done()
+		format := "mp4"
+		return run.Result{
+			RuntimeMs: 4,
+			Metadata:  &model.MetadataResult{FormatName: &format},
+		}, nil
+	}, Options{RenewInterval: 5 * time.Millisecond})
+	if decision != Ack {
+		t.Fatalf("decision=%s", decision)
+	}
+	if ctrl.cancelled != 1 || ctrl.completes != 0 {
+		t.Fatalf("cancelled=%d completes=%d", ctrl.cancelled, ctrl.completes)
+	}
+}
+
+func TestHandleAcksStaleCancellationConflict(t *testing.T) {
+	ctrl := &fakeControl{
+		start:         startedOK(),
+		cancelOnRenew: 1,
+		cancelledErrs: []error{&client.StatusError{Status: http.StatusConflict, Body: `{"code":"STALE_EXECUTION_ATTEMPT"}`}},
+	}
+	decision := HandleWithOptions(context.Background(), "worker-a", []byte(validAssignment), ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+		<-ctx.Done()
+		return run.Result{RuntimeMs: 3}, ctx.Err()
+	}, Options{RenewInterval: 5 * time.Millisecond})
+	if decision != Ack {
+		t.Fatalf("decision=%s", decision)
+	}
+	if ctrl.cancelled != 1 || ctrl.completes != 0 {
+		t.Fatalf("cancelled=%d completes=%d", ctrl.cancelled, ctrl.completes)
+	}
+}
+
+func TestHandleNacksWhenCancelledReportUnavailable(t *testing.T) {
+	ctrl := &fakeControl{
+		start:         startedOK(),
+		cancelOnRenew: 1,
+		cancelledErrs: []error{errors.New("control down"), errors.New("control down"), errors.New("control down")},
+	}
+	decision := HandleWithOptions(context.Background(), "worker-a", []byte(validAssignment), ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+		<-ctx.Done()
+		return run.Result{RuntimeMs: 2}, ctx.Err()
+	}, Options{RenewInterval: 5 * time.Millisecond})
+	if decision != NackRequeue {
+		t.Fatalf("decision=%s", decision)
+	}
+}
+
+func TestHandleStopsOnStaleRenewConflictWithoutCompleting(t *testing.T) {
+	ctrl := &fakeControl{
+		start:     startedOK(),
+		renewErrs: []error{&client.StatusError{Status: http.StatusConflict, Body: `{"code":"STALE_EXECUTION_ATTEMPT"}`}},
+	}
+	decision := HandleWithOptions(context.Background(), "worker-a", []byte(validAssignment), ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+		<-ctx.Done()
+		return run.Result{RuntimeMs: 6}, ctx.Err()
+	}, Options{RenewInterval: 5 * time.Millisecond})
+	if decision != Ack {
+		t.Fatalf("decision=%s", decision)
+	}
+	if ctrl.cancelled != 1 || ctrl.completes != 0 || ctrl.fails != 0 {
+		t.Fatalf("cancelled=%d completes=%d fails=%d", ctrl.cancelled, ctrl.completes, ctrl.fails)
+	}
+}
+
+func TestHandleAcksCancelledTerminalStartWithoutExecuting(t *testing.T) {
+	ctrl := &fakeControl{start: model.StartResponse{Outcome: model.StartAlreadyTerminal, Status: "CANCELLED"}}
+	decision := Handle(context.Background(), "worker-a", []byte(validAssignment), ctrl, unexpectedExec(t))
+	if decision != Ack {
+		t.Fatalf("decision=%s", decision)
+	}
+	if ctrl.cancelled != 0 || ctrl.completes != 0 {
+		t.Fatalf("cancelled=%d completes=%d", ctrl.cancelled, ctrl.completes)
+	}
+}
+
+func TestHandleCancelsEachOperationType(t *testing.T) {
+	types := []string{"METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P", "H264_TO_AV1"}
+	for _, opType := range types {
+		t.Run(opType, func(t *testing.T) {
+			body := []byte(`{
+				"schemaVersion": 1,
+				"operationId": "11111111-1111-1111-1111-111111111111",
+				"jobId": "22222222-2222-2222-2222-222222222222",
+				"type": "` + opType + `",
+				"inputUri": "s3://media-input/sample.mp4",
+				"dispatchedAt": "2026-08-25T02:00:00Z"
+			}`)
+			ctrl := &fakeControl{start: startedOK(), cancelOnRenew: 1}
+			sawType := ""
+			decision := HandleWithOptions(context.Background(), "worker-a", body, ctrl, func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+				sawType = claimed.Type
+				<-ctx.Done()
+				return run.Result{RuntimeMs: 1}, ctx.Err()
+			}, Options{RenewInterval: 5 * time.Millisecond})
+			if decision != Ack {
+				t.Fatalf("decision=%s", decision)
+			}
+			if sawType != opType {
+				t.Fatalf("type=%s", sawType)
+			}
+			if ctrl.cancelled != 1 || ctrl.completes != 0 {
+				t.Fatalf("cancelled=%d completes=%d", ctrl.cancelled, ctrl.completes)
+			}
+		})
+	}
+}
+
+func TestHandleShutdownStillNacksWithoutUserCancel(t *testing.T) {
+	ctrl := &fakeControl{start: startedOK()}
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	done := make(chan Decision, 1)
+	go func() {
+		done <- Handle(ctx, "worker-a", []byte(validAssignment), ctrl, func(execCtx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
+			close(started)
+			<-execCtx.Done()
+			return run.Result{RuntimeMs: 1}, execCtx.Err()
+		})
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("executor did not start")
+	}
+	cancel()
+	select {
+	case decision := <-done:
+		if decision != NackRequeue {
+			t.Fatalf("decision=%s", decision)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("handle did not return")
+	}
+	if ctrl.cancelled != 0 || ctrl.completes != 0 || ctrl.fails != 0 {
+		t.Fatalf("cancelled=%d completes=%d fails=%d", ctrl.cancelled, ctrl.completes, ctrl.fails)
+	}
+}
+
 func unexpectedExec(t *testing.T) Executor {
 	t.Helper()
 	return func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error) {
@@ -322,22 +489,30 @@ func startedOK() model.StartResponse {
 }
 
 type fakeControl struct {
-	start                 model.StartResponse
-	startErr              error
-	completeErrs          []error
-	failErrs              []error
-	renewErrs             []error
-	completes             int
-	fails                 int
-	starts                int
-	renews                int
-	lastStartWorkerID     string
-	lastStartAssignmentID string
-	lastComplete          model.CompleteRequest
-	lastFailAttemptID     string
+	mu                     sync.Mutex
+	start                  model.StartResponse
+	startErr               error
+	completeErrs           []error
+	failErrs               []error
+	renewErrs              []error
+	cancelledErrs          []error
+	cancelOnRenew          int
+	completes              int
+	fails                  int
+	starts                 int
+	renews                 int
+	cancelled              int
+	lastStartWorkerID      string
+	lastStartAssignmentID  string
+	lastComplete           model.CompleteRequest
+	lastFailAttemptID      string
+	lastCancelledAttemptID string
+	lastCancelledRuntimeMs int64
 }
 
 func (f *fakeControl) Start(ctx context.Context, operationID, workerID, assignmentID string) (model.StartResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.starts++
 	f.lastStartWorkerID = workerID
 	f.lastStartAssignmentID = assignmentID
@@ -348,6 +523,8 @@ func (f *fakeControl) Start(ctx context.Context, operationID, workerID, assignme
 }
 
 func (f *fakeControl) Complete(ctx context.Context, operationID string, request model.CompleteRequest) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.completes++
 	f.lastComplete = request
 	if len(f.completeErrs) > 0 {
@@ -359,6 +536,8 @@ func (f *fakeControl) Complete(ctx context.Context, operationID string, request 
 }
 
 func (f *fakeControl) Fail(ctx context.Context, operationID string, runtimeMs *int64, reason, attemptID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.fails++
 	f.lastFailAttemptID = attemptID
 	if len(f.failErrs) > 0 {
@@ -370,11 +549,31 @@ func (f *fakeControl) Fail(ctx context.Context, operationID string, runtimeMs *i
 }
 
 func (f *fakeControl) Renew(ctx context.Context, operationID, attemptID, workerID string) (model.RenewResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.renews++
 	if len(f.renewErrs) > 0 {
 		err := f.renewErrs[0]
 		f.renewErrs = f.renewErrs[1:]
 		return model.RenewResponse{}, err
 	}
-	return model.RenewResponse{AttemptID: attemptID, WorkerID: workerID, Status: "RUNNING"}, nil
+	resp := model.RenewResponse{AttemptID: attemptID, WorkerID: workerID, Status: "RUNNING"}
+	if f.cancelOnRenew > 0 && f.renews >= f.cancelOnRenew {
+		resp.CancelRequested = true
+	}
+	return resp, nil
+}
+
+func (f *fakeControl) Cancelled(ctx context.Context, operationID, attemptID, workerID string, runtimeMs int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cancelled++
+	f.lastCancelledAttemptID = attemptID
+	f.lastCancelledRuntimeMs = runtimeMs
+	if len(f.cancelledErrs) > 0 {
+		err := f.cancelledErrs[0]
+		f.cancelledErrs = f.cancelledErrs[1:]
+		return err
+	}
+	return nil
 }

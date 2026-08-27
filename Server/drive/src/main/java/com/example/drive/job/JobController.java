@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.example.drive.job.dto.CancelOperationResponse;
 import com.example.drive.job.dto.CreateJobRequest;
 import com.example.drive.job.dto.JobArtifactsResponse;
 import com.example.drive.job.dto.JobOperationsResponse;
@@ -24,14 +25,29 @@ import jakarta.validation.Valid;
 public class JobController {
 
 	private final JobService jobService;
+	private final JobCancellationService jobCancellationService;
 
-	public JobController(JobService jobService) {
+	public JobController(JobService jobService, JobCancellationService jobCancellationService) {
 		this.jobService = jobService;
+		this.jobCancellationService = jobCancellationService;
 	}
 
 	@PostMapping
 	public ResponseEntity<JobResponse> createJob(@Valid @RequestBody CreateJobRequest request) {
 		return ResponseEntity.status(HttpStatus.ACCEPTED).body(jobService.createJob(request));
+	}
+
+	@PostMapping("/{id}/cancel")
+	public JobResponse cancelJob(@PathVariable("id") UUID id) {
+		return jobCancellationService.cancelJob(id);
+	}
+
+	@PostMapping("/{id}/operations/{operationId}/cancel")
+	public CancelOperationResponse cancelOperation(
+			@PathVariable("id") UUID id,
+			@PathVariable("operationId") UUID operationId
+	) {
+		return jobCancellationService.cancelOperation(id, operationId);
 	}
 
 	@GetMapping("/{id}")

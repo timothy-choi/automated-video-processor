@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 
@@ -33,7 +32,7 @@ type probeStream struct {
 }
 
 func ProbeFile(ctx context.Context, ffprobePath, inputPath string) (model.MetadataResult, error) {
-	cmd := exec.CommandContext(ctx, ffprobePath,
+	cmd := commandWithContext(ctx, ffprobePath,
 		"-v", "error",
 		"-show_format",
 		"-show_streams",

@@ -29,6 +29,20 @@ func ParseHeartbeatInterval(raw string) (time.Duration, error) {
 	return parsed, nil
 }
 
+func ParseExecutionTimeout(raw string) (time.Duration, error) {
+	if strings.TrimSpace(raw) == "" || strings.TrimSpace(raw) == "0" || strings.TrimSpace(raw) == "0s" {
+		return 0, nil
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid EXECUTION_TIMEOUT %q: %w", raw, err)
+	}
+	if parsed < 0 {
+		return 0, fmt.Errorf("invalid EXECUTION_TIMEOUT %q: must be >= 0", raw)
+	}
+	return parsed, nil
+}
+
 func ParseLeaseRenewInterval(raw string) (time.Duration, error) {
 	if strings.TrimSpace(raw) == "" {
 		return lease.DefaultRenewInterval, nil

@@ -39,6 +39,7 @@ func main() {
 		OutputBucket:        envOr("OUTPUT_BUCKET", "media-output"),
 		HeartbeatInterval:   heartbeatInterval(),
 		LeaseRenewInterval:  leaseRenewInterval(),
+		ExecutionTimeout:    executionTimeout(),
 		SupportedOperations: restrict,
 		ObjectStore: storage.Config{
 			Endpoint:       envOr("OBJECT_STORE_ENDPOINT", "http://localhost:9000"),
@@ -74,6 +75,14 @@ func heartbeatInterval() time.Duration {
 
 func leaseRenewInterval() time.Duration {
 	parsed, err := worker.ParseLeaseRenewInterval(os.Getenv("LEASE_RENEW_INTERVAL"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	return parsed
+}
+
+func executionTimeout() time.Duration {
+	parsed, err := worker.ParseExecutionTimeout(os.Getenv("EXECUTION_TIMEOUT"))
 	if err != nil {
 		log.Fatal(err)
 	}

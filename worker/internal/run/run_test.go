@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/timothy-choi/automated-video-processor/worker/internal/model"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/storage"
@@ -500,6 +501,87 @@ func TestExecuteUploadFailure(t *testing.T) {
 	}, deps)
 	if err == nil || !strings.Contains(err.Error(), "upload") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestExecuteCancelledDoesNotUpload(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.mp4")
+	if err := os.WriteFile(source, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	codec := "h264"
+	cases := []string{"METADATA", "THUMBNAIL", "AUDIO_EXTRACTION", "TRANSCODE_1080P", "H264_TO_AV1"}
+	for _, opType := range cases {
+		t.Run(opType, func(t *testing.T) {
+			store := storage.NewMemoryStore()
+			started := make(chan struct{})
+			block := func(ctx context.Context) error {
+				select {
+				case <-started:
+				default:
+					close(started)
+				}
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			deps := testDeps(store)
+			deps.Probe = func(ctx context.Context, ffprobePath, inputPath string) (model.MetadataResult, error) {
+				if opType == "METADATA" {
+					return model.MetadataResult{}, block(ctx)
+				}
+				return model.MetadataResult{VideoCodec: &codec}, nil
+			}
+			deps.Thumbnail = func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
+				return block(ctx)
+			}
+			deps.Audio = func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
+				return block(ctx)
+			}
+			deps.Transcode = func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
+				return block(ctx)
+			}
+			deps.TranscodeAV1 = func(ctx context.Context, ffmpegPath, inputPath, outputPath string) error {
+				return block(ctx)
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			errCh := make(chan error, 1)
+			go func() {
+				_, err := Execute(ctx, &model.ClaimedOperation{
+					OperationID: "op-cancel",
+					JobID:       "job-cancel",
+					Type:        opType,
+					InputURI:    "file://" + source,
+				}, deps)
+				errCh <- err
+			}()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("executor did not start")
+			}
+			cancel()
+			select {
+			case err := <-errCh:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("err=%v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("execute did not stop")
+			}
+			keys := []string{
+				storage.ThumbnailObjectKey("job-cancel", "op-cancel"),
+				storage.AudioObjectKey("job-cancel", "op-cancel"),
+				storage.Transcode1080pObjectKey("job-cancel", "op-cancel"),
+				storage.AV1ObjectKey("job-cancel", "op-cancel"),
+			}
+			for _, key := range keys {
+				if _, ok := store.Get("media-output", key); ok {
+					t.Fatalf("cancelled execution uploaded %s", key)
+				}
+			}
+		})
 	}
 }
 

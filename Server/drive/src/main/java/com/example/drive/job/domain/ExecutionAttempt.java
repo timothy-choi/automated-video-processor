@@ -139,4 +139,11 @@ public class ExecutionAttempt {
 		this.endedAt = now;
 		this.failureReason = "lease expired while worker was UNAVAILABLE";
 	}
+
+	public void markCancelled(Instant now, Long runtimeMs, String reason) {
+		this.status = AttemptStatus.CANCELLED;
+		this.endedAt = now;
+		this.actualRuntimeMs = runtimeMs;
+		this.failureReason = reason;
+	}
 }

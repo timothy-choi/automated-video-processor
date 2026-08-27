@@ -9,6 +9,7 @@ public record RenewAttemptResponse(
 		UUID attemptId,
 		String workerId,
 		AttemptStatus status,
-		Instant leaseExpiresAt
+		Instant leaseExpiresAt,
+		boolean cancelRequested
 ) {
 }
