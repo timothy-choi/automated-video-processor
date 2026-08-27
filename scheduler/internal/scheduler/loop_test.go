@@ -96,6 +96,21 @@ func TestTickConflictDoesNotCrash(t *testing.T) {
 	}
 }
 
+func TestTickEmptySnapshotDoesNotAssign(t *testing.T) {
+	ctrl := &fakeControl{
+		snapshot: model.Snapshot{
+			Workers: []model.Worker{{ID: "worker-a", Status: "AVAILABLE", SupportedOperations: []string{"METADATA"}}},
+		},
+	}
+	loop := &Loop{Client: ctrl, Selector: mustSelector(t, policy.FIFO, policy.Lexicographic), PollInterval: 150 * time.Millisecond}
+	if wait := loop.tick(context.Background()); wait != 150*time.Millisecond {
+		t.Fatalf("wait=%s", wait)
+	}
+	if ctrl.assignCalls != 0 {
+		t.Fatalf("assignCalls=%d", ctrl.assignCalls)
+	}
+}
+
 func TestTickNoEligibleWorkerSleeps(t *testing.T) {
 	ctrl := &fakeControl{
 		snapshot: model.Snapshot{

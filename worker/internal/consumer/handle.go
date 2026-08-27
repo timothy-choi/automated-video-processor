@@ -2,7 +2,9 @@ package consumer
 
 import (
 	"context"
+	"errors"
 	"log"
+	"sync/atomic"
 	"time"
 
 	"github.com/timothy-choi/automated-video-processor/worker/internal/assignment"
@@ -39,6 +41,7 @@ type Control interface {
 	Complete(ctx context.Context, operationID string, request model.CompleteRequest) error
 	Fail(ctx context.Context, operationID string, runtimeMs *int64, reason, attemptID string) error
 	Renew(ctx context.Context, operationID, attemptID, workerID string) (model.RenewResponse, error)
+	Cancelled(ctx context.Context, operationID, attemptID, workerID string, runtimeMs int64) error
 }
 
 type Executor func(ctx context.Context, claimed *model.ClaimedOperation) (run.Result, error)
@@ -141,20 +144,62 @@ func HandleWithOptions(ctx context.Context, workerID string, body []byte, ctrl C
 	if renewInterval <= 0 {
 		renewInterval = lease.DefaultRenewInterval
 	}
+	execCtx, stopExec := context.WithCancel(ctx)
+	defer stopExec()
+	var userCancel atomic.Bool
 	renewCtx, stopRenew := context.WithCancel(ctx)
 	defer stopRenew()
 	go lease.RunLoop(renewCtx, renewInterval, func(renewCallCtx context.Context) error {
-		_, err := ctrl.Renew(renewCallCtx, parsed.OperationID, start.AttemptID, workerID)
-		return err
+		resp, err := ctrl.Renew(renewCallCtx, parsed.OperationID, start.AttemptID, workerID)
+		if err != nil {
+			if client.IsConflict(err) {
+				userCancel.Store(true)
+				stopExec()
+			}
+			return err
+		}
+		if resp.CancelRequested {
+			userCancel.Store(true)
+			stopExec()
+		}
+		return nil
 	})
 
 	log.Printf(
 		"worker=%s job=%s operation=%s type=%s attempt=%s event=execution_start",
 		workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID,
 	)
-	result, execErr := exec(ctx, parsed.Claimed())
+	result, execErr := exec(execCtx, parsed.Claimed())
 	stopRenew()
+	if userCancel.Load() {
+		decision := reportWithRetry(ctx, func(reportCtx context.Context) error {
+			return ctrl.Cancelled(reportCtx, parsed.OperationID, start.AttemptID, workerID, result.RuntimeMs)
+		})
+		log.Printf(
+			"worker=%s job=%s operation=%s type=%s attempt=%s event=execution_cancelled runtime_ms=%d decision=%s",
+			workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID, result.RuntimeMs, decision,
+		)
+		return decision
+	}
 	if execErr != nil {
+		if errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				reason := "execution timeout exceeded"
+				decision := reportWithRetry(ctx, func(reportCtx context.Context) error {
+					return ctrl.Fail(reportCtx, parsed.OperationID, &result.RuntimeMs, reason, start.AttemptID)
+				})
+				log.Printf(
+					"worker=%s job=%s operation=%s type=%s attempt=%s event=execution_timeout runtime_ms=%d decision=%s",
+					workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID, result.RuntimeMs, decision,
+				)
+				return decision
+			}
+			log.Printf(
+				"worker=%s job=%s operation=%s type=%s attempt=%s event=execution_interrupted err=%v decision=%s",
+				workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID, execErr, NackRequeue,
+			)
+			return NackRequeue
+		}
 		decision := reportWithRetry(ctx, func(reportCtx context.Context) error {
 			return ctrl.Fail(reportCtx, parsed.OperationID, &result.RuntimeMs, execErr.Error(), start.AttemptID)
 		})

@@ -31,6 +31,7 @@ type Config struct {
 	OutputBucket        string
 	HeartbeatInterval   time.Duration
 	LeaseRenewInterval  time.Duration
+	ExecutionTimeout    time.Duration
 	SupportedOperations []string
 	ObjectStore         storage.Config
 }
@@ -91,6 +92,7 @@ func New(cfg Config, store storage.ObjectStore) *Worker {
 			Prefetch:            w.cfg.Prefetch,
 			SupportedOperations: supported,
 			LeaseRenewInterval:  w.cfg.LeaseRenewInterval,
+			ExecutionTimeout:    w.cfg.ExecutionTimeout,
 		}, w.client, consumer.Executor(exec)).Run(ctx)
 	}
 	return w

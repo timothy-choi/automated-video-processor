@@ -8,7 +8,9 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/rabbitmq"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/timothy-choi/automated-video-processor/worker/internal/consumer"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/model"
@@ -182,7 +184,11 @@ func TestDuplicateDeliveryDoesNotExecuteTwice(t *testing.T) {
 func startRabbit(t *testing.T) string {
 	t.Helper()
 	ctx := context.Background()
-	container, err := rabbitmq.Run(ctx, "rabbitmq:3.13-management-alpine")
+	container, err := rabbitmq.Run(ctx, "rabbitmq:3.13-management-alpine",
+		testcontainers.WithWaitStrategy(
+			wait.ForLog(".*Server startup complete.*").AsRegexp().WithStartupTimeout(3*time.Minute),
+		),
+	)
 	if err != nil {
 		t.Fatalf("rabbitmq container unavailable: %v", err)
 	}
@@ -292,4 +298,8 @@ func (r *recordingControl) Fail(ctx context.Context, operationID string, runtime
 
 func (r *recordingControl) Renew(ctx context.Context, operationID, attemptID, workerID string) (model.RenewResponse, error) {
 	return model.RenewResponse{AttemptID: attemptID, WorkerID: workerID, Status: "RUNNING"}, nil
+}
+
+func (r *recordingControl) Cancelled(ctx context.Context, operationID, attemptID, workerID string, runtimeMs int64) error {
+	return nil
 }

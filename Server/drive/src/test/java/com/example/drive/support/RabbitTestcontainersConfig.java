@@ -1,5 +1,7 @@
 package com.example.drive.support;
 
+import java.time.Duration;
+
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Bean;
@@ -12,6 +14,7 @@ public class RabbitTestcontainersConfig {
 	@Bean
 	@ServiceConnection
 	RabbitMQContainer rabbitmqContainer() {
-		return new RabbitMQContainer(DockerImageName.parse("rabbitmq:3.13-management-alpine"));
+		return new RabbitMQContainer(DockerImageName.parse("rabbitmq:3.13-management-alpine"))
+				.withStartupTimeout(Duration.ofMinutes(3));
 	}
 }

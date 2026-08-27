@@ -12,6 +12,9 @@ func RunLoop(ctx context.Context, interval time.Duration, renew func(context.Con
 	if interval <= 0 {
 		interval = DefaultRenewInterval
 	}
+	if err := renew(ctx); err != nil {
+		log.Printf("event=lease_renew_failed err=%v", err)
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {

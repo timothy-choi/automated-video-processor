@@ -175,6 +175,18 @@ func (c *Client) Fail(ctx context.Context, operationID string, runtimeMs *int64,
 	return c.postJSON(ctx, "/internal/operations/"+operationID+"/fail", payload)
 }
 
+func (c *Client) Cancelled(ctx context.Context, operationID, attemptID, workerID string, runtimeMs int64) error {
+	payload, err := json.Marshal(model.CancelledRequest{
+		WorkerID:        workerID,
+		ActualRuntimeMs: runtimeMs,
+	})
+	if err != nil {
+		return err
+	}
+	path := "/internal/operations/" + operationID + "/attempts/" + attemptID + "/cancelled"
+	return c.postJSON(ctx, path, payload)
+}
+
 func (c *Client) RegisterWorker(ctx context.Context, request model.RegisterWorkerRequest) (model.RegisterWorkerResponse, error) {
 	payload, err := json.Marshal(request)
 	if err != nil {

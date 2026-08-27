@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -165,7 +164,7 @@ func TranscodeAV1(ctx context.Context, ffmpegPath, inputPath, outputPath, encode
 }
 
 func runFFmpeg(ctx context.Context, ffmpegPath string, args ...string) error {
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	cmd := commandWithContext(ctx, ffmpegPath, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

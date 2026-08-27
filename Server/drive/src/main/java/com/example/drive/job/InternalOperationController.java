@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.example.drive.dispatch.DispatchProperties;
+import com.example.drive.job.dto.CancelledAttemptRequest;
 import com.example.drive.job.dto.ClaimedOperationResponse;
 import com.example.drive.job.dto.CompleteOperationRequest;
 import com.example.drive.job.dto.FailOperationRequest;
@@ -60,6 +61,20 @@ public class InternalOperationController {
 			@Valid @RequestBody WorkerIdentityRequest request
 	) {
 		return internalOperationService.renew(operationId, attemptId, request.workerId());
+	}
+
+	@PostMapping("/{operationId}/attempts/{attemptId}/cancelled")
+	public OperationResponse cancelled(
+			@PathVariable("operationId") UUID operationId,
+			@PathVariable("attemptId") UUID attemptId,
+			@Valid @RequestBody CancelledAttemptRequest request
+	) {
+		return internalOperationService.acknowledgeCancelled(
+				operationId,
+				attemptId,
+				request.workerId(),
+				request.actualRuntimeMs()
+		);
 	}
 
 	@PostMapping("/{operationId}/complete")

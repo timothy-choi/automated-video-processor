@@ -67,6 +67,11 @@ type FailRequest struct {
 	Reason          string `json:"reason"`
 }
 
+type CancelledRequest struct {
+	WorkerID        string `json:"workerId"`
+	ActualRuntimeMs int64  `json:"actualRuntimeMs"`
+}
+
 type StartRequest struct {
 	WorkerID     string `json:"workerId"`
 	AssignmentID string `json:"assignmentId,omitempty"`
@@ -89,10 +94,11 @@ type RenewRequest struct {
 }
 
 type RenewResponse struct {
-	AttemptID      string     `json:"attemptId"`
-	WorkerID       string     `json:"workerId"`
-	Status         string     `json:"status"`
-	LeaseExpiresAt *time.Time `json:"leaseExpiresAt"`
+	AttemptID        string     `json:"attemptId"`
+	WorkerID         string     `json:"workerId"`
+	Status           string     `json:"status"`
+	LeaseExpiresAt   *time.Time `json:"leaseExpiresAt"`
+	CancelRequested  bool       `json:"cancelRequested"`
 }
 
 const (

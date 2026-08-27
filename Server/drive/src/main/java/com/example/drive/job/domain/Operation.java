@@ -265,4 +265,46 @@ public class Operation {
 		updatedAt = now;
 		return true;
 	}
+
+	public boolean markCancelRequested(Instant now) {
+		if (status == OperationStatus.CANCEL_REQUESTED) {
+			return false;
+		}
+		if (status != OperationStatus.RUNNING) {
+			throw new IllegalOperationStateException(
+					id,
+					"Operation " + id + " cannot move from " + status + " to CANCEL_REQUESTED"
+			);
+		}
+		status = OperationStatus.CANCEL_REQUESTED;
+		updatedAt = now;
+		return true;
+	}
+
+	public boolean markCancelled(Instant now) {
+		if (status == OperationStatus.CANCELLED) {
+			return false;
+		}
+		if (status != OperationStatus.QUEUED
+				&& status != OperationStatus.ASSIGNED
+				&& status != OperationStatus.CANCEL_REQUESTED) {
+			throw new IllegalOperationStateException(
+					id,
+					"Operation " + id + " cannot move from " + status + " to CANCELLED"
+			);
+		}
+		status = OperationStatus.CANCELLED;
+		completedAt = now;
+		assignedAt = null;
+		assignedWorkerId = null;
+		currentAssignmentId = null;
+		updatedAt = now;
+		return true;
+	}
+
+	public boolean isTerminal() {
+		return status == OperationStatus.COMPLETED
+				|| status == OperationStatus.FAILED
+				|| status == OperationStatus.CANCELLED;
+	}
 }

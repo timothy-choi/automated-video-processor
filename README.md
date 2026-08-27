@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 4D.3**: FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
+This repository is currently at **Phase 5A**: users can cancel jobs and individual operations, including work that is actively running FFmpeg/ffprobe. FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
 
-## Current status: Phase 4D.3 — H264_TO_AV1 as a real codec conversion
+## Current status: Phase 5A — Distributed job and operation cancellation
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,9 +34,14 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
-Phase 4D.3 currently:
+Phase 5A currently:
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write and does **not** publish RabbitMQ)
+- lets users cancel a job (`POST /jobs/{id}/cancel`) or one operation (`POST /jobs/{id}/operations/{operationId}/cancel`) without deleting history
+- cancels `QUEUED` and `ASSIGNED` work immediately; a delayed RabbitMQ assignment cannot start a cancelled operation
+- records `CANCEL_REQUESTED` for `RUNNING` work, tells the owning worker on the next lease renew, and only then marks the attempt and operation `CANCELLED`
+- actually stops the FFmpeg/ffprobe process; cancelled execution cannot persist a new Artifact
+- does **not** requeue user-cancelled work when a lease later expires
 - a **Go scheduler** polls `GET /internal/scheduler/snapshot`, selects the oldest eligible operation (**FIFO**), then chooses a worker with **LEXICOGRAPHIC**, **ROUND_ROBIN**, or **LEAST_LOADED** placement
 - Java revalidates correctness in one transaction: operation still `QUEUED`, worker `AVAILABLE`, worker advertises the type (and Round Robin cursor when that policy is used), then `QUEUED -> ASSIGNED`, writes a `scheduling_decisions` row (`operationPolicy=FIFO`, `workerPolicy=...`), and creates a **worker-targeted** outbox row. Least Loaded is **not** re-checked for optimality at commit.
 - the Java outbox publisher sends that assignment to RabbitMQ with routing key `worker.{workerId}`
@@ -44,10 +49,10 @@ Phase 4D.3 currently:
 - workers send **periodic heartbeats**; the control service marks them `AVAILABLE` or `UNAVAILABLE`
 - `GET /workers` lists workers, static capabilities, `status`, and `lastHeartbeat`
 - workers call `POST /internal/operations/{id}/start` with `workerId` and `assignmentId` so PostgreSQL creates an `ExecutionAttempt` only for the **current** placement
-- workers renew that lease independently of heartbeats while media work runs
+- workers renew that lease independently of heartbeats while media work runs; renew responses can request cancellation
 - if a selected worker never starts, assignment timeout plus `UNAVAILABLE` returns the operation to `QUEUED` for a new scheduler placement
 - a delayed old assignment is rejected (`409 STALE_ASSIGNMENT`) and cannot create an attempt
-- if a worker becomes `UNAVAILABLE` **after** start and its attempt lease expires, the attempt is `INTERRUPTED`, the operation is `QUEUED`, and the Go scheduler can place it on another eligible worker
+- if a worker becomes `UNAVAILABLE` **after** start and its attempt lease expires, the attempt is `INTERRUPTED`, the operation is `QUEUED`, and the Go scheduler can place it on another eligible worker — unless cancellation was already requested, in which case both become `CANCELLED`
 - a late result from an old attempt is rejected (`409 STALE_EXECUTION_ATTEMPT`)
 - downloads `s3://` inputs (and still accepts `file://`)
 - runs **real ffprobe** and **real FFmpeg**
@@ -84,7 +89,8 @@ Java Control Service
 PostgreSQL  <--- worker registration (upsert by WORKER_ID)
   ^              <--- POST /internal/workers/{id}/heartbeat
   ^              <--- start (assignmentId + workerId; creates ExecutionAttempt + lease)
-  ^              <--- renew / complete / fail (attemptId required)
+  ^              <--- renew (leaseExpiresAt + cancelRequested) / complete / fail / cancelled
+  ^              <--- POST /jobs/{id}/cancel and POST /jobs/{id}/operations/{operationId}/cancel
   ^              <--- scheduling_decisions + targeted dispatch_outbox
   |
   | stale-heartbeat sweeper
@@ -95,6 +101,8 @@ PostgreSQL  <--- worker registration (upsert by WORKER_ID)
   |     -> operation QUEUED (outbox row deleted)
   |
   | expired-lease sweeper
+  |   CANCEL_REQUESTED + expired lease
+  |     -> attempt CANCELLED, operation CANCELLED (not requeued)
   |   RUNNING attempt + expired lease + UNAVAILABLE worker
   |     -> attempt INTERRUPTED, operation QUEUED
   |
@@ -251,6 +259,29 @@ curl -sS http://localhost:8080/jobs/<job-id>/operations
 curl -sS http://localhost:8080/jobs/<job-id>/operations/<operation-id>/attempts
 curl -sS http://localhost:8080/jobs/<job-id>/artifacts
 ```
+
+### Cancel a job or operation
+
+Cancellation is a `POST` because the job and its history remain. Both endpoints are **idempotent**.
+
+```bash
+curl -sS -X POST http://localhost:8080/jobs/<job-id>/cancel
+curl -sS -X POST http://localhost:8080/jobs/<job-id>/operations/<operation-id>/cancel
+```
+
+Unknown jobs return **404** `JOB_NOT_FOUND`. An operation that does not belong to that job returns **404** `OPERATION_NOT_FOUND`.
+
+| Current state | What cancellation does |
+| --- | --- |
+| `QUEUED` | becomes `CANCELLED` immediately; it is no longer schedulable |
+| `ASSIGNED` but not started | becomes `CANCELLED`; the current `assignmentId` is cleared; a delayed RabbitMQ message cannot start it |
+| `RUNNING` | becomes `CANCEL_REQUESTED`; the worker is told on lease renew; FFmpeg/ffprobe is killed; then attempt and operation become `CANCELLED` |
+| already `CANCELLED` or `CANCEL_REQUESTED` | success with the current state |
+| `COMPLETED` or `FAILED` | **409** — history is not rewritten; artifacts are not deleted |
+
+Cancelling one operation does not cancel the others. A job whose requested work was explicitly cancelled becomes `CANCELLED` even if some operations already completed, because the requested job was not fully fulfilled. Any `FAILED` operation still makes the job `FAILED`.
+
+Approximate cancellation latency for running FFmpeg is one **lease renew** (default `LEASE_RENEW_INTERVAL=10s`; workers also renew immediately after start). Temporary control-service failures do **not** fake a cancel. Successful artifacts from earlier completed operations are kept. A cancelled run must not persist a new Artifact. If the worker uploaded bytes before it learned about cancel, that object can remain in MinIO without an Artifact row (same orphan class as a crash before `complete`).
 
 `priority` defaults to `NORMAL` when omitted. `deadline` is optional. Unknown jobs return **404**. Invalid bodies (missing `inputUri`, empty `operations`, unknown operation type, past deadline) return **400**.
 
@@ -509,7 +540,7 @@ Heterogeneous registry demo (still the same binary; restriction only):
 SUPPORTED_OPERATIONS=METADATA WORKER_ID=worker-b ... go run ./cmd/worker
 ```
 
-Those MinIO and RabbitMQ keys are local development defaults. `PREFETCH` defaults to `1`. `FFPROBE_PATH` defaults to `ffprobe`. `FFMPEG_PATH` defaults to `ffmpeg`. `WORKER_HOSTNAME` overrides `os.Hostname()` when set. `HEARTBEAT_INTERVAL` defaults to `5s` (Go duration, for example `5s` or `500ms`). `LEASE_RENEW_INTERVAL` defaults to `10s` and should stay below half of `OPERATION_LEASE_DURATION` (control-service default `30s`). Invalid or non-positive values fail startup. Stop a worker with SIGINT/SIGTERM: in-flight unacked messages are requeued by RabbitMQ; missed heartbeats eventually mark the worker `UNAVAILABLE`; an unrenewed lease plus `UNAVAILABLE` lets the control plane interrupt the attempt and requeue the operation. There is no explicit relinquish endpoint in this phase.
+Those MinIO and RabbitMQ keys are local development defaults. `PREFETCH` defaults to `1`. `FFPROBE_PATH` defaults to `ffprobe`. `FFMPEG_PATH` defaults to `ffmpeg`. `WORKER_HOSTNAME` overrides `os.Hostname()` when set. `HEARTBEAT_INTERVAL` defaults to `5s` (Go duration, for example `5s` or `500ms`). `LEASE_RENEW_INTERVAL` defaults to `10s` and should stay below half of `OPERATION_LEASE_DURATION` (control-service default `30s`). Invalid or non-positive values fail startup. `EXECUTION_TIMEOUT` is optional; empty, `0`, or `0s` means no extra wall-clock cap (the previous accidental two-minute worker context is gone). Running work is bounded by user cancellation, lease ownership, and worker shutdown. Stop a worker with SIGINT/SIGTERM: in-flight unacked messages are requeued by RabbitMQ; missed heartbeats eventually mark the worker `UNAVAILABLE`; an unrenewed lease plus `UNAVAILABLE` lets the control plane interrupt the attempt and requeue the operation **unless** the user already requested cancellation, in which case the operation becomes `CANCELLED` and is not rescheduled. There is no explicit relinquish endpoint in this phase.
 
 Then:
 
@@ -830,7 +861,7 @@ Worker:
 LEASE_RENEW_INTERVAL=10s
 ```
 
-Keep `LEASE_RENEW_INTERVAL` less than half of `OPERATION_LEASE_DURATION`. Transient renew failures are logged and retried on the next interval; they do not kill media work. If renewals stop and the worker is later `UNAVAILABLE`, the control plane may reclaim the attempt. A late `complete`/`fail` from that attempt is then `409 STALE_EXECUTION_ATTEMPT`.
+Keep `LEASE_RENEW_INTERVAL` less than half of `OPERATION_LEASE_DURATION`. Transient renew failures are logged and retried on the next interval; they do not kill media work. The renew response includes `cancelRequested`. When it is true, the worker cancels the execution context (FFmpeg/ffprobe exits), does not call `complete`, and acknowledges `POST /internal/operations/{operationId}/attempts/{attemptId}/cancelled`. If renewals stop and the worker is later `UNAVAILABLE`, the control plane may reclaim a `RUNNING` attempt onto `QUEUED`. A `CANCEL_REQUESTED` attempt whose lease expires becomes `CANCELLED` instead of being requeued. A late `complete`/`fail` from that attempt is then `409 STALE_EXECUTION_ATTEMPT`.
 
 ### Recovery after worker failure
 
@@ -914,7 +945,7 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 
 `GET /jobs/{jobId}/operations/{operationId}/attempts` is a read-only history API (no lease internals).
 
-### Phase 4D.3 limitations
+### Phase 5A limitations
 
 - TRANSCODE_4K_TO_1080P is retired; use TRANSCODE_1080P for 1080p H.264 output including 4K sources
 - H264_TO_AV1 requires an H.264 video stream and a software AV1 encoder (`libsvtav1` or `libaom-av1`)
@@ -933,6 +964,9 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 - no benchmark framework
 - worker queues are not deleted when a worker becomes `UNAVAILABLE`
 - the legacy Java enqueue path remains for tests (`drive.dispatch.scheduling-enabled`); keep it off in production
+- running cancellation is observed on lease renew (about 10s by default), not a dedicated cancel broker
+- orphan MinIO objects from a cancelled upload are not garbage-collected
+- no retry API and no automatic user retries
 
 ## What is inactive
 
@@ -987,4 +1021,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next **product** milestone is a useful media capability that is not another redundant H.264 1080p path — for example cancellation of in-flight work, or a clearly distinct delivery format. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.
+The smallest next **product** milestone is explicit retry of failed work, or a clearly distinct delivery format that is not another redundant H.264 1080p path. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.
