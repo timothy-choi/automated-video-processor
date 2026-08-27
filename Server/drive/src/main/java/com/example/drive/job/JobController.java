@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.example.drive.job.dto.ArtifactDownloadResponse;
 import com.example.drive.job.dto.ArtifactResponse;
 import com.example.drive.job.dto.CancelOperationResponse;
 import com.example.drive.job.dto.CreateJobRequest;
@@ -33,15 +34,18 @@ public class JobController {
 	private final JobService jobService;
 	private final JobCancellationService jobCancellationService;
 	private final JobRetryService jobRetryService;
+	private final ArtifactAccessService artifactAccessService;
 
 	public JobController(
 			JobService jobService,
 			JobCancellationService jobCancellationService,
-			JobRetryService jobRetryService
+			JobRetryService jobRetryService,
+			ArtifactAccessService artifactAccessService
 	) {
 		this.jobService = jobService;
 		this.jobCancellationService = jobCancellationService;
 		this.jobRetryService = jobRetryService;
+		this.artifactAccessService = artifactAccessService;
 	}
 
 	@PostMapping
@@ -129,5 +133,13 @@ public class JobController {
 			@PathVariable("artifactId") UUID artifactId
 	) {
 		return jobService.getArtifact(id, artifactId);
+	}
+
+	@PostMapping("/{id}/artifacts/{artifactId}/download-url")
+	public ArtifactDownloadResponse createArtifactDownloadUrl(
+			@PathVariable("id") UUID id,
+			@PathVariable("artifactId") UUID artifactId
+	) {
+		return artifactAccessService.createDownloadUrl(id, artifactId);
 	}
 }

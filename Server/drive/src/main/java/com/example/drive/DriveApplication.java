@@ -8,6 +8,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import com.example.drive.dispatch.DispatchProperties;
 import com.example.drive.job.OperationAssignmentProperties;
 import com.example.drive.job.OperationLeaseProperties;
+import com.example.drive.storage.ArtifactAccessProperties;
+import com.example.drive.storage.ObjectStoreProperties;
 import com.example.drive.worker.WorkerHeartbeatProperties;
 
 @SpringBootApplication
@@ -16,7 +18,9 @@ import com.example.drive.worker.WorkerHeartbeatProperties;
 		DispatchProperties.class,
 		WorkerHeartbeatProperties.class,
 		OperationLeaseProperties.class,
-		OperationAssignmentProperties.class
+		OperationAssignmentProperties.class,
+		ObjectStoreProperties.class,
+		ArtifactAccessProperties.class
 })
 public class DriveApplication {
 

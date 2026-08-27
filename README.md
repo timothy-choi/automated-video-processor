@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 5C**: users can discover, filter, paginate, and inspect Jobs without already knowing every Job ID. They can also cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation using current queue-entry time. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
+This repository is currently at **Phase 5D**: users can list Jobs and request a **time-limited HTTP URL** for an Artifact without seeing object-store credentials. They can also cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation using current queue-entry time. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
 
-## Current status: Phase 5C — Product Job Management API
+## Current status: Phase 5D — Presigned Artifact Access
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,11 +34,12 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
-Phase 5C currently:
+Phase 5D currently:
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write and does **not** publish RabbitMQ)
 - lists Jobs with PostgreSQL pagination, deterministic newest-first ordering, and AND filters (`GET /jobs`)
 - lets users inspect one Job, its operations, execution attempts, and artifacts without embedding the entire graph in the list payload
+- issues a time-limited HTTP download URL for an Artifact (`POST /jobs/{jobId}/artifacts/{artifactId}/download-url`) without returning object-store credentials
 - lets users cancel a job (`POST /jobs/{id}/cancel`) or one operation (`POST /jobs/{id}/operations/{operationId}/cancel`) without deleting history
 - lets users explicitly retry a **FAILED** operation (`POST /jobs/{id}/operations/{operationId}/retry`) or every FAILED operation in a job (`POST /jobs/{id}/retry`)
 - retry returns the operation to `QUEUED` for normal FIFO scheduling; it does not publish RabbitMQ, create an attempt, or change input URI
@@ -204,7 +205,7 @@ cd Server/drive
 ./mvnw spring-boot:run
 ```
 
-The service listens on port **8080** by default. Override with `SERVER_PORT`. Java operation-selection (`drive.dispatch.scheduling-enabled`) is **off** so it does not compete with the Go scheduler. The outbox publisher stays on.
+The service listens on port **8080** by default. Override with `SERVER_PORT`. Java operation-selection (`drive.dispatch.scheduling-enabled`) is **off** so it does not compete with the Go scheduler. The outbox publisher stays on. Artifact download URLs are signed by this Java process using the same `OBJECT_STORE_*` names as the worker (local MinIO defaults: `http://localhost:9000`, `minioadmin` / `minioadmin`, path-style). Set `OBJECT_STORE_ENDPOINT` to the URL **clients** will call, not a Docker-only hostname.
 
 In another terminal, start the scheduler:
 
@@ -328,20 +329,75 @@ curl -sS http://localhost:8080/jobs/<job-id>/operations
 curl -sS http://localhost:8080/jobs/<job-id>/operations/<operation-id>/attempts
 curl -sS http://localhost:8080/jobs/<job-id>/artifacts
 curl -sS http://localhost:8080/jobs/<job-id>/artifacts/<artifact-id>
+curl -sS -X POST http://localhost:8080/jobs/<job-id>/artifacts/<artifact-id>/download-url
 ```
 
-Artifact JSON uses the existing field names: `id`, `operationId`, `type`, `objectUri`, `contentType`, `sizeBytes`, `checksum`, `createdAt`. `objectUri` is the canonical identity, for example `s3://media-output/jobs/<jobId>/operations/<operationId>/video-av1.mp4`. Storage credentials are never returned. Presigned HTTP download URLs are not implemented in this phase.
+Artifact JSON uses the existing field names: `id`, `operationId`, `type`, `objectUri`, `contentType`, `sizeBytes`, `checksum`, `createdAt`. `objectUri` is the canonical identity, for example `s3://media-output/jobs/<jobId>/operations/<operationId>/video-av1.mp4`. Storage credentials are never returned. List and detail responses do **not** embed a fresh signed URL.
 
 Unknown artifact under that Job: **404** `ARTIFACT_NOT_FOUND`. An artifact that belongs to a different Job is also **404** `ARTIFACT_NOT_FOUND`. Unknown Job: **404** `JOB_NOT_FOUND`.
 
-To inspect or download bytes from local MinIO, use the object URI with an S3-compatible tool. Example:
+### Artifact access (presigned download URL)
+
+Canonical Artifact identity stays `s3://bucket/key`. A download URL is a **temporary bearer capability**, generated only when requested.
+
+This is a `POST` because it mints a new short-lived access URL; it is not reading immutable Artifact metadata (`GET` stays for that).
+
+```bash
+curl -sS -X POST http://localhost:8080/jobs/<job-id>/artifacts/<artifact-id>/download-url
+```
+
+Example response:
+
+```json
+{
+  "artifactId": "...",
+  "url": "http://localhost:9000/media-output/jobs/.../thumbnail.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&...",
+  "expiresAt": "2026-08-27T02:15:00Z",
+  "contentType": "image/jpeg",
+  "fileName": "thumbnail.jpg"
+}
+```
+
+Then:
+
+```bash
+curl -L "<url from response>" -o /tmp/thumbnail.jpg
+```
+
+| Topic | Behavior |
+| --- | --- |
+| Default TTL | **15 minutes** (`ARTIFACT_URL_TTL`, min 1 minute, max 24 hours) |
+| Existence | Java `HEAD`s the object before signing. Missing object → **404** `OBJECT_NOT_FOUND` (no fake URL) |
+| MinIO down | **503** `OBJECT_STORE_UNAVAILABLE` |
+| Invalid stored URI | **400** `ARTIFACT_URI_INVALID` |
+| Filename | Taken from the object key (`thumbnail.jpg`, `audio.m4a`, `video-1080p.mp4`, `video-av1.mp4`). Signed GET does **not** force `Content-Disposition: attachment`, so browsers can preview images/video using the stored content type |
+| Identity vs access | `GET /artifacts` stays stable `s3://` metadata. Signed URLs are not persisted and are not INFO-logged |
+
+Anyone who can call the API can currently request an Artifact URL. There is **no authentication or ownership isolation** yet.
+
+The URL host comes from `OBJECT_STORE_ENDPOINT`. Java on the host against Compose MinIO should use `http://localhost:9000` (or the mapped host port). A URL signed for `http://minio:9000` works inside Docker but not in a host browser.
+
+Local-only defaults (not production secrets):
+
+```text
+OBJECT_STORE_ENDPOINT=http://localhost:9000
+OBJECT_STORE_REGION=us-east-1
+OBJECT_STORE_ACCESS_KEY=minioadmin
+OBJECT_STORE_SECRET_KEY=minioadmin
+OBJECT_STORE_FORCE_PATH_STYLE=true
+ARTIFACT_URL_TTL=15m
+```
+
+Path-style addressing is on by default so localhost MinIO does not need virtual-host DNS. SigV4 query strings include the **access key ID** (AWS protocol); they never include the secret key.
+
+You can still copy objects with `mc` if you want the raw S3 identity:
 
 ```bash
 docker run --rm --network host minio/mc \
   sh -c 'mc alias set local http://localhost:9000 minioadmin minioadmin && mc cp local/media-output/jobs/<job-id>/operations/<operation-id>/thumbnail.jpg /tmp/thumbnail.jpg'
 ```
 
-If you mapped MinIO to another host port, change the alias URL to match.
+If you mapped MinIO to another host port, change the alias URL and `OBJECT_STORE_ENDPOINT` to match.
 
 ### Submit a job
 
@@ -1095,7 +1151,7 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 
 `GET /jobs/{jobId}/operations/{operationId}/attempts` is a read-only history API (no lease internals).
 
-### Phase 5C limitations
+### Phase 5D limitations
 
 - TRANSCODE_4K_TO_1080P is retired; use TRANSCODE_1080P for 1080p H.264 output including 4K sources
 - H264_TO_AV1 requires an H.264 video stream and a software AV1 encoder (`libsvtav1` or `libaom-av1`)
@@ -1117,8 +1173,9 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 - running cancellation is observed on lease renew (about 10s by default), not a dedicated cancel broker
 - orphan MinIO objects from a cancelled upload are not garbage-collected
 - no automatic retries or retry backoff; only explicit `POST .../retry` of FAILED operations
-- no presigned download URLs; artifact identity is `s3://bucket/key`
+- presigned download URLs are time-limited bearer capabilities; anyone who can call the API can request one
 - no frontend, authentication, user accounts, or multi-tenancy
+- no upload/presigned PUT APIs
 
 ## What is inactive
 
@@ -1173,4 +1230,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next **product** milestone is authenticated multi-user access, or presigned HTTP download of artifacts. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.
+The smallest next **product** milestone is authentication and job/artifact ownership isolation. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.
