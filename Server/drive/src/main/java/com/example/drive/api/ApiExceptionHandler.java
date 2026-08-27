@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import com.example.drive.account.ApiKeyNotFoundException;
 import com.example.drive.job.AttemptNotFoundException;
 import com.example.drive.job.ArtifactNotFoundException;
 import com.example.drive.job.ArtifactUriInvalidException;
@@ -43,6 +44,11 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(JobNotFoundException.class)
 	public ResponseEntity<ApiError> handleJobNotFound(JobNotFoundException ex) {
 		return respond(HttpStatus.NOT_FOUND, "JOB_NOT_FOUND", ex.getMessage());
+	}
+
+	@ExceptionHandler(ApiKeyNotFoundException.class)
+	public ResponseEntity<ApiError> handleApiKeyNotFound(ApiKeyNotFoundException ex) {
+		return respond(HttpStatus.NOT_FOUND, "API_KEY_NOT_FOUND", ex.getMessage());
 	}
 
 	@ExceptionHandler(OperationNotFoundException.class)

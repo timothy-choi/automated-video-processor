@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 5D**: users can list Jobs and request a **time-limited HTTP URL** for an Artifact without seeing object-store credentials. They can also cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation using current queue-entry time. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
+This repository is currently at **Phase 5E**: user-facing APIs require an API key, and each Account can access only the Jobs it owns. Users can list owned Jobs and request a **time-limited HTTP URL** for an owned Artifact without seeing object-store credentials. They can also cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation using current queue-entry time. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
 
-## Current status: Phase 5D — Presigned Artifact Access
+## Current status: Phase 5E — API-Key Authentication + Resource Ownership Isolation
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,7 +34,11 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
-Phase 5D currently:
+Phase 5E currently:
+
+- requires `Authorization: Bearer <api-key>` on user-facing product APIs (`/jobs/**`, `/workers/**`, `/api-keys/**`)
+- stores API keys as SHA-256 hashes (raw keys are shown only when created)
+- scopes Job listing, inspection, cancel, retry, artifacts, and download URLs to the authenticated Account
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write and does **not** publish RabbitMQ)
 - lists Jobs with PostgreSQL pagination, deterministic newest-first ordering, and AND filters (`GET /jobs`)
@@ -207,6 +211,8 @@ cd Server/drive
 
 The service listens on port **8080** by default. Override with `SERVER_PORT`. Java operation-selection (`drive.dispatch.scheduling-enabled`) is **off** so it does not compete with the Go scheduler. The outbox publisher stays on. Artifact download URLs are signed by this Java process using the same `OBJECT_STORE_*` names as the worker (local MinIO defaults: `http://localhost:9000`, `minioadmin` / `minioadmin`, path-style). Set `OBJECT_STORE_ENDPOINT` to the URL **clients** will call, not a Docker-only hostname.
 
+Optional: set `MEDIA_PLATFORM_BOOTSTRAP_API_KEY` to `mp_live_` plus 64 hex characters to attach a known key to the Flyway `legacy-system` Account (so Jobs that existed before ownership remain reachable). Leave it unset unless you need that.
+
 In another terminal, start the scheduler:
 
 ```bash
@@ -238,6 +244,113 @@ Expected response:
 {"status":"UP"}
 ```
 
+`GET /health` is public. Load balancers and operators do not need an API key. It does not expose Jobs, keys, or store credentials.
+
+## Authentication
+
+This is a **developer/platform API-key** model for a self-hosted control plane. It is not username/password login, JWT, OAuth, sessions, RBAC, or organizations.
+
+```text
+Client
+  |
+  | Authorization: Bearer mp_live_<secret>
+  v
+Java Control Service
+  |
+  v
+SHA-256 lookup of the key
+  |
+  v
+authenticated Account owns Jobs
+```
+
+### Obtain a development key
+
+`POST /accounts` is an **unauthenticated self-hosted/development bootstrap**. It creates an Account and returns **one** API key. Do not expose this endpoint on a public network without an administrative layer in front of it. Open registration is not production identity administration.
+
+```bash
+curl -sS -X POST http://localhost:8080/accounts \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Studio A"}'
+```
+
+Example response (the `key` field appears only this once):
+
+```json
+{
+  "account": {
+    "id": "...",
+    "name": "Studio A",
+    "status": "ACTIVE",
+    "createdAt": "2026-08-27T03:00:00Z"
+  },
+  "apiKey": {
+    "id": "...",
+    "key": "mp_live_...",
+    "prefix": "mp_live_ab12",
+    "createdAt": "2026-08-27T03:00:00Z"
+  }
+}
+```
+
+```bash
+export MEDIA_PLATFORM_API_KEY='mp_live_...'   # paste the key from the create response
+```
+
+Jobs that existed before this phase belong to the Flyway `legacy-system` Account (`00000000-0000-0000-0000-000000000001`). To reach them, start the control service with a well-formed `MEDIA_PLATFORM_BOOTSTRAP_API_KEY` (local placeholder only):
+
+```bash
+MEDIA_PLATFORM_BOOTSTRAP_API_KEY=mp_live_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  ./mvnw spring-boot:run
+```
+
+An Account may have multiple keys (laptop, CI, integration). All keys for an Account have the same access. `POST /api-keys` (authenticated) issues another key. `GET /api-keys` returns metadata only (`id`, `prefix`, `createdAt`, `revokedAt`) — never the raw secret. `POST /api-keys/{id}/revoke` stops that key; later requests with it return **401**.
+
+### Call product APIs
+
+```bash
+curl \
+  -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" \
+  http://localhost:8080/jobs
+```
+
+Missing, malformed, unknown, and revoked keys all return **401** `UNAUTHORIZED` with the same body. The response does not say why authentication failed.
+
+```json
+{
+  "code": "UNAUTHORIZED",
+  "message": "Authentication required",
+  "timestamp": "2026-08-27T03:00:00Z"
+}
+```
+
+Raw keys are never stored. PostgreSQL keeps a SHA-256 hex digest with a unique index, plus a short non-secret prefix for operators. API keys are 256-bit CSPRNG secrets, so SHA-256 is a lookup-friendly one-way store rather than a password-stretching problem. The prefix is not sufficient to authenticate.
+
+`POST /jobs` assigns ownership from the authenticated Account. Clients cannot send `accountId`.
+
+A caller who uses a valid key for Account A against Account B's Job, operation, attempt, or artifact receives **404** `JOB_NOT_FOUND` (same as a missing id). That avoids revealing that the resource exists. Lifecycle errors on **your** resource remain **409** (for example cancel after `COMPLETED`, retry when nothing is `FAILED`).
+
+### What this phase does and does not cover
+
+Phase 5E protects the **user-facing API resource boundary**.
+
+It does **not** yet solve:
+
+- internal service authentication (`/internal/**` used by the Go scheduler and workers)
+- TLS
+- secret-manager integration
+- RBAC
+- organizations / teams
+- audit logging
+- rate limiting
+- password, JWT, OAuth, or browser login
+
+`/internal/**` keeps its previous unauthenticated behavior so the distributed platform still runs. Treat that as later hardening, not a solved security property.
+
+Presigned Artifact URLs remain **bearer capabilities until they expire**. Revoking an API key does **not** invalidate already-issued S3 signatures. Short TTL is the control. The signed MinIO/S3 URL does not require the Java API key; S3 validates the signature.
+
+Do not log `Authorization` headers, raw API keys, key hashes, or full presigned URLs.
+
 ## Job Management API
 
 Typical product flow:
@@ -256,17 +369,17 @@ inspect operations / attempts / artifacts
 retrieve artifact identity (s3://bucket/key)
 ```
 
-There is no web UI and no authentication in this phase.
+There is no web UI. User-facing Job APIs require `Authorization: Bearer $MEDIA_PLATFORM_API_KEY`. List results are **only Jobs owned by that Account**.
 
 ### List jobs
 
 ```bash
-curl -sS 'http://localhost:8080/jobs'
-curl -sS 'http://localhost:8080/jobs?status=COMPLETED'
-curl -sS 'http://localhost:8080/jobs?status=FAILED&operationType=H264_TO_AV1&priority=HIGH'
-curl -sS 'http://localhost:8080/jobs?page=0&size=2'
-curl -sS 'http://localhost:8080/jobs?createdAfter=2026-08-01T00:00:00Z&createdBefore=2026-08-31T23:59:59Z'
-curl -sS 'http://localhost:8080/jobs?sort=updatedAt&direction=asc'
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" 'http://localhost:8080/jobs'
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" 'http://localhost:8080/jobs?status=COMPLETED'
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" 'http://localhost:8080/jobs?status=FAILED&operationType=H264_TO_AV1&priority=HIGH'
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" 'http://localhost:8080/jobs?page=0&size=2'
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" 'http://localhost:8080/jobs?createdAfter=2026-08-01T00:00:00Z&createdBefore=2026-08-31T23:59:59Z'
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" 'http://localhost:8080/jobs?sort=updatedAt&direction=asc'
 ```
 
 Response shape:
@@ -315,21 +428,21 @@ A `FAILED` summary is enough to call retry. Active statuses (`QUEUED`, `ASSIGNED
 ### Get a job
 
 ```bash
-curl -sS http://localhost:8080/jobs/<job-id>
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" http://localhost:8080/jobs/<job-id>
 ```
 
 Returns the Job plus its operations (status, `queuedAt`, `failureReason` when present, result metadata). Also includes `operationCount` and `artifactCount`. Attempts and artifacts stay on their own endpoints so clients can fetch them when needed.
 
-Unknown jobs return **404** `JOB_NOT_FOUND`.
+Unknown jobs, and Jobs owned by a different Account, return **404** `JOB_NOT_FOUND`.
 
 ### Operations, attempts, and artifacts
 
 ```bash
-curl -sS http://localhost:8080/jobs/<job-id>/operations
-curl -sS http://localhost:8080/jobs/<job-id>/operations/<operation-id>/attempts
-curl -sS http://localhost:8080/jobs/<job-id>/artifacts
-curl -sS http://localhost:8080/jobs/<job-id>/artifacts/<artifact-id>
-curl -sS -X POST http://localhost:8080/jobs/<job-id>/artifacts/<artifact-id>/download-url
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" http://localhost:8080/jobs/<job-id>/operations
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" http://localhost:8080/jobs/<job-id>/operations/<operation-id>/attempts
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" http://localhost:8080/jobs/<job-id>/artifacts
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" http://localhost:8080/jobs/<job-id>/artifacts/<artifact-id>
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" -X POST http://localhost:8080/jobs/<job-id>/artifacts/<artifact-id>/download-url
 ```
 
 Artifact JSON uses the existing field names: `id`, `operationId`, `type`, `objectUri`, `contentType`, `sizeBytes`, `checksum`, `createdAt`. `objectUri` is the canonical identity, for example `s3://media-output/jobs/<jobId>/operations/<operationId>/video-av1.mp4`. Storage credentials are never returned. List and detail responses do **not** embed a fresh signed URL.
@@ -343,7 +456,7 @@ Canonical Artifact identity stays `s3://bucket/key`. A download URL is a **tempo
 This is a `POST` because it mints a new short-lived access URL; it is not reading immutable Artifact metadata (`GET` stays for that).
 
 ```bash
-curl -sS -X POST http://localhost:8080/jobs/<job-id>/artifacts/<artifact-id>/download-url
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" -X POST http://localhost:8080/jobs/<job-id>/artifacts/<artifact-id>/download-url
 ```
 
 Example response:
@@ -373,7 +486,7 @@ curl -L "<url from response>" -o /tmp/thumbnail.jpg
 | Filename | Taken from the object key (`thumbnail.jpg`, `audio.m4a`, `video-1080p.mp4`, `video-av1.mp4`). Signed GET does **not** force `Content-Disposition: attachment`, so browsers can preview images/video using the stored content type |
 | Identity vs access | `GET /artifacts` stays stable `s3://` metadata. Signed URLs are not persisted and are not INFO-logged |
 
-Anyone who can call the API can currently request an Artifact URL. There is **no authentication or ownership isolation** yet.
+Owner-scoped: only the Account that owns the Job can mint a download URL. Cross-account requests return **404** `JOB_NOT_FOUND` and do not contact the object store. Once issued, the URL is a bearer capability until `expiresAt`; revoking the API key does not invalidate it.
 
 The URL host comes from `OBJECT_STORE_ENDPOINT`. Java on the host against Compose MinIO should use `http://localhost:9000` (or the mapped host port). A URL signed for `http://minio:9000` works inside Docker but not in a host browser.
 
@@ -405,6 +518,7 @@ Submit a job. Execution is not started inside this request; the job is stored as
 
 ```bash
 curl -sS -X POST http://localhost:8080/jobs \
+  -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
     "inputUri": "s3://media-input/video.mp4",
@@ -990,13 +1104,13 @@ Example list:
 
 Parent Job status after start/complete/fail is recomputed under a PostgreSQL row lock on the Job, so concurrent operation completions cannot leave the job stale (for example both operations `COMPLETED` while the job stays `RUNNING`). That is aggregation correctness, not exactly-once execution.
 
-Internal `POST /internal/workers/register` and `POST /internal/workers/{workerId}/heartbeat` are for trusted workers only (no auth yet).
+Internal `POST /internal/workers/register` and `POST /internal/workers/{workerId}/heartbeat` are for trusted workers only. Phase 5E user API keys are **not** applied to `/internal/**`.
 
 `file://` inputs still work for both operations. Thumbnail output is always stored in the output bucket.
 
 A missing object (`s3://media-input/does-not-exist.mp4`) becomes operation `FAILED` and job `FAILED`, with a persisted `failureReason` that does not include credentials.
 
-Internal worker endpoints (`POST /internal/operations/{id}/start`, `.../attempts/{attemptId}/renew`, `.../complete`, `.../fail`) are for **local/trusted development only**. There is no authentication yet. Credential for ownership is the unguessable attempt UUID plus `workerId` on the trusted network; there is no extra lease token.
+Internal worker endpoints (`POST /internal/operations/{id}/start`, `.../attempts/{attemptId}/renew`, `.../complete`, `.../fail`) are for **local/trusted development only**. User API keys are **not** required on `/internal/**` in Phase 5E. That is remaining technical debt, not a solved service-to-service authentication design. Credential for attempt ownership is the unguessable attempt UUID plus `workerId` on the trusted network; there is no extra lease token.
 
 `POST /internal/operations/claim` still exists but is **disabled by default** (`drive.dispatch.http-claim-enabled=false`) so it does not compete with the scheduler. Existing tests turn it on. Claim now also requires `workerId` and creates an attempt. Do not run poll-based workers against a scheduler-enabled control service.
 
@@ -1151,7 +1265,7 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 
 `GET /jobs/{jobId}/operations/{operationId}/attempts` is a read-only history API (no lease internals).
 
-### Phase 5D limitations
+### Phase 5E limitations
 
 - TRANSCODE_4K_TO_1080P is retired; use TRANSCODE_1080P for 1080p H.264 output including 4K sources
 - H264_TO_AV1 requires an H.264 video stream and a software AV1 encoder (`libsvtav1` or `libaom-av1`)
@@ -1173,8 +1287,11 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 - running cancellation is observed on lease renew (about 10s by default), not a dedicated cancel broker
 - orphan MinIO objects from a cancelled upload are not garbage-collected
 - no automatic retries or retry backoff; only explicit `POST .../retry` of FAILED operations
-- presigned download URLs are time-limited bearer capabilities; anyone who can call the API can request one
-- no frontend, authentication, user accounts, or multi-tenancy
+- presigned download URLs are time-limited bearer capabilities; already-issued URLs are not revoked when an API key is revoked
+- API-key auth covers user-facing APIs only; `/internal/**` is still unauthenticated (scheduler/worker trust the network)
+- no TLS, secret manager, RBAC, organizations/teams, audit log, or rate limiting
+- `POST /accounts` is a self-hosted bootstrap, not production-grade identity administration
+- no frontend, passwords, JWT, or OAuth
 - no upload/presigned PUT APIs
 
 ## What is inactive
@@ -1230,4 +1347,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next **product** milestone is authentication and job/artifact ownership isolation. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.
+The smallest next **product** milestone is internal service authentication for scheduler/worker APIs (or TLS + a shared internal credential). A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.

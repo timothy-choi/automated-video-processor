@@ -1,5 +1,6 @@
 package com.example.drive.worker;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.time.Instant;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -20,7 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ControlServiceTest
-class WorkerApiIntegrationTest {
+class WorkerApiIntegrationTest extends AuthenticatedApiTest {
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -151,7 +152,7 @@ class WorkerApiIntegrationTest {
 		register("worker-a");
 		register("worker-b");
 
-		mockMvc.perform(get("/workers"))
+		mockMvc.perform(authed(get("/workers")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.workers.length()").value(2))
 				.andExpect(jsonPath("$.workers[0].id").value("worker-a"))
@@ -173,13 +174,13 @@ class WorkerApiIntegrationTest {
 	void getWorkerByIdReturnsDetailAndUnknownWorkerIs404() throws Exception {
 		register("worker-a");
 
-		mockMvc.perform(get("/workers/worker-a"))
+		mockMvc.perform(authed(get("/workers/worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.id").value("worker-a"))
 				.andExpect(jsonPath("$.status").value("AVAILABLE"))
 				.andExpect(jsonPath("$.lastHeartbeat").isString());
 
-		mockMvc.perform(get("/workers/missing-worker"))
+		mockMvc.perform(authed(get("/workers/missing-worker")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("WORKER_NOT_FOUND"));
 	}
@@ -213,7 +214,7 @@ class WorkerApiIntegrationTest {
 		assertThat(operationCount).isEqualTo(2);
 		assertThat(codecCount).isEqualTo(2);
 
-		mockMvc.perform(get("/workers/worker-dup"))
+		mockMvc.perform(authed(get("/workers/worker-dup")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.supportedOperations.length()").value(2))
 				.andExpect(jsonPath("$.supportedCodecs.length()").value(2));
@@ -337,7 +338,7 @@ class WorkerApiIntegrationTest {
 		);
 		assertThat(lastHeartbeat).isAfterOrEqualTo(registeredHeartbeat);
 
-		MvcResult detail = mockMvc.perform(get("/workers/worker-a"))
+		MvcResult detail = mockMvc.perform(authed(get("/workers/worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("AVAILABLE"))
 				.andReturn();

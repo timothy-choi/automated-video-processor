@@ -1,5 +1,6 @@
 package com.example.drive.job;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -30,7 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ControlServiceTest
-class InternalOperationApiIntegrationTest {
+class InternalOperationApiIntegrationTest extends AuthenticatedApiTest {
 
 	private static final String SHA256 =
 			"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -81,7 +82,7 @@ class InternalOperationApiIntegrationTest {
 
 		UUID operationId = UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.operationId"));
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("RUNNING"))
 				.andExpect(jsonPath("$.operations[0].status").value("RUNNING"));
@@ -246,7 +247,7 @@ class InternalOperationApiIntegrationTest {
 				.andExpect(jsonPath("$.result.width").value(320))
 				.andExpect(jsonPath("$.completedAt").isString());
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"));
 
@@ -277,11 +278,11 @@ class InternalOperationApiIntegrationTest {
 				.andExpect(jsonPath("$.actualRuntimeMs").value(20))
 				.andExpect(jsonPath("$.result").doesNotExist());
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"));
 
-		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/artifacts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(1))
 				.andExpect(jsonPath("$.artifacts[0].operationId").value(claimed.operationId().toString()))
@@ -323,11 +324,11 @@ class InternalOperationApiIntegrationTest {
 				.andExpect(jsonPath("$.actualRuntimeMs").value(20))
 				.andExpect(jsonPath("$.result").doesNotExist());
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"));
 
-		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/artifacts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(1))
 				.andExpect(jsonPath("$.artifacts[0].operationId").value(claimed.operationId().toString()))
@@ -368,7 +369,7 @@ class InternalOperationApiIntegrationTest {
 				.andExpect(jsonPath("$.failureReason").value("ffprobe: No such file or directory"))
 				.andExpect(jsonPath("$.actualRuntimeMs").value(15));
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("FAILED"));
 	}
@@ -396,7 +397,7 @@ class InternalOperationApiIntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("FAILED"));
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("FAILED"));
 	}
@@ -562,7 +563,7 @@ class InternalOperationApiIntegrationTest {
 		ClaimedIds metadata = claimOperation();
 		completeMetadata(metadata.operationId(), metadata.attemptId());
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("RUNNING"));
 
@@ -573,10 +574,10 @@ class InternalOperationApiIntegrationTest {
 						.content(thumbnailCompleteJson(thumbnail.attemptId(), objectUri, 50)))
 				.andExpect(status().isOk());
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"));
-		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/artifacts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(1))
 				.andExpect(jsonPath("$.artifacts[0].operationId").value(thumbnail.operationId().toString()));
@@ -602,7 +603,7 @@ class InternalOperationApiIntegrationTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(thumbnailCompleteJson(thumbnail.attemptId(), thumbUri, 50)))
 				.andExpect(status().isOk());
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("RUNNING"));
 		ClaimedIds audio = claimOperation();
@@ -611,10 +612,10 @@ class InternalOperationApiIntegrationTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(audioCompleteJson(audio.attemptId(), audioUri, 80)))
 				.andExpect(status().isOk());
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"));
-		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/artifacts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(2));
 	}
@@ -638,11 +639,11 @@ class InternalOperationApiIntegrationTest {
 				.andExpect(jsonPath("$.actualRuntimeMs").value(20))
 				.andExpect(jsonPath("$.result").doesNotExist());
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"));
 
-		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/artifacts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(1))
 				.andExpect(jsonPath("$.artifacts[0].operationId").value(claimed.operationId().toString()))
@@ -716,7 +717,7 @@ class InternalOperationApiIntegrationTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(audioCompleteJson(audio.attemptId(), audioUri, 80)))
 				.andExpect(status().isOk());
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("RUNNING"));
 		ClaimedIds transcode = claimOperation();
@@ -725,10 +726,10 @@ class InternalOperationApiIntegrationTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(transcodeCompleteJson(transcode.attemptId(), videoUri, 120)))
 				.andExpect(status().isOk());
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"));
-		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/artifacts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(3));
 	}
@@ -753,11 +754,11 @@ class InternalOperationApiIntegrationTest {
 				.andExpect(jsonPath("$.actualRuntimeMs").value(20))
 				.andExpect(jsonPath("$.result").doesNotExist());
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"));
 
-		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/artifacts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(1))
 				.andExpect(jsonPath("$.artifacts[0].operationId").value(claimed.operationId().toString()))
@@ -842,7 +843,7 @@ class InternalOperationApiIntegrationTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(transcodeCompleteJson(transcode.attemptId(), videoUri, 120)))
 				.andExpect(status().isOk());
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("RUNNING"));
 		ClaimedIds av1 = claimOperation("worker-all");
@@ -851,10 +852,10 @@ class InternalOperationApiIntegrationTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(av1CompleteJson(av1.attemptId(), av1Uri, 200)))
 				.andExpect(status().isOk());
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("COMPLETED"));
-		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/artifacts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(4));
 	}
@@ -873,7 +874,7 @@ class InternalOperationApiIntegrationTest {
 		ClaimedIds claimed = claimOperation();
 		completeMetadata(claimed.operationId(), claimed.attemptId());
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("RUNNING"))
 				.andExpect(jsonPath("$.operations[0].status").value("COMPLETED"))
@@ -969,7 +970,7 @@ class InternalOperationApiIntegrationTest {
 	}
 
 	private UUID createJob(String json) throws Exception {
-		MvcResult result = mockMvc.perform(post("/jobs")
+		MvcResult result = mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(json))
 				.andExpect(status().isAccepted())

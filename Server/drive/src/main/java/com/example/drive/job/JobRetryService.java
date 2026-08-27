@@ -44,13 +44,13 @@ public class JobRetryService {
 	}
 
 	@Transactional
-	public RetryOperationResponse retryOperation(UUID jobId, UUID operationId) {
-		if (!jobRepository.existsById(jobId)) {
+	public RetryOperationResponse retryOperation(UUID jobId, UUID operationId, UUID accountId) {
+		if (!jobRepository.existsByIdAndAccountId(jobId, accountId)) {
 			throw new JobNotFoundException(jobId);
 		}
-		lockJob(jobId);
+		lockOwnedJob(jobId, accountId);
 		Instant now = nowUtc();
-		Job job = jobRepository.findByIdWithOperations(jobId)
+		Job job = jobRepository.findByIdAndAccountIdWithOperations(jobId, accountId)
 				.orElseThrow(() -> new JobNotFoundException(jobId));
 		Operation operation = job.getOperations().stream()
 				.filter(candidate -> candidate.getId().equals(operationId))
@@ -69,10 +69,10 @@ public class JobRetryService {
 	}
 
 	@Transactional
-	public RetryJobResponse retryJob(UUID jobId) {
-		lockJob(jobId);
+	public RetryJobResponse retryJob(UUID jobId, UUID accountId) {
+		lockOwnedJob(jobId, accountId);
 		Instant now = nowUtc();
-		Job job = jobRepository.findByIdWithOperations(jobId)
+		Job job = jobRepository.findByIdAndAccountIdWithOperations(jobId, accountId)
 				.orElseThrow(() -> new JobNotFoundException(jobId));
 		List<Operation> failed = job.getOperations().stream()
 				.filter(operation -> operation.getStatus() == OperationStatus.FAILED)
@@ -120,12 +120,13 @@ public class JobRetryService {
 		);
 	}
 
-	private void lockJob(UUID jobId) {
+	private void lockOwnedJob(UUID jobId, UUID accountId) {
 		@SuppressWarnings("unchecked")
 		List<Object> rows = entityManager.createNativeQuery("""
-				SELECT id FROM jobs WHERE id = :id FOR UPDATE
+				SELECT id FROM jobs WHERE id = :id AND account_id = :accountId FOR UPDATE
 				""")
 				.setParameter("id", jobId)
+				.setParameter("accountId", accountId)
 				.getResultList();
 		if (rows.isEmpty()) {
 			throw new JobNotFoundException(jobId);

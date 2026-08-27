@@ -1,5 +1,6 @@
 package com.example.drive.scheduler;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
@@ -45,7 +46,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ImportAutoConfiguration(RabbitAutoConfiguration.class)
 @AutoConfigureMockMvc
 @Import({PostgresTestcontainersConfig.class, RabbitTestcontainersConfig.class})
-class SchedulerRabbitIntegrationTest {
+class SchedulerRabbitIntegrationTest extends AuthenticatedApiTest {
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -121,7 +122,7 @@ class SchedulerRabbitIntegrationTest {
 	}
 
 	private UUID createJob(String json) throws Exception {
-		MvcResult result = mockMvc.perform(post("/jobs")
+		MvcResult result = mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(json))
 				.andExpect(status().isAccepted())

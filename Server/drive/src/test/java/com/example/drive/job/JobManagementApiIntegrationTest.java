@@ -1,5 +1,6 @@
 package com.example.drive.job;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -27,7 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @DispatchServiceTest
-class JobManagementApiIntegrationTest {
+class JobManagementApiIntegrationTest extends AuthenticatedApiTest {
 
 	private static final String SHA256 =
 			"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -68,7 +69,7 @@ class JobManagementApiIntegrationTest {
 
 	@Test
 	void listDefaultsToEmptyPageMetadata() throws Exception {
-		mockMvc.perform(get("/jobs"))
+		mockMvc.perform(authed(get("/jobs")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(0))
 				.andExpect(jsonPath("$.page").value(0))
@@ -83,7 +84,7 @@ class JobManagementApiIntegrationTest {
 			createJob("METADATA", "NORMAL");
 		}
 
-		MvcResult page0 = mockMvc.perform(get("/jobs").param("page", "0").param("size", "20"))
+		MvcResult page0 = mockMvc.perform(authed(get("/jobs")).param("page", "0").param("size", "20"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(20))
 				.andExpect(jsonPath("$.page").value(0))
@@ -92,7 +93,7 @@ class JobManagementApiIntegrationTest {
 				.andExpect(jsonPath("$.totalPages").value(2))
 				.andReturn();
 
-		MvcResult page1 = mockMvc.perform(get("/jobs").param("page", "1").param("size", "20"))
+		MvcResult page1 = mockMvc.perform(authed(get("/jobs")).param("page", "1").param("size", "20"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(5))
 				.andExpect(jsonPath("$.page").value(1))
@@ -114,7 +115,7 @@ class JobManagementApiIntegrationTest {
 		setCreatedAt(older, Instant.parse("2026-08-01T00:00:00Z"));
 		setCreatedAt(newer, Instant.parse("2026-08-20T00:00:00Z"));
 
-		mockMvc.perform(get("/jobs"))
+		mockMvc.perform(authed(get("/jobs")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(2))
 				.andExpect(jsonPath("$.items[0].id").value(newer.toString()))
@@ -135,7 +136,7 @@ class JobManagementApiIntegrationTest {
 		UUID expectedFirst = first.toString().compareTo(second.toString()) > 0 ? first : second;
 		UUID expectedSecond = expectedFirst.equals(first) ? second : first;
 
-		mockMvc.perform(get("/jobs"))
+		mockMvc.perform(authed(get("/jobs")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items[0].id").value(expectedFirst.toString()))
 				.andExpect(jsonPath("$.items[1].id").value(expectedSecond.toString()));
@@ -148,7 +149,7 @@ class JobManagementApiIntegrationTest {
 		setUpdatedAt(earlierUpdate, Instant.parse("2026-08-01T00:00:00Z"));
 		setUpdatedAt(laterUpdate, Instant.parse("2026-08-20T00:00:00Z"));
 
-		mockMvc.perform(get("/jobs").param("sort", "updatedAt").param("direction", "asc"))
+		mockMvc.perform(authed(get("/jobs")).param("sort", "updatedAt").param("direction", "asc"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items[0].id").value(earlierUpdate.toString()))
 				.andExpect(jsonPath("$.items[1].id").value(laterUpdate.toString()));
@@ -164,21 +165,21 @@ class JobManagementApiIntegrationTest {
 		setStatus(completed, "COMPLETED");
 		setStatus(cancelled, "CANCELLED");
 
-		mockMvc.perform(get("/jobs").param("status", "FAILED"))
+		mockMvc.perform(authed(get("/jobs")).param("status", "FAILED"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(1))
 				.andExpect(jsonPath("$.items[0].id").value(failed.toString()))
 				.andExpect(jsonPath("$.items[0].status").value("FAILED"));
 
-		mockMvc.perform(get("/jobs").param("status", "COMPLETED"))
+		mockMvc.perform(authed(get("/jobs")).param("status", "COMPLETED"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items[0].id").value(completed.toString()));
 
-		mockMvc.perform(get("/jobs").param("status", "CANCELLED"))
+		mockMvc.perform(authed(get("/jobs")).param("status", "CANCELLED"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items[0].id").value(cancelled.toString()));
 
-		mockMvc.perform(get("/jobs").param("status", "QUEUED"))
+		mockMvc.perform(authed(get("/jobs")).param("status", "QUEUED"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(1))
 				.andExpect(jsonPath("$.items[0].id").value(queued.toString()));
@@ -196,7 +197,7 @@ class JobManagementApiIntegrationTest {
 		createJob("METADATA", "NORMAL");
 		createJob("TRANSCODE_1080P", "NORMAL");
 
-		mockMvc.perform(get("/jobs").param("operationType", "H264_TO_AV1"))
+		mockMvc.perform(authed(get("/jobs")).param("operationType", "H264_TO_AV1"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(1))
 				.andExpect(jsonPath("$.totalElements").value(1))
@@ -210,7 +211,7 @@ class JobManagementApiIntegrationTest {
 		createJob("METADATA", "NORMAL");
 		createJob("METADATA", "LOW");
 
-		mockMvc.perform(get("/jobs").param("priority", "HIGH"))
+		mockMvc.perform(authed(get("/jobs")).param("priority", "HIGH"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(1))
 				.andExpect(jsonPath("$.items[0].id").value(high.toString()))
@@ -226,19 +227,19 @@ class JobManagementApiIntegrationTest {
 		setCreatedAt(mid, Instant.parse("2026-08-15T12:00:00Z"));
 		setCreatedAt(late, Instant.parse("2026-08-31T23:59:59Z"));
 
-		mockMvc.perform(get("/jobs").param("createdAfter", "2026-08-15T12:00:00Z"))
+		mockMvc.perform(authed(get("/jobs")).param("createdAfter", "2026-08-15T12:00:00Z"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(2))
 				.andExpect(jsonPath("$.items[0].id").value(late.toString()))
 				.andExpect(jsonPath("$.items[1].id").value(mid.toString()));
 
-		mockMvc.perform(get("/jobs").param("createdBefore", "2026-08-15T12:00:00Z"))
+		mockMvc.perform(authed(get("/jobs")).param("createdBefore", "2026-08-15T12:00:00Z"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(2))
 				.andExpect(jsonPath("$.items[0].id").value(mid.toString()))
 				.andExpect(jsonPath("$.items[1].id").value(early.toString()));
 
-		mockMvc.perform(get("/jobs")
+		mockMvc.perform(authed(get("/jobs"))
 						.param("createdAfter", "2026-08-15T12:00:00Z")
 						.param("createdBefore", "2026-08-31T23:59:59Z"))
 				.andExpect(status().isOk())
@@ -266,7 +267,7 @@ class JobManagementApiIntegrationTest {
 		setStatus(wrongType, "FAILED");
 		setStatus(wrongPriority, "FAILED");
 
-		mockMvc.perform(get("/jobs")
+		mockMvc.perform(authed(get("/jobs"))
 						.param("status", "FAILED")
 						.param("operationType", "H264_TO_AV1")
 						.param("priority", "HIGH"))
@@ -277,27 +278,27 @@ class JobManagementApiIntegrationTest {
 
 	@Test
 	void invalidFiltersReturn400() throws Exception {
-		mockMvc.perform(get("/jobs").param("status", "NOT_A_STATUS"))
+		mockMvc.perform(authed(get("/jobs")).param("status", "NOT_A_STATUS"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("INVALID_ENUM_VALUE"));
 
-		mockMvc.perform(get("/jobs").param("operationType", "TRANSCODE_4K_TO_1080P"))
+		mockMvc.perform(authed(get("/jobs")).param("operationType", "TRANSCODE_4K_TO_1080P"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("INVALID_ENUM_VALUE"));
 
-		mockMvc.perform(get("/jobs").param("priority", "URGENT"))
+		mockMvc.perform(authed(get("/jobs")).param("priority", "URGENT"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("INVALID_ENUM_VALUE"));
 
-		mockMvc.perform(get("/jobs").param("sort", "priority"))
+		mockMvc.perform(authed(get("/jobs")).param("sort", "priority"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
-		mockMvc.perform(get("/jobs").param("direction", "sideways"))
+		mockMvc.perform(authed(get("/jobs")).param("direction", "sideways"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
-		mockMvc.perform(get("/jobs")
+		mockMvc.perform(authed(get("/jobs"))
 						.param("createdAfter", "2026-08-31T00:00:00Z")
 						.param("createdBefore", "2026-08-01T00:00:00Z"))
 				.andExpect(status().isBadRequest())
@@ -306,19 +307,19 @@ class JobManagementApiIntegrationTest {
 
 	@Test
 	void invalidPaginationReturns400() throws Exception {
-		mockMvc.perform(get("/jobs").param("page", "-1"))
+		mockMvc.perform(authed(get("/jobs")).param("page", "-1"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
-		mockMvc.perform(get("/jobs").param("size", "0"))
+		mockMvc.perform(authed(get("/jobs")).param("size", "0"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
-		mockMvc.perform(get("/jobs").param("size", "-5"))
+		mockMvc.perform(authed(get("/jobs")).param("size", "-5"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
-		mockMvc.perform(get("/jobs").param("size", "101"))
+		mockMvc.perform(authed(get("/jobs")).param("size", "101"))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 	}
@@ -330,20 +331,20 @@ class JobManagementApiIntegrationTest {
 		UUID attemptId = assignAndStart(operationId);
 		internalOperationService.fail(operationId, new FailOperationRequest(attemptId, 11L, "probe failed"));
 
-		mockMvc.perform(get("/jobs").param("status", "FAILED"))
+		mockMvc.perform(authed(get("/jobs")).param("status", "FAILED"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(1))
 				.andExpect(jsonPath("$.items[0].id").value(jobId.toString()));
 
-		mockMvc.perform(post("/jobs/" + jobId + "/operations/" + operationId + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/operations/" + operationId + "/retry")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.jobStatus").value("QUEUED"));
 
-		mockMvc.perform(get("/jobs").param("status", "FAILED"))
+		mockMvc.perform(authed(get("/jobs")).param("status", "FAILED"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(0));
 
-		mockMvc.perform(get("/jobs").param("status", "QUEUED"))
+		mockMvc.perform(authed(get("/jobs")).param("status", "QUEUED"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(1))
 				.andExpect(jsonPath("$.items[0].id").value(jobId.toString()));
@@ -353,20 +354,20 @@ class JobManagementApiIntegrationTest {
 	void cancelAppearsInCancelledListing() throws Exception {
 		UUID jobId = createJob("METADATA", "NORMAL");
 
-		mockMvc.perform(post("/jobs/" + jobId + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/cancel")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("CANCELLED"));
 
-		mockMvc.perform(get("/jobs").param("status", "CANCELLED"))
+		mockMvc.perform(authed(get("/jobs")).param("status", "CANCELLED"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(1))
 				.andExpect(jsonPath("$.items[0].id").value(jobId.toString()));
 
-		mockMvc.perform(get("/jobs").param("status", "QUEUED"))
+		mockMvc.perform(authed(get("/jobs")).param("status", "QUEUED"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(0));
 
-		mockMvc.perform(get("/jobs").param("status", "RUNNING"))
+		mockMvc.perform(authed(get("/jobs")).param("status", "RUNNING"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items.length()").value(0));
 	}
@@ -382,7 +383,7 @@ class JobManagementApiIntegrationTest {
 		UUID operationId = operationId(jobId, "THUMBNAIL");
 		insertArtifact(jobId, operationId);
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.id").value(jobId.toString()))
 				.andExpect(jsonPath("$.operationCount").value(2))
@@ -398,7 +399,7 @@ class JobManagementApiIntegrationTest {
 		UUID artifactId = insertArtifact(jobId, operationId);
 		String objectUri = "s3://media-output/jobs/" + jobId + "/operations/" + operationId + "/thumbnail.jpg";
 
-		mockMvc.perform(get("/jobs/" + jobId + "/artifacts/" + artifactId))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/artifacts/" + artifactId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.id").value(artifactId.toString()))
 				.andExpect(jsonPath("$.operationId").value(operationId.toString()))
@@ -412,7 +413,7 @@ class JobManagementApiIntegrationTest {
 				.andExpect(jsonPath("$.secretKey").doesNotExist())
 				.andExpect(jsonPath("$.credentials").doesNotExist());
 
-		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/artifacts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(1))
 				.andExpect(jsonPath("$.artifacts[0].id").value(artifactId.toString()))
@@ -427,15 +428,15 @@ class JobManagementApiIntegrationTest {
 		UUID missingJob = UUID.fromString("99999999-9999-9999-9999-999999999999");
 		UUID missingArtifact = UUID.fromString("88888888-8888-8888-8888-888888888888");
 
-		mockMvc.perform(get("/jobs/" + missingJob + "/artifacts/" + artifactA))
+		mockMvc.perform(authed(get("/jobs/" + missingJob + "/artifacts/" + artifactA)))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
 
-		mockMvc.perform(get("/jobs/" + jobA + "/artifacts/" + missingArtifact))
+		mockMvc.perform(authed(get("/jobs/" + jobA + "/artifacts/" + missingArtifact)))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("ARTIFACT_NOT_FOUND"));
 
-		mockMvc.perform(get("/jobs/" + jobB + "/artifacts/" + artifactA))
+		mockMvc.perform(authed(get("/jobs/" + jobB + "/artifacts/" + artifactA)))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("ARTIFACT_NOT_FOUND"));
 	}
@@ -450,7 +451,7 @@ class JobManagementApiIntegrationTest {
 				""");
 		insertArtifact(jobId, operationId(jobId, "THUMBNAIL"));
 
-		mockMvc.perform(get("/jobs"))
+		mockMvc.perform(authed(get("/jobs")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.items[0].id").value(jobId.toString()))
 				.andExpect(jsonPath("$.items[0].operationCount").value(2))
@@ -467,7 +468,7 @@ class JobManagementApiIntegrationTest {
 
 	private UUID createJob(String body) {
 		try {
-			MvcResult result = mockMvc.perform(post("/jobs")
+			MvcResult result = mockMvc.perform(authed(post("/jobs"))
 							.contentType(MediaType.APPLICATION_JSON)
 							.content(body))
 					.andExpect(status().isAccepted())

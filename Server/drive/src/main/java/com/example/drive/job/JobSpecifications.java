@@ -18,9 +18,10 @@ final class JobSpecifications {
 	private JobSpecifications() {
 	}
 
-	static Specification<Job> matching(JobListQuery query) {
+	static Specification<Job> matching(JobListQuery query, UUID accountId) {
 		return (root, criteriaQuery, cb) -> {
 			List<Predicate> predicates = new ArrayList<>();
+			predicates.add(cb.equal(root.get("accountId"), accountId));
 			if (query.status() != null) {
 				predicates.add(cb.equal(root.get("status"), query.status()));
 			}
@@ -42,9 +43,6 @@ final class JobSpecifications {
 								cb.equal(operation.get("type"), query.operationType())
 						);
 				predicates.add(cb.exists(subquery));
-			}
-			if (predicates.isEmpty()) {
-				return cb.conjunction();
 			}
 			return cb.and(predicates.toArray(Predicate[]::new));
 		};

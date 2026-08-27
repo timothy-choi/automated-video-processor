@@ -14,4 +14,9 @@ public interface JobRepository extends JpaRepository<Job, UUID>, JpaSpecificatio
 
 	@Query("select distinct j from Job j left join fetch j.operations where j.id = :id")
 	Optional<Job> findByIdWithOperations(@Param("id") UUID id);
+
+	@Query("select distinct j from Job j left join fetch j.operations where j.id = :id and j.accountId = :accountId")
+	Optional<Job> findByIdAndAccountIdWithOperations(@Param("id") UUID id, @Param("accountId") UUID accountId);
+
+	boolean existsByIdAndAccountId(UUID id, UUID accountId);
 }

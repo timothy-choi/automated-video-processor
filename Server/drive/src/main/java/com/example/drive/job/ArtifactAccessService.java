@@ -38,8 +38,8 @@ public class ArtifactAccessService {
 	}
 
 	@Transactional(readOnly = true)
-	public ArtifactDownloadResponse createDownloadUrl(UUID jobId, UUID artifactId) {
-		if (!jobRepository.existsById(jobId)) {
+	public ArtifactDownloadResponse createDownloadUrl(UUID jobId, UUID artifactId, UUID accountId) {
+		if (!jobRepository.existsByIdAndAccountId(jobId, accountId)) {
 			throw new JobNotFoundException(jobId);
 		}
 		Artifact artifact = artifactRepository.findByIdAndJobId(artifactId, jobId)

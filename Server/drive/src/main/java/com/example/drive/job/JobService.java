@@ -54,13 +54,14 @@ public class JobService {
 	}
 
 	@Transactional
-	public JobResponse createJob(CreateJobRequest request) {
+	public JobResponse createJob(CreateJobRequest request, UUID accountId) {
 		Instant now = clock.instant();
 		String inputUri = validateInputUri(request.inputUri());
 		validateDeadline(request.deadline(), now);
 
 		Job job = new Job(
 				UUID.randomUUID(),
+				accountId,
 				inputUri,
 				request.priorityOrDefault(),
 				request.deadline(),
@@ -78,8 +79,8 @@ public class JobService {
 	}
 
 	@Transactional(readOnly = true)
-	public JobListResponse listJobs(JobListQuery query) {
-		Page<Job> page = jobRepository.findAll(JobSpecifications.matching(query), query.toPageable());
+	public JobListResponse listJobs(JobListQuery query, UUID accountId) {
+		Page<Job> page = jobRepository.findAll(JobSpecifications.matching(query, accountId), query.toPageable());
 		List<Job> jobs = page.getContent();
 		List<UUID> ids = jobs.stream().map(Job::getId).toList();
 		Map<UUID, Long> operationCounts = ids.isEmpty()
@@ -105,25 +106,21 @@ public class JobService {
 	}
 
 	@Transactional(readOnly = true)
-	public JobResponse getJob(UUID jobId) {
-		Job job = jobRepository.findByIdWithOperations(jobId)
+	public JobResponse getJob(UUID jobId, UUID accountId) {
+		Job job = jobRepository.findByIdAndAccountIdWithOperations(jobId, accountId)
 				.orElseThrow(() -> new JobNotFoundException(jobId));
 		return JobResponse.from(job, artifactRepository.countByJobId(jobId));
 	}
 
 	@Transactional(readOnly = true)
-	public JobOperationsResponse getOperations(UUID jobId) {
-		if (!jobRepository.existsById(jobId)) {
-			throw new JobNotFoundException(jobId);
-		}
+	public JobOperationsResponse getOperations(UUID jobId, UUID accountId) {
+		requireOwnedJob(jobId, accountId);
 		return JobOperationsResponse.from(jobId, operationRepository.findByJob_IdOrderByOperationOrderAsc(jobId));
 	}
 
 	@Transactional(readOnly = true)
-	public OperationAttemptsResponse getAttempts(UUID jobId, UUID operationId) {
-		if (!jobRepository.existsById(jobId)) {
-			throw new JobNotFoundException(jobId);
-		}
+	public OperationAttemptsResponse getAttempts(UUID jobId, UUID operationId, UUID accountId) {
+		requireOwnedJob(jobId, accountId);
 		Operation operation = operationRepository.findById(operationId)
 				.orElseThrow(() -> new OperationNotFoundException(operationId));
 		if (!operation.getJob().getId().equals(jobId)) {
@@ -139,22 +136,24 @@ public class JobService {
 	}
 
 	@Transactional(readOnly = true)
-	public JobArtifactsResponse getArtifacts(UUID jobId) {
-		if (!jobRepository.existsById(jobId)) {
-			throw new JobNotFoundException(jobId);
-		}
+	public JobArtifactsResponse getArtifacts(UUID jobId, UUID accountId) {
+		requireOwnedJob(jobId, accountId);
 		return JobArtifactsResponse.from(jobId, artifactRepository.findByJobIdOrderByCreatedAtAsc(jobId));
 	}
 
 	@Transactional(readOnly = true)
-	public ArtifactResponse getArtifact(UUID jobId, UUID artifactId) {
-		if (!jobRepository.existsById(jobId)) {
-			throw new JobNotFoundException(jobId);
-		}
+	public ArtifactResponse getArtifact(UUID jobId, UUID artifactId, UUID accountId) {
+		requireOwnedJob(jobId, accountId);
 		return ArtifactResponse.from(
 				artifactRepository.findByIdAndJobId(artifactId, jobId)
 						.orElseThrow(() -> new ArtifactNotFoundException(artifactId))
 		);
+	}
+
+	private void requireOwnedJob(UUID jobId, UUID accountId) {
+		if (!jobRepository.existsByIdAndAccountId(jobId, accountId)) {
+			throw new JobNotFoundException(jobId);
+		}
 	}
 
 	private Map<UUID, Long> toCountMap(List<JobIdCount> rows) {

@@ -1,5 +1,6 @@
 package com.example.drive.job;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
@@ -29,7 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @ControlServiceTest
 @Import(StubObjectStoreAccessConfig.class)
-class ArtifactAccessApiIntegrationTest {
+class ArtifactAccessApiIntegrationTest extends AuthenticatedApiTest {
 
 	private static final String SHA256 =
 			"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -58,7 +59,7 @@ class ArtifactAccessApiIntegrationTest {
 	void downloadUrlPresignsS3ObjectAndReturnsExpiry() throws Exception {
 		Created created = createThumbnailArtifact();
 
-		mockMvc.perform(post("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId() + "/download-url"))
+		mockMvc.perform(authed(post("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId() + "/download-url")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifactId").value(created.artifactId().toString()))
 				.andExpect(jsonPath("$.url").value(
@@ -81,7 +82,7 @@ class ArtifactAccessApiIntegrationTest {
 	@Test
 	void downloadUrlDoesNotPersistSignedUrlOrChangeArtifactMetadata() throws Exception {
 		Created created = createThumbnailArtifact();
-		mockMvc.perform(post("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId() + "/download-url"))
+		mockMvc.perform(authed(post("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId() + "/download-url")))
 				.andExpect(status().isOk());
 
 		String storedUri = jdbcTemplate.queryForObject(
@@ -91,7 +92,7 @@ class ArtifactAccessApiIntegrationTest {
 		);
 		assertThat(storedUri).startsWith("s3://").doesNotContain("X-Amz-Signature");
 
-		mockMvc.perform(get("/jobs/" + created.jobId() + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + created.jobId() + "/artifacts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(1))
 				.andExpect(jsonPath("$.artifacts[0].id").value(created.artifactId().toString()))
@@ -99,7 +100,7 @@ class ArtifactAccessApiIntegrationTest {
 				.andExpect(jsonPath("$.artifacts[0].url").doesNotExist())
 				.andExpect(jsonPath("$.artifacts[0].expiresAt").doesNotExist());
 
-		mockMvc.perform(get("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId()))
+		mockMvc.perform(authed(get("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId())))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.url").doesNotExist())
 				.andExpect(jsonPath("$.objectUri").value(storedUri));
@@ -107,7 +108,7 @@ class ArtifactAccessApiIntegrationTest {
 
 	@Test
 	void unknownJobReturns404() throws Exception {
-		mockMvc.perform(post("/jobs/" + UUID.randomUUID() + "/artifacts/" + UUID.randomUUID() + "/download-url"))
+		mockMvc.perform(authed(post("/jobs/" + UUID.randomUUID() + "/artifacts/" + UUID.randomUUID() + "/download-url")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
 	}
@@ -119,11 +120,11 @@ class ArtifactAccessApiIntegrationTest {
 				{"inputUri":"s3://media-input/other.mp4","operations":[{"type":"METADATA"}]}
 				""");
 
-		mockMvc.perform(post("/jobs/" + created.jobId() + "/artifacts/" + UUID.randomUUID() + "/download-url"))
+		mockMvc.perform(authed(post("/jobs/" + created.jobId() + "/artifacts/" + UUID.randomUUID() + "/download-url")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("ARTIFACT_NOT_FOUND"));
 
-		mockMvc.perform(post("/jobs/" + otherJob + "/artifacts/" + created.artifactId() + "/download-url"))
+		mockMvc.perform(authed(post("/jobs/" + otherJob + "/artifacts/" + created.artifactId() + "/download-url")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("ARTIFACT_NOT_FOUND"));
 	}
@@ -133,7 +134,7 @@ class ArtifactAccessApiIntegrationTest {
 		Created created = createThumbnailArtifact();
 		jdbcTemplate.update("update artifacts set object_uri = ? where id = ?", "file:///tmp/x.jpg", created.artifactId());
 
-		mockMvc.perform(post("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId() + "/download-url"))
+		mockMvc.perform(authed(post("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId() + "/download-url")))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("ARTIFACT_URI_INVALID"));
 	}
@@ -147,7 +148,7 @@ class ArtifactAccessApiIntegrationTest {
 				created.artifactId()
 		);
 
-		mockMvc.perform(post("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId() + "/download-url"))
+		mockMvc.perform(authed(post("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId() + "/download-url")))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("ARTIFACT_URI_INVALID"));
 	}
@@ -157,7 +158,7 @@ class ArtifactAccessApiIntegrationTest {
 		Created created = createThumbnailArtifact();
 		objectStoreAccess.failVerify(new ObjectNotFoundException("media-output", "missing"));
 
-		mockMvc.perform(post("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId() + "/download-url"))
+		mockMvc.perform(authed(post("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId() + "/download-url")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("OBJECT_NOT_FOUND"))
 				.andExpect(jsonPath("$.url").doesNotExist());
@@ -169,7 +170,7 @@ class ArtifactAccessApiIntegrationTest {
 		Created created = createThumbnailArtifact();
 		objectStoreAccess.failVerify(new ObjectStoreUnavailableException("Object store is unavailable"));
 
-		mockMvc.perform(post("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId() + "/download-url"))
+		mockMvc.perform(authed(post("/jobs/" + created.jobId() + "/artifacts/" + created.artifactId() + "/download-url")))
 				.andExpect(status().isServiceUnavailable())
 				.andExpect(jsonPath("$.code").value("OBJECT_STORE_UNAVAILABLE"))
 				.andExpect(jsonPath("$.url").doesNotExist());
@@ -202,7 +203,7 @@ class ArtifactAccessApiIntegrationTest {
 	}
 
 	private UUID createJob(String body) throws Exception {
-		MvcResult result = mockMvc.perform(post("/jobs")
+		MvcResult result = mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(body))
 				.andExpect(status().isAccepted())
