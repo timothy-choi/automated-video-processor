@@ -12,11 +12,26 @@ public class AuthProperties {
 	 */
 	private String bootstrapApiKey = "";
 
+	/**
+	 * When false, {@code POST /accounts} is rejected. Default is disabled so a
+	 * publicly reachable deployment does not allow open registration. Local
+	 * development sets {@code ACCOUNT_REGISTRATION_ENABLED=true}.
+	 */
+	private boolean accountRegistrationEnabled = false;
+
 	public String getBootstrapApiKey() {
 		return bootstrapApiKey;
 	}
 
 	public void setBootstrapApiKey(String bootstrapApiKey) {
 		this.bootstrapApiKey = bootstrapApiKey == null ? "" : bootstrapApiKey.trim();
+	}
+
+	public boolean isAccountRegistrationEnabled() {
+		return accountRegistrationEnabled;
+	}
+
+	public void setAccountRegistrationEnabled(boolean accountRegistrationEnabled) {
+		this.accountRegistrationEnabled = accountRegistrationEnabled;
 	}
 }

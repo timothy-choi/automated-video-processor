@@ -45,13 +45,38 @@ type Client struct {
 	httpClient *http.Client
 }
 
-func New(baseURL string, timeout time.Duration) *Client {
+func New(baseURL string, timeout time.Duration, serviceToken string) *Client {
+	transport := http.DefaultTransport
+	if strings.TrimSpace(serviceToken) != "" {
+		transport = &bearerTransport{base: http.DefaultTransport, token: strings.TrimSpace(serviceToken)}
+	}
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		httpClient: &http.Client{
-			Timeout: timeout,
+			Timeout:   timeout,
+			Transport: transport,
 		},
 	}
+}
+
+func IsUnauthorized(err error) bool {
+	var statusErr *StatusError
+	return errors.As(err, &statusErr) && (statusErr.Status == http.StatusUnauthorized || statusErr.Status == http.StatusForbidden)
+}
+
+type bearerTransport struct {
+	base  http.RoundTripper
+	token string
+}
+
+func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	cloned := req.Clone(req.Context())
+	cloned.Header.Set("Authorization", "Bearer "+t.token)
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(cloned)
 }
 
 func (c *Client) Claim(ctx context.Context) (*model.ClaimedOperation, bool, error) {

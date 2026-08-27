@@ -51,6 +51,8 @@ public final class WorkerTestSupport {
 
 	public static void register(MockMvc mockMvc, String workerId, String... operations) throws Exception {
 		mockMvc.perform(post("/internal/workers/register")
+						.header(org.springframework.http.HttpHeaders.AUTHORIZATION,
+								"Bearer " + InternalAuthSupport.workerToken(workerId))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(registrationJson(workerId, operations)))
 				.andExpect(status().isCreated())

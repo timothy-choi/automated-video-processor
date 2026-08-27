@@ -33,6 +33,7 @@ type Config struct {
 	LeaseRenewInterval  time.Duration
 	ExecutionTimeout    time.Duration
 	SupportedOperations []string
+	ServiceToken        string
 	ObjectStore         storage.Config
 }
 
@@ -59,7 +60,7 @@ func New(cfg Config, store storage.ObjectStore) *Worker {
 	}
 	w := &Worker{
 		cfg:    cfg,
-		client: client.New(cfg.ControlServiceURL, 30*time.Second),
+		client: client.New(cfg.ControlServiceURL, 30*time.Second, cfg.ServiceToken),
 		deps:   run.DefaultDeps(store, cfg.OutputBucket, cfg.FfprobePath, cfg.FfmpegPath),
 	}
 	w.detect = func(ctx context.Context) (capability.Snapshot, error) {

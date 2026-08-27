@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/timothy-choi/automated-video-processor/scheduler/internal/auth"
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/client"
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/policy"
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/scheduler"
@@ -17,6 +18,10 @@ import (
 
 func main() {
 	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+	token, err := auth.RequireToken(os.Getenv("SCHEDULER_SERVICE_TOKEN"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -32,7 +37,7 @@ func main() {
 		cfg.pollInterval,
 	)
 	loop := &scheduler.Loop{
-		Client:       client.New(cfg.controlURL, 15*time.Second),
+		Client:       client.New(cfg.controlURL, 15*time.Second, token),
 		Selector:     selected,
 		PollInterval: cfg.pollInterval,
 	}

@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 5E**: user-facing APIs require an API key, and each Account can access only the Jobs it owns. Users can list owned Jobs and request a **time-limited HTTP URL** for an owned Artifact without seeing object-store credentials. They can also cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation using current queue-entry time. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
+This repository is currently at **Phase 5F**: user-facing APIs require an Account API key with ownership isolation, and scheduler/worker calls to `/internal/**` require separate internal service credentials. Users can list owned Jobs and request a **time-limited HTTP URL** for an owned Artifact without seeing object-store credentials. They can also cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation using current queue-entry time. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
 
-## Current status: Phase 5E — API-Key Authentication + Resource Ownership Isolation
+## Current status: Phase 5F — Internal Service Authentication + Bootstrap Hardening
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,11 +34,13 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
-Phase 5E currently:
+Phase 5F currently:
 
 - requires `Authorization: Bearer <api-key>` on user-facing product APIs (`/jobs/**`, `/workers/**`, `/api-keys/**`)
 - stores API keys as SHA-256 hashes (raw keys are shown only when created)
 - scopes Job listing, inspection, cancel, retry, artifacts, and download URLs to the authenticated Account
+- authenticates `/internal/**` with scheduler and per-worker service tokens (not Account API keys)
+- can disable open `POST /accounts` registration (`ACCOUNT_REGISTRATION_ENABLED`, default false)
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write and does **not** publish RabbitMQ)
 - lists Jobs with PostgreSQL pagination, deterministic newest-first ordering, and AND filters (`GET /jobs`)
@@ -203,21 +205,36 @@ DB_PASSWORD     default media_platform
 
 ## Start the application
 
+Local HTTP is **development-only**. Bearer tokens (Account API keys and internal service tokens) must be used over HTTPS/TLS in any deployed environment. This repository does not terminate TLS; that belongs to later ingress/deployment work. Do not treat plaintext local HTTP as a production security property.
+
 ```bash
 docker compose up -d postgres minio minio-init rabbitmq
 cd Server/drive
+ACCOUNT_REGISTRATION_ENABLED=true \
+SCHEDULER_SERVICE_TOKEN=dev-scheduler-token \
+WORKER_TOKEN_PEPPER=dev-worker-pepper \
 ./mvnw spring-boot:run
 ```
+
+Java fails startup if `SCHEDULER_SERVICE_TOKEN` or `WORKER_TOKEN_PEPPER` is missing. `ACCOUNT_REGISTRATION_ENABLED=true` is for local/self-hosted bootstrap; leave it unset/false on a publicly reachable deployment so `POST /accounts` returns **403** `ACCOUNT_REGISTRATION_DISABLED`.
 
 The service listens on port **8080** by default. Override with `SERVER_PORT`. Java operation-selection (`drive.dispatch.scheduling-enabled`) is **off** so it does not compete with the Go scheduler. The outbox publisher stays on. Artifact download URLs are signed by this Java process using the same `OBJECT_STORE_*` names as the worker (local MinIO defaults: `http://localhost:9000`, `minioadmin` / `minioadmin`, path-style). Set `OBJECT_STORE_ENDPOINT` to the URL **clients** will call, not a Docker-only hostname.
 
 Optional: set `MEDIA_PLATFORM_BOOTSTRAP_API_KEY` to `mp_live_` plus 64 hex characters to attach a known key to the Flyway `legacy-system` Account (so Jobs that existed before ownership remain reachable). Leave it unset unless you need that.
+
+Mint matching worker tokens (workers get the token, never the pepper):
+
+```bash
+export WORKER_A_TOKEN="$(python3 scripts/mint-worker-token.py dev-worker-pepper worker-a)"
+export WORKER_B_TOKEN="$(python3 scripts/mint-worker-token.py dev-worker-pepper worker-b)"
+```
 
 In another terminal, start the scheduler:
 
 ```bash
 cd scheduler
 CONTROL_SERVICE_URL=http://localhost:8080 \
+SCHEDULER_SERVICE_TOKEN=dev-scheduler-token \
 SCHEDULER_POLL_INTERVAL=500ms \
 OPERATION_POLICY=FIFO \
 WORKER_PLACEMENT_POLICY=LEAST_LOADED \
@@ -248,25 +265,39 @@ Expected response:
 
 ## Authentication
 
-This is a **developer/platform API-key** model for a self-hosted control plane. It is not username/password login, JWT, OAuth, sessions, RBAC, or organizations.
+This is a **developer/platform API-key** model for a self-hosted control plane, plus a separate internal service credential for scheduler/worker calls. It is not username/password login, JWT, OAuth, sessions, user RBAC, or organizations.
 
 ```text
-Client
-  |
-  | Authorization: Bearer mp_live_<secret>
-  v
-Java Control Service
-  |
-  v
-SHA-256 lookup of the key
-  |
-  v
-authenticated Account owns Jobs
+Internet/client
+    ↓
+Account API key
+    ↓
+Public product API
+
+Scheduler process
+    ↓
+Scheduler service credential
+    ↓
+Scheduler internal API
+
+Worker process
+    ↓
+Worker service credential
+    ↓
+Worker internal API
+```
+
+No credential class may cross those boundaries. A user API key cannot call `/internal/**`. An internal token cannot call `/jobs`.
+
+```text
+User API:      Authorization: Bearer <account-api-key>
+Scheduler:     Authorization: Bearer <scheduler-service-token>
+Worker:        Authorization: Bearer <worker-service-token>
 ```
 
 ### Obtain a development key
 
-`POST /accounts` is an **unauthenticated self-hosted/development bootstrap**. It creates an Account and returns **one** API key. Do not expose this endpoint on a public network without an administrative layer in front of it. Open registration is not production identity administration.
+`POST /accounts` is a self-hosted/development bootstrap. It is **disabled by default** (`ACCOUNT_REGISTRATION_ENABLED=false`). When disabled it returns **403** `ACCOUNT_REGISTRATION_DISABLED`. Local development sets `ACCOUNT_REGISTRATION_ENABLED=true`. Open registration is not production identity administration and is not an admin RBAC subsystem.
 
 ```bash
 curl -sS -X POST http://localhost:8080/accounts \
@@ -330,26 +361,44 @@ Raw keys are never stored. PostgreSQL keeps a SHA-256 hex digest with a unique i
 
 A caller who uses a valid key for Account A against Account B's Job, operation, attempt, or artifact receives **404** `JOB_NOT_FOUND` (same as a missing id). That avoids revealing that the resource exists. Lifecycle errors on **your** resource remain **409** (for example cancel after `COMPLETED`, retry when nothing is `FAILED`).
 
+### Internal service authentication
+
+Internal endpoints are a different trust domain from Account API keys.
+
+| Caller | Env | Endpoints |
+| --- | --- | --- |
+| Go scheduler | `SCHEDULER_SERVICE_TOKEN` | `GET /internal/scheduler/snapshot`, `POST /internal/scheduler/assign` |
+| Go worker | `WORKER_ID` + `WORKER_SERVICE_TOKEN` | register, heartbeat, start, renew, complete, fail, cancelled ack, and claim if enabled |
+
+Multiple scheduler processes may share one scheduler token in this phase. There is no scheduler-instance table.
+
+Workers use **per-worker HMAC tokens**. The control plane holds `WORKER_TOKEN_PEPPER` and never gives it to workers. A token looks like `mp_wk_<workerId>_<hmac-sha256-hex>` over `WORKER:<workerId>`. `worker-a`'s token cannot register, heartbeat, start, renew, complete, fail, or acknowledge cancellation as `worker-b`. Identity comes from the token subject, not only from the JSON body.
+
+Mint tokens with `scripts/mint-worker-token.py`. Restart Java with a new pepper/scheduler token to rotate; credentials are environment-managed and are **not** stored in PostgreSQL (raw or hashed). The control process hashes the scheduler token in memory for comparison.
+
+Missing or invalid internal credentials return **401** `UNAUTHORIZED` (same body as user auth; no enumeration). A valid internal credential of the **wrong service type** (worker token on scheduler APIs, or scheduler token on worker APIs) returns **403** `FORBIDDEN`. Worker identity mismatch also returns **403** and does not reveal the expected worker id.
+
+`POST /internal/operations/claim` stays disabled by default. When tests enable it, it still requires a worker token bound to the request `workerId`.
+
+This phase does **not** implement mTLS, SPIFFE, a service mesh, OAuth service accounts, or a secret manager.
+
 ### What this phase does and does not cover
 
-Phase 5E protects the **user-facing API resource boundary**.
+Phase 5F protects the **user API** and the **internal scheduler/worker API** as separate trust domains.
 
-It does **not** yet solve:
+It does **not** solve:
 
-- internal service authentication (`/internal/**` used by the Go scheduler and workers)
-- TLS
+- TLS termination in application code (required in deployed environments; local HTTP is development-only)
 - secret-manager integration
-- RBAC
-- organizations / teams
+- user RBAC / organizations / teams
+- automated token rotation
 - audit logging
 - rate limiting
 - password, JWT, OAuth, or browser login
 
-`/internal/**` keeps its previous unauthenticated behavior so the distributed platform still runs. Treat that as later hardening, not a solved security property.
+Presigned Artifact URLs remain **bearer capabilities until they expire**. Revoking an API key does **not** invalidate already-issued S3 signatures. Short TTL is the control. The signed MinIO/S3 URL does not require the Java API key or an internal service token; S3 validates the signature.
 
-Presigned Artifact URLs remain **bearer capabilities until they expire**. Revoking an API key does **not** invalidate already-issued S3 signatures. Short TTL is the control. The signed MinIO/S3 URL does not require the Java API key; S3 validates the signature.
-
-Do not log `Authorization` headers, raw API keys, key hashes, or full presigned URLs.
+Do not log `Authorization` headers, raw API keys, internal tokens, token hashes, peppers, or full presigned URLs.
 
 ## Job Management API
 
@@ -826,6 +875,7 @@ The job is `QUEUED` until the scheduler assigns an operation (`ASSIGNED`), a wor
 cd worker
 
 WORKER_ID=worker-a \
+WORKER_SERVICE_TOKEN="$WORKER_A_TOKEN" \
 HEARTBEAT_INTERVAL=5s \
 LEASE_RENEW_INTERVAL=10s \
 CONTROL_SERVICE_URL=http://localhost:8080 \
@@ -840,6 +890,7 @@ OUTPUT_BUCKET=media-output \
 go run ./cmd/worker
 
 WORKER_ID=worker-b \
+WORKER_SERVICE_TOKEN="$WORKER_B_TOKEN" \
 HEARTBEAT_INTERVAL=5s \
 LEASE_RENEW_INTERVAL=10s \
 CONTROL_SERVICE_URL=http://localhost:8080 \
@@ -938,6 +989,7 @@ Start PostgreSQL, MinIO, RabbitMQ, and the control service as above, then submit
 
 ```bash
 curl -sS -X POST http://localhost:8080/jobs \
+  -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
     "inputUri": "s3://media-input/sample.mp4",
@@ -956,6 +1008,7 @@ Start two or more identical workers:
 cd worker
 
 WORKER_ID=worker-a \
+WORKER_SERVICE_TOKEN="$WORKER_A_TOKEN" \
 CONTROL_SERVICE_URL=http://localhost:8080 \
 RABBITMQ_URL=amqp://media_platform:media_platform@localhost:5672/ \
 PREFETCH=1 \
@@ -968,6 +1021,7 @@ OUTPUT_BUCKET=media-output \
 go run ./cmd/worker
 
 WORKER_ID=worker-b \
+WORKER_SERVICE_TOKEN="$WORKER_B_TOKEN" \
 CONTROL_SERVICE_URL=http://localhost:8080 \
 RABBITMQ_URL=amqp://media_platform:media_platform@localhost:5672/ \
 PREFETCH=1 \
@@ -1104,15 +1158,15 @@ Example list:
 
 Parent Job status after start/complete/fail is recomputed under a PostgreSQL row lock on the Job, so concurrent operation completions cannot leave the job stale (for example both operations `COMPLETED` while the job stays `RUNNING`). That is aggregation correctness, not exactly-once execution.
 
-Internal `POST /internal/workers/register` and `POST /internal/workers/{workerId}/heartbeat` are for trusted workers only. Phase 5E user API keys are **not** applied to `/internal/**`.
+Internal `POST /internal/workers/register` and `POST /internal/workers/{workerId}/heartbeat` require a worker service token bound to that worker id. Account API keys are rejected.
 
 `file://` inputs still work for both operations. Thumbnail output is always stored in the output bucket.
 
 A missing object (`s3://media-input/does-not-exist.mp4`) becomes operation `FAILED` and job `FAILED`, with a persisted `failureReason` that does not include credentials.
 
-Internal worker endpoints (`POST /internal/operations/{id}/start`, `.../attempts/{attemptId}/renew`, `.../complete`, `.../fail`) are for **local/trusted development only**. User API keys are **not** required on `/internal/**` in Phase 5E. That is remaining technical debt, not a solved service-to-service authentication design. Credential for attempt ownership is the unguessable attempt UUID plus `workerId` on the trusted network; there is no extra lease token.
+Internal worker endpoints (`POST /internal/operations/{id}/start`, `.../attempts/{attemptId}/renew`, `.../complete`, `.../fail`, `.../cancelled`) require the owning worker's token. Authenticated worker identity must match the assignment/attempt owner. Attempt UUID validation remains; internal auth does not replace it.
 
-`POST /internal/operations/claim` still exists but is **disabled by default** (`drive.dispatch.http-claim-enabled=false`) so it does not compete with the scheduler. Existing tests turn it on. Claim now also requires `workerId` and creates an attempt. Do not run poll-based workers against a scheduler-enabled control service.
+`POST /internal/operations/claim` still exists but is **disabled by default** (`drive.dispatch.http-claim-enabled=false`) so it does not compete with the scheduler. Existing tests turn it on. When enabled, claim still requires a worker token bound to `workerId`. Do not run poll-based workers against a scheduler-enabled control service.
 
 ## Execution ownership
 
@@ -1265,7 +1319,7 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 
 `GET /jobs/{jobId}/operations/{operationId}/attempts` is a read-only history API (no lease internals).
 
-### Phase 5E limitations
+### Phase 5F limitations
 
 - TRANSCODE_4K_TO_1080P is retired; use TRANSCODE_1080P for 1080p H.264 output including 4K sources
 - H264_TO_AV1 requires an H.264 video stream and a software AV1 encoder (`libsvtav1` or `libaom-av1`)
@@ -1288,9 +1342,11 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 - orphan MinIO objects from a cancelled upload are not garbage-collected
 - no automatic retries or retry backoff; only explicit `POST .../retry` of FAILED operations
 - presigned download URLs are time-limited bearer capabilities; already-issued URLs are not revoked when an API key is revoked
-- API-key auth covers user-facing APIs only; `/internal/**` is still unauthenticated (scheduler/worker trust the network)
-- no TLS, secret manager, RBAC, organizations/teams, audit log, or rate limiting
-- `POST /accounts` is a self-hosted bootstrap, not production-grade identity administration
+- internal credentials are environment-managed; rotation is a restart with a new secret, not automated
+- local HTTP is development-only; deployed environments must terminate TLS in front of the control service
+- no mTLS, service mesh, SPIFFE, OAuth, JWT, or secret-manager integration
+- no user RBAC, organizations/teams, audit log, or rate limiting
+- `POST /accounts` can be disabled but is still a bootstrap, not production-grade identity administration
 - no frontend, passwords, JWT, or OAuth
 - no upload/presigned PUT APIs
 
@@ -1347,4 +1403,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next **product** milestone is internal service authentication for scheduler/worker APIs (or TLS + a shared internal credential). A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.
+The smallest next **product** milestone is deployment/TLS termination in front of the control service (this phase documents the requirement but does not implement certificates). A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.

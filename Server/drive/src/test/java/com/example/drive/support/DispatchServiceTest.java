@@ -20,9 +20,12 @@ import org.springframework.context.annotation.Import;
 		"drive.worker.heartbeat-sweep-enabled=false",
 		"drive.execution.lease-sweep-enabled=false",
 		"drive.assignment.sweep-enabled=false",
+		InternalAuthTestConstants.SCHEDULER_TOKEN_PROPERTY,
+		InternalAuthTestConstants.WORKER_PEPPER_PROPERTY,
+		InternalAuthTestConstants.ACCOUNT_REGISTRATION_PROPERTY,
 		"spring.autoconfigure.exclude=org.springframework.boot.amqp.autoconfigure.RabbitAutoConfiguration"
 })
 @AutoConfigureMockMvc
-@Import(PostgresTestcontainersConfig.class)
+@Import({PostgresTestcontainersConfig.class, InternalAuthTestConfig.class})
 public @interface DispatchServiceTest {
 }

@@ -1,7 +1,9 @@
 package com.example.drive.security;
 
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -16,7 +18,35 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
 	@Bean
-	SecurityFilterChain securityFilterChain(
+	@Order(1)
+	SecurityFilterChain internalSecurityFilterChain(
+			HttpSecurity http,
+			InternalServiceAuthenticationFilter internalServiceAuthenticationFilter,
+			JsonAuthenticationEntryPoint authenticationEntryPoint,
+			JsonAccessDeniedHandler accessDeniedHandler
+	) throws Exception {
+		http
+				.securityMatcher("/internal/**")
+				.csrf(csrf -> csrf.disable())
+				.httpBasic(basic -> basic.disable())
+				.formLogin(form -> form.disable())
+				.logout(logout -> logout.disable())
+				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+				.exceptionHandling(exceptions -> exceptions
+						.authenticationEntryPoint(authenticationEntryPoint)
+						.accessDeniedHandler(accessDeniedHandler))
+				.authorizeHttpRequests(auth -> auth
+						.requestMatchers("/internal/scheduler/**").hasRole("SCHEDULER")
+						.requestMatchers("/internal/workers/**", "/internal/operations/**").hasRole("WORKER")
+						.anyRequest().authenticated()
+				)
+				.addFilterBefore(internalServiceAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+		return http.build();
+	}
+
+	@Bean
+	@Order(2)
+	SecurityFilterChain applicationSecurityFilterChain(
 			HttpSecurity http,
 			ApiKeyAuthenticationFilter apiKeyAuthenticationFilter,
 			JsonAuthenticationEntryPoint authenticationEntryPoint
@@ -31,11 +61,28 @@ public class SecurityConfig {
 				.authorizeHttpRequests(auth -> auth
 						.requestMatchers(HttpMethod.GET, "/health").permitAll()
 						.requestMatchers(HttpMethod.POST, "/accounts").permitAll()
-						.requestMatchers("/internal/**").permitAll()
 						.anyRequest().authenticated()
 				)
 				.addFilterBefore(apiKeyAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 		return http.build();
+	}
+
+	@Bean
+	FilterRegistrationBean<InternalServiceAuthenticationFilter> disableInternalAuthFilterRegistration(
+			InternalServiceAuthenticationFilter filter
+	) {
+		FilterRegistrationBean<InternalServiceAuthenticationFilter> registration = new FilterRegistrationBean<>(filter);
+		registration.setEnabled(false);
+		return registration;
+	}
+
+	@Bean
+	FilterRegistrationBean<ApiKeyAuthenticationFilter> disableApiKeyFilterRegistration(
+			ApiKeyAuthenticationFilter filter
+	) {
+		FilterRegistrationBean<ApiKeyAuthenticationFilter> registration = new FilterRegistrationBean<>(filter);
+		registration.setEnabled(false);
+		return registration;
 	}
 
 	@Bean

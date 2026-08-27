@@ -14,6 +14,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.example.drive.support.MockRabbitTemplateConfig;
+import com.example.drive.support.InternalAuthTestConfig;
 import com.example.drive.support.PostgresTestcontainersConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,10 +37,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 		"drive.worker.heartbeat-sweep-enabled=false",
 		"drive.execution.lease-sweep-enabled=false",
 		"drive.assignment.sweep-enabled=false",
+		"drive.internal.scheduler-token=test-scheduler-token",
+		"drive.internal.worker-token-pepper=test-worker-pepper",
+		"drive.auth.account-registration-enabled=true",
 		"spring.autoconfigure.exclude=org.springframework.boot.amqp.autoconfigure.RabbitAutoConfiguration"
 })
 @AutoConfigureMockMvc
-@Import({PostgresTestcontainersConfig.class, MockRabbitTemplateConfig.class})
+@Import({PostgresTestcontainersConfig.class, MockRabbitTemplateConfig.class, InternalAuthTestConfig.class})
 class DispatchPublisherIntegrationTest extends AuthenticatedApiTest {
 
 	@Autowired
