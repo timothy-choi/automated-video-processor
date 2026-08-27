@@ -32,6 +32,7 @@ import com.example.drive.job.dto.StartOutcome;
 import com.example.drive.job.repository.ArtifactRepository;
 import com.example.drive.job.repository.ExecutionAttemptRepository;
 import com.example.drive.job.repository.OperationRepository;
+import com.example.drive.security.CurrentInternalCaller;
 import com.example.drive.worker.WorkerNotFoundException;
 import com.example.drive.worker.domain.Worker;
 import com.example.drive.worker.domain.WorkerStatus;
@@ -72,6 +73,7 @@ public class InternalOperationService {
 
 	@Transactional
 	public StartOperationResponse start(UUID operationId, String workerId, UUID assignmentId) {
+		CurrentInternalCaller.requireWorker(workerId);
 		Worker worker = requireEligibleWorker(workerId);
 		lockJobForOperation(operationId);
 		worker = requireEligibleWorker(workerId);
@@ -110,6 +112,7 @@ public class InternalOperationService {
 
 	@Transactional
 	public Optional<ClaimedOperationResponse> claimNextExecutableOperation(String workerId) {
+		CurrentInternalCaller.requireWorker(workerId);
 		Worker worker = requireEligibleWorker(workerId);
 		Optional<UUID> lockedId = lockNextClaimableId();
 		if (lockedId.isEmpty()) {
@@ -147,6 +150,7 @@ public class InternalOperationService {
 
 	@Transactional
 	public RenewAttemptResponse renew(UUID operationId, UUID attemptId, String workerId) {
+		CurrentInternalCaller.requireWorker(workerId);
 		lockJobForOperation(operationId);
 		Instant now = nowUtc();
 		Operation operation = operationRepository.findByIdWithJobAndOperations(operationId)
@@ -189,6 +193,7 @@ public class InternalOperationService {
 
 	@Transactional
 	public OperationResponse acknowledgeCancelled(UUID operationId, UUID attemptId, String workerId, Long runtimeMs) {
+		CurrentInternalCaller.requireWorker(workerId);
 		lockJobForOperation(operationId);
 		Instant now = nowUtc();
 		Operation operation = operationRepository.findByIdWithJobAndOperations(operationId)
@@ -227,6 +232,7 @@ public class InternalOperationService {
 		Operation operation = operationRepository.findByIdWithJobAndOperations(operationId)
 				.orElseThrow(() -> new OperationNotFoundException(operationId));
 		ExecutionAttempt attempt = requireAttemptForResult(operation, request.attemptId(), true);
+		CurrentInternalCaller.requireWorker(attempt.getWorkerId());
 
 		boolean changed = switch (operation.getType()) {
 			case METADATA -> completeMetadata(operation, attempt, request, now);
@@ -255,6 +261,7 @@ public class InternalOperationService {
 		Operation operation = operationRepository.findByIdWithJobAndOperations(operationId)
 				.orElseThrow(() -> new OperationNotFoundException(operationId));
 		ExecutionAttempt attempt = requireAttemptForResult(operation, request.attemptId(), false);
+		CurrentInternalCaller.requireWorker(attempt.getWorkerId());
 		boolean changed = false;
 		if (attempt.getStatus() == AttemptStatus.RUNNING) {
 			attempt.markFailed(now, request.actualRuntimeMs(), request.reason().trim());

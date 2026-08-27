@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/timothy-choi/automated-video-processor/worker/internal/auth"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/capability"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/storage"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/worker"
@@ -21,6 +22,9 @@ func main() {
 	}
 	restrict, err := capability.ParseSupportedOperationsEnv(os.Getenv("SUPPORTED_OPERATIONS"))
 	if err != nil {
+		log.Fatal(err)
+	}
+	if err := auth.RequireWorkerToken(workerID, os.Getenv("WORKER_SERVICE_TOKEN")); err != nil {
 		log.Fatal(err)
 	}
 	hostname := os.Getenv("WORKER_HOSTNAME")
@@ -41,6 +45,7 @@ func main() {
 		LeaseRenewInterval:  leaseRenewInterval(),
 		ExecutionTimeout:    executionTimeout(),
 		SupportedOperations: restrict,
+		ServiceToken:        os.Getenv("WORKER_SERVICE_TOKEN"),
 		ObjectStore: storage.Config{
 			Endpoint:       envOr("OBJECT_STORE_ENDPOINT", "http://localhost:9000"),
 			Region:         envOr("OBJECT_STORE_REGION", "us-east-1"),

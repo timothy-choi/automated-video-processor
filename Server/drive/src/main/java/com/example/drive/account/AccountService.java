@@ -29,20 +29,26 @@ public class AccountService {
 
 	private final AccountRepository accountRepository;
 	private final ApiKeyRepository apiKeyRepository;
+	private final AuthProperties authProperties;
 	private final Clock clock;
 
 	public AccountService(
 			AccountRepository accountRepository,
 			ApiKeyRepository apiKeyRepository,
+			AuthProperties authProperties,
 			Clock clock
 	) {
 		this.accountRepository = accountRepository;
 		this.apiKeyRepository = apiKeyRepository;
+		this.authProperties = authProperties;
 		this.clock = clock;
 	}
 
 	@Transactional
 	public AccountCreatedResponse createAccount(String name) {
+		if (!authProperties.isAccountRegistrationEnabled()) {
+			throw new AccountRegistrationDisabledException();
+		}
 		Instant now = clock.instant();
 		Account account = accountRepository.save(new Account(UUID.randomUUID(), name.trim(), now));
 		IssuedKey issued = issueKey(account, now);

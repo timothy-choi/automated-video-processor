@@ -9,6 +9,7 @@ import com.example.drive.account.AuthProperties;
 import com.example.drive.dispatch.DispatchProperties;
 import com.example.drive.job.OperationAssignmentProperties;
 import com.example.drive.job.OperationLeaseProperties;
+import com.example.drive.security.InternalAuthProperties;
 import com.example.drive.storage.ArtifactAccessProperties;
 import com.example.drive.storage.ObjectStoreProperties;
 import com.example.drive.worker.WorkerHeartbeatProperties;
@@ -17,6 +18,7 @@ import com.example.drive.worker.WorkerHeartbeatProperties;
 @EnableScheduling
 @EnableConfigurationProperties({
 		AuthProperties.class,
+		InternalAuthProperties.class,
 		DispatchProperties.class,
 		WorkerHeartbeatProperties.class,
 		OperationLeaseProperties.class,

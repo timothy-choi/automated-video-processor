@@ -5,14 +5,11 @@ import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationCredentialsNotFoundException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
-
-import com.example.drive.account.AccountService;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -20,31 +17,24 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 @Component
-public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
+public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
 
-	private static final Logger log = LoggerFactory.getLogger(ApiKeyAuthenticationFilter.class);
+	private static final Logger log = LoggerFactory.getLogger(InternalServiceAuthenticationFilter.class);
 
-	private final AccountService accountService;
+	private final InternalServiceAuthenticator authenticator;
 	private final JsonAuthenticationEntryPoint authenticationEntryPoint;
 
-	public ApiKeyAuthenticationFilter(
-			AccountService accountService,
+	public InternalServiceAuthenticationFilter(
+			InternalServiceAuthenticator authenticator,
 			JsonAuthenticationEntryPoint authenticationEntryPoint
 	) {
-		this.accountService = accountService;
+		this.authenticator = authenticator;
 		this.authenticationEntryPoint = authenticationEntryPoint;
 	}
 
 	@Override
 	protected boolean shouldNotFilter(HttpServletRequest request) {
-		String path = request.getRequestURI();
-		if (path.startsWith("/internal/")) {
-			return true;
-		}
-		if ("/health".equals(path) && HttpMethod.GET.matches(request.getMethod())) {
-			return true;
-		}
-		return "/accounts".equals(path) && HttpMethod.POST.matches(request.getMethod());
+		return !request.getRequestURI().startsWith("/internal/");
 	}
 
 	@Override
@@ -53,8 +43,12 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 			HttpServletResponse response,
 			FilterChain filterChain
 	) throws ServletException, IOException {
-		Optional<String> rawKey = BearerTokens.extract(request);
-		if (rawKey.isEmpty()) {
+		Optional<String> rawToken = BearerTokens.extract(request);
+		if (rawToken.isEmpty()) {
+			log.warn(
+					"event=internal_auth_failed category=missing_credential path={}",
+					request.getRequestURI()
+			);
 			authenticationEntryPoint.commence(
 					request,
 					response,
@@ -62,8 +56,12 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 			);
 			return;
 		}
-		Optional<AccountPrincipal> principal = accountService.authenticate(rawKey.get());
+		Optional<InternalPrincipal> principal = authenticator.authenticate(rawToken.get());
 		if (principal.isEmpty()) {
+			log.warn(
+					"event=internal_auth_failed category=invalid_credential path={}",
+					request.getRequestURI()
+			);
 			authenticationEntryPoint.commence(
 					request,
 					response,
@@ -71,13 +69,13 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 			);
 			return;
 		}
-		ApiKeyAuthentication authentication = new ApiKeyAuthentication(principal.get());
+		InternalAuthentication authentication = new InternalAuthentication(principal.get());
 		authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
 		SecurityContextHolder.getContext().setAuthentication(authentication);
 		log.debug(
-				"event=authenticated accountId={} apiKeyId={} path={}",
-				principal.get().accountId(),
-				principal.get().apiKeyId(),
+				"event=internal_authenticated serviceType={} subjectId={} path={}",
+				principal.get().serviceType(),
+				principal.get().subjectId(),
 				request.getRequestURI()
 		);
 		try {

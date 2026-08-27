@@ -85,12 +85,13 @@ class ApiAuthenticationIntegrationTest extends AuthenticatedApiTest {
 	}
 
 	@Test
-	void healthAndAccountBootstrapAndInternalStayPublic() throws Exception {
+	void healthStaysPublicAndInternalRequiresServiceAuth() throws Exception {
 		mockMvc.perform(get("/health"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("UP"));
 
-		mockMvc.perform(post("/internal/workers/register")
+		mockMvc.perform(com.example.drive.support.InternalAuthSupport.unauthenticated(
+						post("/internal/workers/register"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
@@ -104,7 +105,8 @@ class ApiAuthenticationIntegrationTest extends AuthenticatedApiTest {
 								  "ffmpegVersion": "7.1"
 								}
 								"""))
-				.andExpect(status().isCreated());
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
 	}
 
 	@Test

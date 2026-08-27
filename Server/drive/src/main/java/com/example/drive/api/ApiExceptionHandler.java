@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import com.example.drive.account.ApiKeyNotFoundException;
+import com.example.drive.account.AccountRegistrationDisabledException;
 import com.example.drive.job.AttemptNotFoundException;
 import com.example.drive.job.ArtifactNotFoundException;
 import com.example.drive.job.ArtifactUriInvalidException;
@@ -39,6 +40,16 @@ public class ApiExceptionHandler {
 
 	public ApiExceptionHandler(Clock clock) {
 		this.clock = clock;
+	}
+
+	@ExceptionHandler(AccountRegistrationDisabledException.class)
+	public ResponseEntity<ApiError> handleAccountRegistrationDisabled(AccountRegistrationDisabledException ex) {
+		return respond(HttpStatus.FORBIDDEN, "ACCOUNT_REGISTRATION_DISABLED", ex.getMessage());
+	}
+
+	@ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+	public ResponseEntity<ApiError> handleAccessDenied(org.springframework.security.access.AccessDeniedException ex) {
+		return respond(HttpStatus.FORBIDDEN, "FORBIDDEN", "Forbidden");
 	}
 
 	@ExceptionHandler(JobNotFoundException.class)

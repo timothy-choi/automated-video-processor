@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.example.drive.job.domain.OperationType;
+import com.example.drive.security.CurrentInternalCaller;
 import com.example.drive.worker.domain.Worker;
 import com.example.drive.worker.domain.WorkerStatus;
 import com.example.drive.worker.dto.HeartbeatResponse;
@@ -52,6 +53,7 @@ public class WorkerService {
 			throw new InvalidRegistrationException("INVALID_REGISTRATION", "registration body is required");
 		}
 		String workerId = requireWorkerId(request.workerId());
+		CurrentInternalCaller.requireWorker(workerId);
 		String hostname = requireText(request.hostname(), "hostname");
 		String cpuArchitecture = requireText(request.cpuArchitecture(), "cpuArchitecture");
 		int cpuCores = requireCpuCores(request.cpuCores());
@@ -86,6 +88,7 @@ public class WorkerService {
 
 	@Transactional
 	public HeartbeatResponse heartbeat(String workerId) {
+		CurrentInternalCaller.requireWorker(workerId);
 		Worker worker = workerRepository.findById(workerId)
 				.orElseThrow(() -> new WorkerNotFoundException(workerId));
 		Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);

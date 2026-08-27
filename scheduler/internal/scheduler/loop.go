@@ -50,6 +50,10 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 		if ctx.Err() != nil {
 			return 0
 		}
+		if client.IsUnauthorized(err) {
+			log.Printf("event=snapshot_unauthorized")
+			return interval
+		}
 		log.Printf("event=snapshot_failed err=%v", err)
 		return interval
 	}
@@ -92,6 +96,10 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 				err,
 			)
 			return 0
+		}
+		if client.IsUnauthorized(err) {
+			log.Printf("event=assign_unauthorized operationId=%s workerId=%s", placement.OperationID, placement.WorkerID)
+			return interval
 		}
 		log.Printf(
 			"event=assign_failed operationId=%s workerId=%s err=%v",
