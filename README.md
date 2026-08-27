@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 5F**: user-facing APIs require an Account API key with ownership isolation, and scheduler/worker calls to `/internal/**` require separate internal service credentials. Users can list owned Jobs and request a **time-limited HTTP URL** for an owned Artifact without seeing object-store credentials. They can also cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation using current queue-entry time. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
+This repository is currently at **Phase 5G**: the platform runs as one Compose stack (control service, scheduler, workers, PostgreSQL, RabbitMQ, MinIO, HTTPS ingress). User-facing APIs require an Account API key with ownership isolation. Scheduler/worker calls to `/internal/**` use separate internal service credentials. Users can list owned Jobs and request a **time-limited HTTP URL** for an owned Artifact. They can cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, adaptive scoring, Kubernetes, and cloud-provider deploy are not implemented.
 
-## Current status: Phase 5F — Internal Service Authentication + Bootstrap Hardening
+## Current status: Phase 5G — Production-Style Deployment, Ingress, TLS, and One-Command Startup
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,9 +34,12 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
-Phase 5F currently:
+Phase 5G currently:
 
-- requires `Authorization: Bearer <api-key>` on user-facing product APIs (`/jobs/**`, `/workers/**`, `/api-keys/**`)
+- launches the full platform with `docker compose up --build` (Java, scheduler, two workers, PostgreSQL, RabbitMQ, MinIO, Caddy HTTPS ingress)
+- serves the public API over **HTTPS** at `https://localhost` (Caddy local TLS; Java stays HTTP on the Compose network)
+- authenticates users with `Authorization: Bearer <api-key>` on `/jobs/**`, `/workers/**`, `/api-keys/**`
+
 - stores API keys as SHA-256 hashes (raw keys are shown only when created)
 - scopes Job listing, inspection, cancel, retry, artifacts, and download URLs to the authenticated Account
 - authenticates `/internal/**` with scheduler and per-worker service tokens (not Account API keys)
@@ -89,7 +92,33 @@ Least Loaded is a baseline that reacts to current executing work. It is not a th
 | FIFO             | LEAST_LOADED  |
 
 ```text
+                         Client
+                           |
+                         HTTPS
+                           |
+                           v
+                    Reverse Proxy
+                           |
+                           v
+                   Java Control Plane
+                    /       |       \
+                   /        |        \
+            PostgreSQL  Go Scheduler  Worker Registry
+                            |
+                         RabbitMQ
+                      /             \
+                     v               v
+                 Worker A         Worker B
+                     \               /
+                      \             /
+                         MinIO/S3
+```
+
+```text
 Client
+  |
+  v
+HTTPS ingress (Caddy)
   |
   v
 Java Control Service
@@ -165,91 +194,164 @@ go test ./...
 go vet ./...
 ```
 
-Java tests start a temporary PostgreSQL container. Dispatcher and scheduler RabbitMQ tests also start RabbitMQ via Testcontainers. They do **not** require the Compose database, MinIO, or Compose RabbitMQ. Some Go tests generate a tiny clip with FFmpeg when `ffmpeg`/`ffprobe` are on `PATH`; they are skipped if those binaries are missing. GitHub Actions does **not** install FFmpeg or MinIO. Object-storage unit tests use an in-memory fake. Worker broker tests start RabbitMQ via Testcontainers. Scheduler tests are unit tests (no Docker).
+Java tests start a temporary PostgreSQL container. Dispatcher and scheduler RabbitMQ tests also start RabbitMQ via Testcontainers. They do **not** require the Compose database, MinIO, or Compose RabbitMQ. Some Go tests generate a tiny clip with FFmpeg when `ffmpeg`/`ffprobe` are on `PATH`; they are skipped if those binaries are missing. GitHub Actions does **not** install FFmpeg or MinIO. Object-storage unit tests use an in-memory fake. Worker broker tests start RabbitMQ via Testcontainers. Scheduler tests are unit tests (no Docker). CI also runs `docker compose --env-file .env.example config`.
 
-## Local infrastructure
+## Prerequisites
 
-From the repository root:
-
-```bash
-docker compose up -d postgres minio minio-init rabbitmq
-```
-
-This starts:
-
-- PostgreSQL 16 on port **5432** (database/user/password `media_platform`)
-- MinIO S3 API on port **9000** and console on **9001**
-- a one-shot `minio-init` container that creates buckets `media-input` and `media-output`
-- RabbitMQ 3.13 on port **5672** (AMQP) and management UI on **15672**
-
-Those database, MinIO, and RabbitMQ values are **local development defaults**, not production secrets. MinIO console: [http://localhost:9001](http://localhost:9001) (`minioadmin` / `minioadmin`). RabbitMQ management: [http://localhost:15672](http://localhost:15672) (`media_platform` / `media_platform`).
-
-If host ports are already in use:
-
-```bash
-POSTGRES_PORT=55432 MINIO_API_PORT=19000 MINIO_CONSOLE_PORT=19001 \
-  RABBITMQ_AMQP_PORT=5673 RABBITMQ_MANAGEMENT_PORT=15673 \
-  docker compose up -d postgres minio minio-init rabbitmq
-DB_URL=jdbc:postgresql://localhost:55432/media_platform
-OBJECT_STORE_ENDPOINT=http://localhost:19000
-RABBITMQ_PORT=5673
-```
-
-Override Postgres connection settings with:
+For the normal product path you only need:
 
 ```text
-DB_URL          default jdbc:postgresql://localhost:5432/media_platform
-DB_USERNAME     default media_platform
-DB_PASSWORD     default media_platform
+Docker
+Docker Compose
 ```
 
-## Start the application
+Java, Go, and FFmpeg are inside the images. Host-based development still uses JDK 21, Go, and FFmpeg if you run processes on the host (see that section below).
 
-Local HTTP is **development-only**. Bearer tokens (Account API keys and internal service tokens) must be used over HTTPS/TLS in any deployed environment. This repository does not terminate TLS; that belongs to later ingress/deployment work. Do not treat plaintext local HTTP as a production security property.
+## Quickstart
 
 ```bash
-docker compose up -d postgres minio minio-init rabbitmq
+./scripts/setup-local-env.sh
+docker compose up --build
+```
+
+`setup-local-env.sh` writes an untracked `.env` with random local secrets (scheduler token, worker pepper, worker-a/worker-b tokens, bootstrap Account API key). It will not overwrite an existing `.env` unless you pass `--force`. Those values are **local development secrets**, not production secrets. Production should use a real secret store later; this phase does not integrate one.
+
+Wait until `control-service` is healthy, then:
+
+```bash
+curl -k https://localhost/health
+```
+
+Expected: `{"status":"UP"}`. `GET /health` is public.
+
+Load the bootstrap Account key (the only key you need for first-run; open `POST /accounts` stays **disabled**):
+
+```bash
+set -a && source .env && set +a
+export MEDIA_PLATFORM_API_KEY="$MEDIA_PLATFORM_BOOTSTRAP_API_KEY"
+```
+
+```bash
+curl -k -sS \
+  -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" \
+  https://localhost/jobs
+```
+
+HTTP on port 80 redirects to HTTPS. The authenticated product API is not served as public plaintext HTTP.
+
+### Submit a job, download an artifact
+
+Upload a small clip to MinIO (`http://127.0.0.1:9000`, buckets `media-input` / `media-output`), then:
+
+```bash
+curl -k -sS -X POST https://localhost/jobs \
+  -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"inputUri":"s3://media-input/sample.mp4","operations":[{"type":"METADATA"},{"type":"THUMBNAIL"}]}'
+```
+
+List and inspect with the same HTTPS host. When a THUMBNAIL artifact exists:
+
+```bash
+curl -k -sS -X POST \
+  -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" \
+  https://localhost/jobs/<job-id>/artifacts/<artifact-id>/download-url
+```
+
+The JSON `url` is a **presigned MinIO GET** on `http://127.0.0.1:9000` (not `http://minio:9000`). Curl that URL from the host with **no** API key and **no** internal token. SigV4 is computed for that public host; the URL is not rewritten after signing.
+
+Cancel and retry are unchanged: `POST /jobs/{id}/cancel` and `POST /jobs/{id}/operations/{id}/retry` through HTTPS.
+
+### Stop, restart, reset
+
+```bash
+docker compose down          # keeps named volumes (Jobs, Accounts, artifacts, broker state)
+docker compose up            # same data comes back
+docker compose down -v       # destructive reset of Postgres, MinIO, RabbitMQ, and Caddy data
+```
+
+`docker compose restart control-service` preserves the database. Restarting a worker marks it UNAVAILABLE until it heartbeats again, then AVAILABLE.
+
+### Local TLS
+
+Caddy uses an **internal CA** (`tls internal`). Browsers will warn until you trust that CA. `curl -k` is enough for local API checks. To export Caddy's local root (after the ingress container has started once):
+
+```bash
+docker compose cp ingress:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
+```
+
+Do not commit certificates. This is development TLS, not a public CA.
+
+External client credentials **must** use HTTPS through ingress. Scheduler and worker bearer tokens stay on the private Compose network as **HTTP**. That traffic is **not** mTLS. This phase does not implement a service mesh.
+
+### Object-store endpoints
+
+| Setting | Used by | Compose value |
+| --- | --- | --- |
+| `OBJECT_STORE_ENDPOINT` | Java HEAD, worker Get/Put | `http://minio:9000` |
+| `OBJECT_STORE_PUBLIC_ENDPOINT` | Java S3 presigner (client URLs) | `http://127.0.0.1:9000` |
+
+Workers never receive `WORKER_TOKEN_PEPPER`. Each worker gets only its own `WORKER_SERVICE_TOKEN`.
+
+### Host ports
+
+Default product Compose publishes:
+
+- **80 / 443** — HTTPS ingress (and HTTP→HTTPS redirect)
+- **9000** — MinIO S3 API (presigned downloads from the host)
+
+PostgreSQL and RabbitMQ AMQP stay on the Compose network so they do not collide with a host Postgres on 5432. Override `MINIO_API_PORT` / `INGRESS_HTTPS_PORT` in `.env` if those host ports are taken, and keep `OBJECT_STORE_PUBLIC_ENDPOINT` in sync with the published MinIO port.
+
+### Worker scaling
+
+`worker-a` and `worker-b` each have a bound token. `docker compose up --scale worker=20` does **not** work with this identity model. Add a new service (and mint a token) for `worker-c`. Dynamic provisioning is later work.
+
+Worker image size is larger than the scheduler image because Debian FFmpeg plus `libx264` and a software AV1 encoder (`libaom-av1` or `libsvtav1`) must be present. The image build **fails** if those encoders are missing, so advertised `H264_TO_AV1` / `TRANSCODE_1080P` stay truthful.
+
+### Shutdown
+
+SIGTERM: Java uses Spring graceful shutdown (30s). The scheduler loop stops. A worker cancels its context, stops consuming, and nacks in-flight work for requeue unless the user already cancelled. A long AV1 encode that is still running is interrupted; lease/recovery requeues it if the worker is UNAVAILABLE. Compose `stop_grace_period` for workers is **30s**.
+
+## Host-based development
+
+Use this only when you are changing Java/Go on the host. The product path is Compose. Local HTTP here is **development-only**.
+
+You can start just the data plane from an older workflow, but the current Compose file also builds the apps. For host processes, point them at published ports you add yourself, or run the data services by temporarily publishing ports. Defaults inside containers are service DNS names (`postgres`, `rabbitmq`, `minio`, `control-service`), not `localhost`.
+
+Host Java still needs:
+
+```text
+ACCOUNT_REGISTRATION_ENABLED=true
+SCHEDULER_SERVICE_TOKEN=...
+WORKER_TOKEN_PEPPER=...
+OBJECT_STORE_ENDPOINT=http://127.0.0.1:9000
+```
+
+Mint worker tokens with `python3 scripts/mint-worker-token.py <pepper> <worker-id>`. Java fails startup if the scheduler token or worker pepper is missing.
+
+```bash
 cd Server/drive
-ACCOUNT_REGISTRATION_ENABLED=true \
-SCHEDULER_SERVICE_TOKEN=dev-scheduler-token \
-WORKER_TOKEN_PEPPER=dev-worker-pepper \
 ./mvnw spring-boot:run
 ```
-
-Java fails startup if `SCHEDULER_SERVICE_TOKEN` or `WORKER_TOKEN_PEPPER` is missing. `ACCOUNT_REGISTRATION_ENABLED=true` is for local/self-hosted bootstrap; leave it unset/false on a publicly reachable deployment so `POST /accounts` returns **403** `ACCOUNT_REGISTRATION_DISABLED`.
-
-The service listens on port **8080** by default. Override with `SERVER_PORT`. Java operation-selection (`drive.dispatch.scheduling-enabled`) is **off** so it does not compete with the Go scheduler. The outbox publisher stays on. Artifact download URLs are signed by this Java process using the same `OBJECT_STORE_*` names as the worker (local MinIO defaults: `http://localhost:9000`, `minioadmin` / `minioadmin`, path-style). Set `OBJECT_STORE_ENDPOINT` to the URL **clients** will call, not a Docker-only hostname.
-
-Optional: set `MEDIA_PLATFORM_BOOTSTRAP_API_KEY` to `mp_live_` plus 64 hex characters to attach a known key to the Flyway `legacy-system` Account (so Jobs that existed before ownership remain reachable). Leave it unset unless you need that.
-
-Mint matching worker tokens (workers get the token, never the pepper):
-
-```bash
-export WORKER_A_TOKEN="$(python3 scripts/mint-worker-token.py dev-worker-pepper worker-a)"
-export WORKER_B_TOKEN="$(python3 scripts/mint-worker-token.py dev-worker-pepper worker-b)"
-```
-
-In another terminal, start the scheduler:
 
 ```bash
 cd scheduler
 CONTROL_SERVICE_URL=http://localhost:8080 \
-SCHEDULER_SERVICE_TOKEN=dev-scheduler-token \
-SCHEDULER_POLL_INTERVAL=500ms \
-OPERATION_POLICY=FIFO \
-WORKER_PLACEMENT_POLICY=LEAST_LOADED \
+SCHEDULER_SERVICE_TOKEN=... \
 go run ./cmd/scheduler
 ```
 
-`OPERATION_POLICY` must be `FIFO`. `WORKER_PLACEMENT_POLICY` is `LEXICOGRAPHIC` (default), `ROUND_ROBIN`, or `LEAST_LOADED`. Unknown values fail startup. `SCHEDULING_POLICY=FIFO` is still accepted as an alias for operation ordering only. Then start workers (see below).
-
-Override the control-service port with `SERVER_PORT`:
-
-```bash
-SERVER_PORT=8081 ./mvnw spring-boot:run
-```
+Host workers use `CONTROL_SERVICE_URL=http://localhost:8080`, `RABBITMQ_URL` to a published AMQP port, and `OBJECT_STORE_ENDPOINT` to the published MinIO API. API examples below that use `http://localhost:8080` are this host-dev path; the Compose product path is `https://localhost` with `curl -k` and the bootstrap key from `.env`.
 
 ## Health check
+
+Product stack:
+
+```bash
+curl -k https://localhost/health
+```
+
+Host-dev:
 
 ```bash
 curl http://localhost:8080/health
@@ -297,7 +399,7 @@ Worker:        Authorization: Bearer <worker-service-token>
 
 ### Obtain a development key
 
-`POST /accounts` is a self-hosted/development bootstrap. It is **disabled by default** (`ACCOUNT_REGISTRATION_ENABLED=false`). When disabled it returns **403** `ACCOUNT_REGISTRATION_DISABLED`. Local development sets `ACCOUNT_REGISTRATION_ENABLED=true`. Open registration is not production identity administration and is not an admin RBAC subsystem.
+`POST /accounts` is a self-hosted/development bootstrap. It is **disabled by default** (`ACCOUNT_REGISTRATION_ENABLED=false`). When disabled it returns **403** `ACCOUNT_REGISTRATION_DISABLED`. The Compose setup script issues `MEDIA_PLATFORM_BOOTSTRAP_API_KEY` instead of enabling open registration. Host-based development may set `ACCOUNT_REGISTRATION_ENABLED=true`. Open registration is not production identity administration and is not an admin RBAC subsystem.
 
 ```bash
 curl -sS -X POST http://localhost:8080/accounts \
@@ -384,11 +486,9 @@ This phase does **not** implement mTLS, SPIFFE, a service mesh, OAuth service ac
 
 ### What this phase does and does not cover
 
-Phase 5F protects the **user API** and the **internal scheduler/worker API** as separate trust domains.
+Phase 5F protected the **user API** and the **internal scheduler/worker API** as separate trust domains. Phase 5G adds Compose + HTTPS ingress; it still does **not** solve:
 
-It does **not** solve:
-
-- TLS termination in application code (required in deployed environments; local HTTP is development-only)
+- TLS inside Spring Boot (Caddy terminates TLS; Java stays HTTP on the Compose network)
 - secret-manager integration
 - user RBAC / organizations / teams
 - automated token rotation
@@ -1343,8 +1443,11 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 - no automatic retries or retry backoff; only explicit `POST .../retry` of FAILED operations
 - presigned download URLs are time-limited bearer capabilities; already-issued URLs are not revoked when an API key is revoked
 - internal credentials are environment-managed; rotation is a restart with a new secret, not automated
-- local HTTP is development-only; deployed environments must terminate TLS in front of the control service
-- no mTLS, service mesh, SPIFFE, OAuth, JWT, or secret-manager integration
+- local HTTP is development-only; the Compose product path terminates TLS at Caddy. Internal Compose traffic (scheduler/workers → Java) is HTTP, not mTLS
+- no mTLS, service mesh, SPIFFE, OAuth, JWT, Kubernetes, Helm, Terraform, or secret-manager integration
+- no Docker registry publish and no AWS/GCP/Azure deploy in this phase
+- `docker compose up --scale` cannot mint per-worker tokens; add named worker services
+- if an old RabbitMQ volume was created with a different image/user, a `.erlang.cookie` permission error may require `docker compose down` and removing that volume (or `down -v` as a full reset)
 - no user RBAC, organizations/teams, audit log, or rate limiting
 - `POST /accounts` can be disabled but is still a bootstrap, not production-grade identity administration
 - no frontend, passwords, JWT, or OAuth
@@ -1395,7 +1498,7 @@ Then:
 
 Do not routinely push feature work directly to `main`.
 
-Pushes to non-`main` branches run **Branch CI**. Pull requests to `main` and pushes/merges to `main` run **PR / Main CI**. Java CI executes `./mvnw clean test` from `Server/drive`. The **Go tests** job runs `go vet` / `go test` in `worker/` and `scheduler/`. The existing required-check names **Java tests** and **Go tests** are unchanged.
+Pushes to non-`main` branches run **Branch CI**. Pull requests to `main` and pushes/merges to `main` run **PR / Main CI**. Java CI executes `./mvnw clean test` from `Server/drive`. The **Go tests** job runs `go vet` / `go test` in `worker/` and `scheduler/`. A **Compose config** job runs `docker compose config`. The existing required-check names **Java tests** and **Go tests** are unchanged.
 
 These workflows are a **build/test gate**. They do not deploy anything. Deployment will be designed later.
 
@@ -1403,4 +1506,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next **product** milestone is deployment/TLS termination in front of the control service (this phase documents the requirement but does not implement certificates). A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.
+The smallest next **product** milestone is a hardened production secret/TLS story (public CA or operator-supplied certs, not Caddy `tls internal`) or a cloud-hosted deploy. This phase is local Compose only — not Kubernetes, Terraform, or a registry publish. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.

@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+!deploy/Caddyfile
+caddy-root.crt
+certs/
+.DS_Store

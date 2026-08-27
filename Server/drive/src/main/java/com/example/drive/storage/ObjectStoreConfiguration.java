@@ -3,6 +3,8 @@ package com.example.drive.storage;
 import java.net.URI;
 import java.time.Clock;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,13 +21,16 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 @Configuration
 class ObjectStoreConfiguration {
 
+	private static final Logger log = LoggerFactory.getLogger(ObjectStoreConfiguration.class);
+
 	private S3Client s3Client;
 	private S3Presigner s3Presigner;
 
 	@Bean
 	@ConditionalOnMissingBean(ObjectStoreAccess.class)
 	ObjectStoreAccess objectStoreAccess(ObjectStoreProperties properties, Clock clock) {
-		URI endpoint = URI.create(properties.getEndpoint());
+		URI internalEndpoint = URI.create(properties.getEndpoint());
+		URI presignEndpoint = URI.create(properties.getPresignEndpoint());
 		StaticCredentialsProvider credentials = StaticCredentialsProvider.create(
 				AwsBasicCredentials.create(properties.getAccessKey(), properties.getSecretKey())
 		);
@@ -33,18 +38,23 @@ class ObjectStoreConfiguration {
 				.pathStyleAccessEnabled(properties.isForcePathStyle())
 				.build();
 		this.s3Client = S3Client.builder()
-				.endpointOverride(endpoint)
+				.endpointOverride(internalEndpoint)
 				.region(Region.of(properties.getRegion()))
 				.credentialsProvider(credentials)
 				.serviceConfiguration(s3Config)
 				.httpClientBuilder(UrlConnectionHttpClient.builder())
 				.build();
 		this.s3Presigner = S3Presigner.builder()
-				.endpointOverride(endpoint)
+				.endpointOverride(presignEndpoint)
 				.region(Region.of(properties.getRegion()))
 				.credentialsProvider(credentials)
 				.serviceConfiguration(s3Config)
 				.build();
+		log.info(
+				"event=object_store_configured endpoint={} presignEndpoint={}",
+				properties.getEndpoint(),
+				properties.getPresignEndpoint()
+		);
 		return new S3ObjectStoreAccess(s3Client, s3Presigner, clock);
 	}
 
