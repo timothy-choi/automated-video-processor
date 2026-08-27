@@ -1,6 +1,7 @@
 package com.example.drive.job.repository;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -14,6 +15,14 @@ import com.example.drive.job.domain.Operation;
 public interface OperationRepository extends JpaRepository<Operation, UUID> {
 
 	List<Operation> findByJob_IdOrderByOperationOrderAsc(UUID jobId);
+
+	@Query("""
+			select o.job.id as jobId, count(o) as count
+			from Operation o
+			where o.job.id in :jobIds
+			group by o.job.id
+			""")
+	List<JobIdCount> countGroupedByJobId(@Param("jobIds") Collection<UUID> jobIds);
 
 	@Query("select o from Operation o join fetch o.job where o.id = :id")
 	Optional<Operation> findByIdWithJob(@Param("id") UUID id);

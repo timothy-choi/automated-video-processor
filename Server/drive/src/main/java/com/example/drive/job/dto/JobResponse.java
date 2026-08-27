@@ -18,9 +18,15 @@ public record JobResponse(
 		Instant deadline,
 		Instant createdAt,
 		Instant updatedAt,
+		long operationCount,
+		long artifactCount,
 		List<OperationResponse> operations
 ) {
 	public static JobResponse from(Job job) {
+		return from(job, 0L);
+	}
+
+	public static JobResponse from(Job job, long artifactCount) {
 		List<OperationResponse> operations = job.getOperations().stream()
 				.sorted(Comparator.comparingInt(Operation::getOperationOrder))
 				.map(OperationResponse::from)
@@ -33,6 +39,8 @@ public record JobResponse(
 				job.getDeadline(),
 				job.getCreatedAt(),
 				job.getUpdatedAt(),
+				operations.size(),
+				artifactCount,
 				operations
 		);
 	}

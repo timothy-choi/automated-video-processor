@@ -17,6 +17,7 @@ import com.example.drive.job.domain.Operation;
 import com.example.drive.job.domain.OperationStatus;
 import com.example.drive.job.dto.CancelOperationResponse;
 import com.example.drive.job.dto.JobResponse;
+import com.example.drive.job.repository.ArtifactRepository;
 import com.example.drive.job.repository.JobRepository;
 
 import jakarta.persistence.EntityManager;
@@ -28,15 +29,18 @@ public class JobCancellationService {
 
 	private final EntityManager entityManager;
 	private final JobRepository jobRepository;
+	private final ArtifactRepository artifactRepository;
 	private final Clock clock;
 
 	public JobCancellationService(
 			EntityManager entityManager,
 			JobRepository jobRepository,
+			ArtifactRepository artifactRepository,
 			Clock clock
 	) {
 		this.entityManager = entityManager;
 		this.jobRepository = jobRepository;
+		this.artifactRepository = artifactRepository;
 		this.clock = clock;
 	}
 
@@ -47,7 +51,7 @@ public class JobCancellationService {
 		Job job = jobRepository.findByIdWithOperations(jobId)
 				.orElseThrow(() -> new JobNotFoundException(jobId));
 		if (job.getStatus() == JobStatus.CANCELLED) {
-			return JobResponse.from(job);
+			return toResponse(job);
 		}
 		if (job.getStatus() == JobStatus.COMPLETED || job.getStatus() == JobStatus.FAILED) {
 			throw new JobAlreadyTerminalException(jobId, job.getStatus());
@@ -57,7 +61,7 @@ public class JobCancellationService {
 		}
 		job.refreshStatusFromOperations(now);
 		log.info("event=job_cancel_requested jobId={} jobStatus={}", job.getId(), job.getStatus());
-		return JobResponse.from(job);
+		return toResponse(job);
 	}
 
 	@Transactional
@@ -145,5 +149,9 @@ public class JobCancellationService {
 
 	private Instant nowUtc() {
 		return clock.instant().truncatedTo(ChronoUnit.MICROS);
+	}
+
+	private JobResponse toResponse(Job job) {
+		return JobResponse.from(job, artifactRepository.countByJobId(job.getId()));
 	}
 }

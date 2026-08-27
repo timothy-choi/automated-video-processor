@@ -93,7 +93,9 @@ class JobApiIntegrationTest {
 				.andExpect(jsonPath("$.priority").value("NORMAL"))
 				.andExpect(jsonPath("$.operations.length()").value(1))
 				.andExpect(jsonPath("$.operations[0].type").value("AUDIO_EXTRACTION"))
-				.andExpect(jsonPath("$.operations[0].status").value("QUEUED"));
+				.andExpect(jsonPath("$.operations[0].status").value("QUEUED"))
+				.andExpect(jsonPath("$.operationCount").value(1))
+				.andExpect(jsonPath("$.artifactCount").value(0));
 	}
 
 	@Test
@@ -233,6 +235,10 @@ class JobApiIntegrationTest {
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
 
 		mockMvc.perform(get("/jobs/" + missingId + "/artifacts"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
+
+		mockMvc.perform(get("/jobs/" + missingId + "/artifacts/" + UUID.randomUUID()))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
 	}

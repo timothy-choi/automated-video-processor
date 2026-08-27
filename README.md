@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 5B**: users can cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation using current queue-entry time. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
+This repository is currently at **Phase 5C**: users can discover, filter, paginate, and inspect Jobs without already knowing every Job ID. They can also cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation using current queue-entry time. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
 
-## Current status: Phase 5B — Explicit retry of failed operations
+## Current status: Phase 5C — Product Job Management API
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,9 +34,11 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
-Phase 5B currently:
+Phase 5C currently:
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write and does **not** publish RabbitMQ)
+- lists Jobs with PostgreSQL pagination, deterministic newest-first ordering, and AND filters (`GET /jobs`)
+- lets users inspect one Job, its operations, execution attempts, and artifacts without embedding the entire graph in the list payload
 - lets users cancel a job (`POST /jobs/{id}/cancel`) or one operation (`POST /jobs/{id}/operations/{operationId}/cancel`) without deleting history
 - lets users explicitly retry a **FAILED** operation (`POST /jobs/{id}/operations/{operationId}/retry`) or every FAILED operation in a job (`POST /jobs/{id}/retry`)
 - retry returns the operation to `QUEUED` for normal FIFO scheduling; it does not publish RabbitMQ, create an attempt, or change input URI
@@ -235,7 +237,113 @@ Expected response:
 {"status":"UP"}
 ```
 
-## Job API
+## Job Management API
+
+Typical product flow:
+
+```text
+submit job
+    ↓
+list jobs
+    ↓
+filter by status / type / priority / created time
+    ↓
+inspect one job
+    ↓
+inspect operations / attempts / artifacts
+    ↓
+retrieve artifact identity (s3://bucket/key)
+```
+
+There is no web UI and no authentication in this phase.
+
+### List jobs
+
+```bash
+curl -sS 'http://localhost:8080/jobs'
+curl -sS 'http://localhost:8080/jobs?status=COMPLETED'
+curl -sS 'http://localhost:8080/jobs?status=FAILED&operationType=H264_TO_AV1&priority=HIGH'
+curl -sS 'http://localhost:8080/jobs?page=0&size=2'
+curl -sS 'http://localhost:8080/jobs?createdAfter=2026-08-01T00:00:00Z&createdBefore=2026-08-31T23:59:59Z'
+curl -sS 'http://localhost:8080/jobs?sort=updatedAt&direction=asc'
+```
+
+Response shape:
+
+```json
+{
+  "items": [
+    {
+      "id": "...",
+      "inputUri": "s3://media-input/video.mp4",
+      "status": "COMPLETED",
+      "priority": "NORMAL",
+      "deadline": null,
+      "createdAt": "2026-08-26T20:00:00Z",
+      "updatedAt": "2026-08-26T20:01:00Z",
+      "operationCount": 3,
+      "artifactCount": 2
+    }
+  ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 87,
+  "totalPages": 5
+}
+```
+
+List items are summaries. They do not include operations, attempts, artifacts, or failure blobs. Use the Job detail and nested endpoints for that.
+
+| Query | Default | Notes |
+| --- | --- | --- |
+| `page` | `0` | Zero-based. Negative values return **400** `VALIDATION_FAILED`. |
+| `size` | `20` | Max **100**. `size=0`, negative, or `>100` return **400** `VALIDATION_FAILED`. |
+| `sort` | `createdAt` | Allowed: `createdAt`, `updatedAt`. Anything else returns **400** `VALIDATION_FAILED`. |
+| `direction` | `desc` | Allowed: `asc`, `desc`. Newest first by default. Tie-break is `id` in the same direction. |
+| `status` | (none) | Existing `JobStatus` values. Invalid values return **400** `INVALID_ENUM_VALUE`. |
+| `operationType` | (none) | Jobs that contain **at least one** operation of this type. Current types only; retired `TRANSCODE_4K_TO_1080P` is rejected. |
+| `priority` | (none) | `LOW`, `NORMAL`, or `HIGH`. |
+| `createdAfter` / `createdBefore` | (none) | Inclusive UTC Instants (`2026-08-01T00:00:00Z`). If `createdAfter` is after `createdBefore`, **400** `VALIDATION_FAILED`. |
+
+Supplied filters are **AND**ed. Pagination and filtering run in PostgreSQL; the API does not load every Job into memory.
+
+`operationCount` and `artifactCount` are filled with two grouped count queries for the current page (not per-row round-trips).
+
+A `FAILED` summary is enough to call retry. Active statuses (`QUEUED`, `ASSIGNED`, `RUNNING`, `CANCEL_REQUESTED`) are enough to call cancel. The list does not embed action links.
+
+### Get a job
+
+```bash
+curl -sS http://localhost:8080/jobs/<job-id>
+```
+
+Returns the Job plus its operations (status, `queuedAt`, `failureReason` when present, result metadata). Also includes `operationCount` and `artifactCount`. Attempts and artifacts stay on their own endpoints so clients can fetch them when needed.
+
+Unknown jobs return **404** `JOB_NOT_FOUND`.
+
+### Operations, attempts, and artifacts
+
+```bash
+curl -sS http://localhost:8080/jobs/<job-id>/operations
+curl -sS http://localhost:8080/jobs/<job-id>/operations/<operation-id>/attempts
+curl -sS http://localhost:8080/jobs/<job-id>/artifacts
+curl -sS http://localhost:8080/jobs/<job-id>/artifacts/<artifact-id>
+```
+
+Artifact JSON uses the existing field names: `id`, `operationId`, `type`, `objectUri`, `contentType`, `sizeBytes`, `checksum`, `createdAt`. `objectUri` is the canonical identity, for example `s3://media-output/jobs/<jobId>/operations/<operationId>/video-av1.mp4`. Storage credentials are never returned. Presigned HTTP download URLs are not implemented in this phase.
+
+Unknown artifact under that Job: **404** `ARTIFACT_NOT_FOUND`. An artifact that belongs to a different Job is also **404** `ARTIFACT_NOT_FOUND`. Unknown Job: **404** `JOB_NOT_FOUND`.
+
+To inspect or download bytes from local MinIO, use the object URI with an S3-compatible tool. Example:
+
+```bash
+docker run --rm --network host minio/mc \
+  sh -c 'mc alias set local http://localhost:9000 minioadmin minioadmin && mc cp local/media-output/jobs/<job-id>/operations/<operation-id>/thumbnail.jpg /tmp/thumbnail.jpg'
+```
+
+If you mapped MinIO to another host port, change the alias URL to match.
+
+### Submit a job
 
 Submit a job. Execution is not started inside this request; the job is stored as `QUEUED`. The Go scheduler later assigns eligible operations.
 
@@ -256,12 +364,7 @@ curl -sS -X POST http://localhost:8080/jobs \
 
 Expected: **202 Accepted**, with `id`, `status: "QUEUED"`, timestamps, and the created operations.
 
-```bash
-curl -sS http://localhost:8080/jobs/<job-id>
-curl -sS http://localhost:8080/jobs/<job-id>/operations
-curl -sS http://localhost:8080/jobs/<job-id>/operations/<operation-id>/attempts
-curl -sS http://localhost:8080/jobs/<job-id>/artifacts
-```
+`priority` defaults to `NORMAL` when omitted. `deadline` is optional. Unknown jobs return **404**. Invalid bodies (missing `inputUri`, empty `operations`, unknown operation type, past deadline) return **400**.
 
 ### Cancel a job or operation
 
@@ -285,8 +388,6 @@ Unknown jobs return **404** `JOB_NOT_FOUND`. An operation that does not belong t
 Cancelling one operation does not cancel the others. A job whose requested work was explicitly cancelled becomes `CANCELLED` even if some operations already completed, because the requested job was not fully fulfilled. Any `FAILED` operation still makes the job `FAILED`.
 
 Approximate cancellation latency for running FFmpeg is one **lease renew** (default `LEASE_RENEW_INTERVAL=10s`; workers also renew immediately after start). Temporary control-service failures do **not** fake a cancel. Successful artifacts from earlier completed operations are kept. A cancelled run must not persist a new Artifact. If the worker uploaded bytes before it learned about cancel, that object can remain in MinIO without an Artifact row (same orphan class as a crash before `complete`).
-
-`priority` defaults to `NORMAL` when omitted. `deadline` is optional. Unknown jobs return **404**. Invalid bodies (missing `inputUri`, empty `operations`, unknown operation type, past deadline) return **400**.
 
 ### Retry a failed operation
 
@@ -994,7 +1095,7 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 
 `GET /jobs/{jobId}/operations/{operationId}/attempts` is a read-only history API (no lease internals).
 
-### Phase 5B limitations
+### Phase 5C limitations
 
 - TRANSCODE_4K_TO_1080P is retired; use TRANSCODE_1080P for 1080p H.264 output including 4K sources
 - H264_TO_AV1 requires an H.264 video stream and a software AV1 encoder (`libsvtav1` or `libaom-av1`)
@@ -1016,6 +1117,8 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 - running cancellation is observed on lease renew (about 10s by default), not a dedicated cancel broker
 - orphan MinIO objects from a cancelled upload are not garbage-collected
 - no automatic retries or retry backoff; only explicit `POST .../retry` of FAILED operations
+- no presigned download URLs; artifact identity is `s3://bucket/key`
+- no frontend, authentication, user accounts, or multi-tenancy
 
 ## What is inactive
 
@@ -1070,4 +1173,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next **product** milestone is a clearly distinct delivery format that is not another redundant H.264 1080p path, or operator-facing recovery tools such as dead-letter inspection. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.
+The smallest next **product** milestone is authenticated multi-user access, or presigned HTTP download of artifacts. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.
