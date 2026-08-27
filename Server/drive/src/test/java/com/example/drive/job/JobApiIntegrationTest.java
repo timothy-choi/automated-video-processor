@@ -241,6 +241,10 @@ class JobApiIntegrationTest {
 		mockMvc.perform(get("/jobs/" + missingId + "/artifacts/" + UUID.randomUUID()))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
+
+		mockMvc.perform(post("/jobs/" + missingId + "/artifacts/" + UUID.randomUUID() + "/download-url"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
 	}
 
 	@Test

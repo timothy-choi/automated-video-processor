@@ -15,6 +15,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 import com.example.drive.job.AttemptNotFoundException;
 import com.example.drive.job.ArtifactNotFoundException;
+import com.example.drive.job.ArtifactUriInvalidException;
 import com.example.drive.job.HttpClaimDisabledException;
 import com.example.drive.job.IllegalOperationStateException;
 import com.example.drive.job.InvalidJobRequestException;
@@ -25,6 +26,8 @@ import com.example.drive.job.OperationNotFoundException;
 import com.example.drive.job.StaleAssignmentException;
 import com.example.drive.job.StaleExecutionAttemptException;
 import com.example.drive.job.WorkerNotEligibleException;
+import com.example.drive.storage.ObjectNotFoundException;
+import com.example.drive.storage.ObjectStoreUnavailableException;
 import com.example.drive.worker.InvalidRegistrationException;
 import com.example.drive.worker.WorkerNotFoundException;
 
@@ -55,6 +58,21 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(ArtifactNotFoundException.class)
 	public ResponseEntity<ApiError> handleArtifactNotFound(ArtifactNotFoundException ex) {
 		return respond(HttpStatus.NOT_FOUND, "ARTIFACT_NOT_FOUND", ex.getMessage());
+	}
+
+	@ExceptionHandler(ArtifactUriInvalidException.class)
+	public ResponseEntity<ApiError> handleArtifactUriInvalid(ArtifactUriInvalidException ex) {
+		return respond(HttpStatus.BAD_REQUEST, "ARTIFACT_URI_INVALID", ex.getMessage());
+	}
+
+	@ExceptionHandler(ObjectNotFoundException.class)
+	public ResponseEntity<ApiError> handleObjectNotFound(ObjectNotFoundException ex) {
+		return respond(HttpStatus.NOT_FOUND, "OBJECT_NOT_FOUND", ex.getMessage());
+	}
+
+	@ExceptionHandler(ObjectStoreUnavailableException.class)
+	public ResponseEntity<ApiError> handleObjectStoreUnavailable(ObjectStoreUnavailableException ex) {
+		return respond(HttpStatus.SERVICE_UNAVAILABLE, "OBJECT_STORE_UNAVAILABLE", ex.getMessage());
 	}
 
 	@ExceptionHandler(JobAlreadyTerminalException.class)
