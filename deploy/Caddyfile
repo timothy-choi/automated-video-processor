@@ -1,0 +1,16 @@
+{
+	admin off
+}
+
+localhost, 127.0.0.1 {
+	tls internal
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+	}
+	reverse_proxy control-service:8080
+}
+
+http://localhost, http://127.0.0.1 {
+	redir https://{host}{uri} permanent
+}

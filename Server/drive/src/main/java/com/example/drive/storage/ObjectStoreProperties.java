@@ -7,6 +7,13 @@ public class ObjectStoreProperties {
 
 	private String endpoint = "http://localhost:9000";
 
+	/**
+	 * Client-reachable endpoint used when signing download URLs.
+	 * Blank means the same value as {@code endpoint}. Workers and Java HEAD
+	 * traffic keep using {@code endpoint}; never rewrite a signed URL after the fact.
+	 */
+	private String publicEndpoint = "";
+
 	private String region = "us-east-1";
 
 	private String accessKey = "minioadmin";
@@ -24,6 +31,18 @@ public class ObjectStoreProperties {
 			throw new IllegalArgumentException("drive.object-store.endpoint must not be blank");
 		}
 		this.endpoint = endpoint.trim();
+	}
+
+	public String getPublicEndpoint() {
+		return publicEndpoint;
+	}
+
+	public void setPublicEndpoint(String publicEndpoint) {
+		this.publicEndpoint = publicEndpoint == null ? "" : publicEndpoint.trim();
+	}
+
+	public String getPresignEndpoint() {
+		return publicEndpoint.isBlank() ? endpoint : publicEndpoint;
 	}
 
 	public String getRegion() {

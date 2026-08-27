@@ -65,3 +65,14 @@ jobs:
       - name: Scheduler test
         working-directory: scheduler
         run: go test ./...
+
+  compose-config:
+    name: Compose config
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Validate Compose file
+        run: docker compose --env-file .env.example config -q

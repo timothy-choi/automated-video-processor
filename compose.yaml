@@ -1,12 +1,38 @@
+x-worker-env: &worker-env
+  CONTROL_SERVICE_URL: http://control-service:8080
+  RABBITMQ_URL: amqp://${RABBITMQ_USERNAME:-media_platform}:${RABBITMQ_PASSWORD:-media_platform}@rabbitmq:5672/
+  OBJECT_STORE_ENDPOINT: http://minio:9000
+  OBJECT_STORE_REGION: ${OBJECT_STORE_REGION:-us-east-1}
+  OBJECT_STORE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+  OBJECT_STORE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+  OBJECT_STORE_FORCE_PATH_STYLE: "true"
+  OUTPUT_BUCKET: media-output
+  HEARTBEAT_INTERVAL: 5s
+  LEASE_RENEW_INTERVAL: 10s
+  PREFETCH: "1"
+
+x-worker: &worker
+  build:
+    context: ./worker
+    dockerfile: Dockerfile
+  init: true
+  stop_grace_period: 30s
+  restart: unless-stopped
+  depends_on:
+    control-service:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+    minio-init:
+      condition: service_completed_successfully
+
 services:
   postgres:
     image: postgres:16-alpine
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: media_platform
-      POSTGRES_USER: media_platform
-      POSTGRES_PASSWORD: media_platform
+      POSTGRES_USER: ${POSTGRES_USER:-media_platform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-media_platform}
     volumes:
       - media_platform_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -14,21 +40,35 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-media_platform}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-media_platform}
+    volumes:
+      - media_platform_rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
 
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     ports:
       - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     environment:
-      # Local development credentials only. Do not use these in production.
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      # Allows local Docker Desktop volumes that report little free space.
       MINIO_CI_CD: "on"
     volumes:
       - media_platform_minio:/data
+    restart: unless-stopped
 
   minio-init:
     image: minio/mc:latest
@@ -54,21 +94,95 @@ services:
         mc mb --ignore-existing local/media-input
         mc mb --ignore-existing local/media-output
 
-  rabbitmq:
-    image: rabbitmq:3.13-management-alpine
-    ports:
-      - "${RABBITMQ_AMQP_PORT:-5672}:5672"
-      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+  control-service:
+    build:
+      context: ./Server/drive
+      dockerfile: Dockerfile
     environment:
-      # Local development credentials only. Do not use these in production.
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-media_platform}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-media_platform}
+      SERVER_PORT: "8080"
+      DB_URL: jdbc:postgresql://postgres:5432/media_platform
+      DB_USERNAME: ${POSTGRES_USER:-media_platform}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-media_platform}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-media_platform}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-media_platform}
+      OBJECT_STORE_ENDPOINT: http://minio:9000
+      OBJECT_STORE_PUBLIC_ENDPOINT: ${OBJECT_STORE_PUBLIC_ENDPOINT:-http://127.0.0.1:9000}
+      OBJECT_STORE_REGION: ${OBJECT_STORE_REGION:-us-east-1}
+      OBJECT_STORE_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      OBJECT_STORE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      OBJECT_STORE_FORCE_PATH_STYLE: "true"
+      SCHEDULER_SERVICE_TOKEN: ${SCHEDULER_SERVICE_TOKEN:?run scripts/setup-local-env.sh}
+      WORKER_TOKEN_PEPPER: ${WORKER_TOKEN_PEPPER:?run scripts/setup-local-env.sh}
+      MEDIA_PLATFORM_BOOTSTRAP_API_KEY: ${MEDIA_PLATFORM_BOOTSTRAP_API_KEY:-}
+      ACCOUNT_REGISTRATION_ENABLED: ${ACCOUNT_REGISTRATION_ENABLED:-false}
+      ARTIFACT_URL_TTL: ${ARTIFACT_URL_TTL:-15m}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 24
+      start_period: 90s
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  scheduler:
+    build:
+      context: ./scheduler
+      dockerfile: Dockerfile
+    environment:
+      CONTROL_SERVICE_URL: http://control-service:8080
+      SCHEDULER_SERVICE_TOKEN: ${SCHEDULER_SERVICE_TOKEN:?run scripts/setup-local-env.sh}
+      SCHEDULER_POLL_INTERVAL: ${SCHEDULER_POLL_INTERVAL:-500ms}
+      OPERATION_POLICY: FIFO
+      WORKER_PLACEMENT_POLICY: ${WORKER_PLACEMENT_POLICY:-LEAST_LOADED}
+    depends_on:
+      control-service:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+  worker-a:
+    <<: *worker
+    environment:
+      <<: *worker-env
+      WORKER_ID: worker-a
+      WORKER_HOSTNAME: worker-a
+      WORKER_SERVICE_TOKEN: ${WORKER_A_TOKEN:?run scripts/setup-local-env.sh}
+
+  worker-b:
+    <<: *worker
+    environment:
+      <<: *worker-env
+      WORKER_ID: worker-b
+      WORKER_HOSTNAME: worker-b
+      WORKER_SERVICE_TOKEN: ${WORKER_B_TOKEN:?run scripts/setup-local-env.sh}
+
+  ingress:
+    image: caddy:2-alpine
+    ports:
+      - "${INGRESS_HTTP_PORT:-80}:80"
+      - "${INGRESS_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      control-service:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   media_platform_pgdata:
   media_platform_minio:
+  media_platform_rabbitmq:
+  caddy_data:
+  caddy_config:
