@@ -3,22 +3,30 @@ package com.example.drive.job;
 import java.net.URI;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.example.drive.job.domain.Job;
 import com.example.drive.job.domain.Operation;
+import com.example.drive.job.dto.ArtifactResponse;
 import com.example.drive.job.dto.AttemptResponse;
 import com.example.drive.job.dto.CreateJobRequest;
 import com.example.drive.job.dto.CreateOperationRequest;
 import com.example.drive.job.dto.JobArtifactsResponse;
+import com.example.drive.job.dto.JobListResponse;
 import com.example.drive.job.dto.JobOperationsResponse;
 import com.example.drive.job.dto.JobResponse;
+import com.example.drive.job.dto.JobSummaryResponse;
 import com.example.drive.job.dto.OperationAttemptsResponse;
 import com.example.drive.job.repository.ArtifactRepository;
 import com.example.drive.job.repository.ExecutionAttemptRepository;
+import com.example.drive.job.repository.JobIdCount;
 import com.example.drive.job.repository.JobRepository;
 import com.example.drive.job.repository.OperationRepository;
 
@@ -66,14 +74,41 @@ public class JobService {
 		}
 
 		Job saved = jobRepository.save(job);
-		return JobResponse.from(saved);
+		return JobResponse.from(saved, 0L);
+	}
+
+	@Transactional(readOnly = true)
+	public JobListResponse listJobs(JobListQuery query) {
+		Page<Job> page = jobRepository.findAll(JobSpecifications.matching(query), query.toPageable());
+		List<Job> jobs = page.getContent();
+		List<UUID> ids = jobs.stream().map(Job::getId).toList();
+		Map<UUID, Long> operationCounts = ids.isEmpty()
+				? Map.of()
+				: toCountMap(operationRepository.countGroupedByJobId(ids));
+		Map<UUID, Long> artifactCounts = ids.isEmpty()
+				? Map.of()
+				: toCountMap(artifactRepository.countGroupedByJobId(ids));
+		List<JobSummaryResponse> items = jobs.stream()
+				.map(job -> JobSummaryResponse.from(
+						job,
+						operationCounts.getOrDefault(job.getId(), 0L),
+						artifactCounts.getOrDefault(job.getId(), 0L)
+				))
+				.toList();
+		return new JobListResponse(
+				items,
+				page.getNumber(),
+				page.getSize(),
+				page.getTotalElements(),
+				page.getTotalPages()
+		);
 	}
 
 	@Transactional(readOnly = true)
 	public JobResponse getJob(UUID jobId) {
 		Job job = jobRepository.findByIdWithOperations(jobId)
 				.orElseThrow(() -> new JobNotFoundException(jobId));
-		return JobResponse.from(job);
+		return JobResponse.from(job, artifactRepository.countByJobId(jobId));
 	}
 
 	@Transactional(readOnly = true)
@@ -109,6 +144,25 @@ public class JobService {
 			throw new JobNotFoundException(jobId);
 		}
 		return JobArtifactsResponse.from(jobId, artifactRepository.findByJobIdOrderByCreatedAtAsc(jobId));
+	}
+
+	@Transactional(readOnly = true)
+	public ArtifactResponse getArtifact(UUID jobId, UUID artifactId) {
+		if (!jobRepository.existsById(jobId)) {
+			throw new JobNotFoundException(jobId);
+		}
+		return ArtifactResponse.from(
+				artifactRepository.findByIdAndJobId(artifactId, jobId)
+						.orElseThrow(() -> new ArtifactNotFoundException(artifactId))
+		);
+	}
+
+	private Map<UUID, Long> toCountMap(List<JobIdCount> rows) {
+		Map<UUID, Long> counts = new HashMap<>();
+		for (JobIdCount row : rows) {
+			counts.put(row.getJobId(), row.getCount());
+		}
+		return counts;
 	}
 
 	private String validateInputUri(String rawInputUri) {

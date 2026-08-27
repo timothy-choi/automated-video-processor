@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import com.example.drive.job.AttemptNotFoundException;
+import com.example.drive.job.ArtifactNotFoundException;
 import com.example.drive.job.HttpClaimDisabledException;
 import com.example.drive.job.IllegalOperationStateException;
 import com.example.drive.job.InvalidJobRequestException;
@@ -49,6 +50,11 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(AttemptNotFoundException.class)
 	public ResponseEntity<ApiError> handleAttemptNotFound(AttemptNotFoundException ex) {
 		return respond(HttpStatus.NOT_FOUND, "ATTEMPT_NOT_FOUND", ex.getMessage());
+	}
+
+	@ExceptionHandler(ArtifactNotFoundException.class)
+	public ResponseEntity<ApiError> handleArtifactNotFound(ArtifactNotFoundException ex) {
+		return respond(HttpStatus.NOT_FOUND, "ARTIFACT_NOT_FOUND", ex.getMessage());
 	}
 
 	@ExceptionHandler(JobAlreadyTerminalException.class)
