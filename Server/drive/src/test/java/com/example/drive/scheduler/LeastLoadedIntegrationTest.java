@@ -190,12 +190,14 @@ class LeastLoadedIntegrationTest {
 		UUID later = queuedMetadata();
 		UUID earlier = queuedMetadata();
 		jdbcTemplate.update(
-				"update operations set created_at = ? where id = ?",
+				"update operations set created_at = ?, queued_at = ? where id = ?",
+				Timestamp.from(Instant.parse("2026-08-26T10:01:00Z")),
 				Timestamp.from(Instant.parse("2026-08-26T10:01:00Z")),
 				later
 		);
 		jdbcTemplate.update(
-				"update operations set created_at = ? where id = ?",
+				"update operations set created_at = ?, queued_at = ? where id = ?",
+				Timestamp.from(Instant.parse("2026-08-26T10:00:00Z")),
 				Timestamp.from(Instant.parse("2026-08-26T10:00:00Z")),
 				earlier
 		);

@@ -84,12 +84,14 @@ class SchedulerApiIntegrationTest {
 		UUID laterOp = operationId(laterJob);
 		UUID earlierOp = operationId(earlierJob);
 		jdbcTemplate.update(
-				"update operations set created_at = ? where id = ?",
+				"update operations set created_at = ?, queued_at = ? where id = ?",
+				Timestamp.from(Instant.parse("2026-08-25T10:01:00Z")),
 				Timestamp.from(Instant.parse("2026-08-25T10:01:00Z")),
 				laterOp
 		);
 		jdbcTemplate.update(
-				"update operations set created_at = ? where id = ?",
+				"update operations set created_at = ?, queued_at = ? where id = ?",
+				Timestamp.from(Instant.parse("2026-08-25T10:00:00Z")),
 				Timestamp.from(Instant.parse("2026-08-25T10:00:00Z")),
 				earlierOp
 		);
@@ -131,7 +133,7 @@ class SchedulerApiIntegrationTest {
 				jobId
 		));
 		Instant same = Instant.parse("2026-08-25T11:00:00Z");
-		jdbcTemplate.update("update operations set created_at = ? where job_id = ?", Timestamp.from(same), jobId);
+		jdbcTemplate.update("update operations set created_at = ?, queued_at = ? where job_id = ?", Timestamp.from(same), Timestamp.from(same), jobId);
 
 		mockMvc.perform(get("/internal/scheduler/snapshot"))
 				.andExpect(status().isOk())

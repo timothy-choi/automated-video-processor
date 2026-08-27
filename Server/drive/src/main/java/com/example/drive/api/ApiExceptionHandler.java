@@ -19,6 +19,7 @@ import com.example.drive.job.IllegalOperationStateException;
 import com.example.drive.job.InvalidJobRequestException;
 import com.example.drive.job.JobAlreadyTerminalException;
 import com.example.drive.job.JobNotFoundException;
+import com.example.drive.job.NothingToRetryException;
 import com.example.drive.job.OperationNotFoundException;
 import com.example.drive.job.StaleAssignmentException;
 import com.example.drive.job.StaleExecutionAttemptException;
@@ -53,6 +54,11 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(JobAlreadyTerminalException.class)
 	public ResponseEntity<ApiError> handleJobAlreadyTerminal(JobAlreadyTerminalException ex) {
 		return respond(HttpStatus.CONFLICT, ex.getCode(), ex.getMessage());
+	}
+
+	@ExceptionHandler(NothingToRetryException.class)
+	public ResponseEntity<ApiError> handleNothingToRetry(NothingToRetryException ex) {
+		return respond(HttpStatus.CONFLICT, "NOTHING_TO_RETRY", ex.getMessage());
 	}
 
 	@ExceptionHandler(StaleExecutionAttemptException.class)

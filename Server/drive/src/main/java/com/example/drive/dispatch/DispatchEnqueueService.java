@@ -101,7 +101,7 @@ public class DispatchEnqueueService {
 				    LOWER(j.input_uri) LIKE 'file:%'
 				    OR LOWER(j.input_uri) LIKE 's3:%'
 				  )
-				ORDER BY o.created_at ASC, o.operation_order ASC
+				ORDER BY o.queued_at ASC, o.operation_order ASC, o.id ASC
 				FOR UPDATE OF o SKIP LOCKED
 				LIMIT 
 				""" + Math.max(1, limit))

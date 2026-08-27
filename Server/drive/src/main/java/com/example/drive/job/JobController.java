@@ -17,6 +17,8 @@ import com.example.drive.job.dto.JobArtifactsResponse;
 import com.example.drive.job.dto.JobOperationsResponse;
 import com.example.drive.job.dto.JobResponse;
 import com.example.drive.job.dto.OperationAttemptsResponse;
+import com.example.drive.job.dto.RetryJobResponse;
+import com.example.drive.job.dto.RetryOperationResponse;
 
 import jakarta.validation.Valid;
 
@@ -26,10 +28,16 @@ public class JobController {
 
 	private final JobService jobService;
 	private final JobCancellationService jobCancellationService;
+	private final JobRetryService jobRetryService;
 
-	public JobController(JobService jobService, JobCancellationService jobCancellationService) {
+	public JobController(
+			JobService jobService,
+			JobCancellationService jobCancellationService,
+			JobRetryService jobRetryService
+	) {
 		this.jobService = jobService;
 		this.jobCancellationService = jobCancellationService;
+		this.jobRetryService = jobRetryService;
 	}
 
 	@PostMapping
@@ -48,6 +56,19 @@ public class JobController {
 			@PathVariable("operationId") UUID operationId
 	) {
 		return jobCancellationService.cancelOperation(id, operationId);
+	}
+
+	@PostMapping("/{id}/retry")
+	public RetryJobResponse retryJob(@PathVariable("id") UUID id) {
+		return jobRetryService.retryJob(id);
+	}
+
+	@PostMapping("/{id}/operations/{operationId}/retry")
+	public RetryOperationResponse retryOperation(
+			@PathVariable("id") UUID id,
+			@PathVariable("operationId") UUID operationId
+	) {
+		return jobRetryService.retryOperation(id, operationId);
 	}
 
 	@GetMapping("/{id}")

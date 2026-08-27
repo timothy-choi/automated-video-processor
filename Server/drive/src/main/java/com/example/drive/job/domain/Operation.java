@@ -48,6 +48,9 @@ public class Operation {
 	@Column(name = "created_at", nullable = false)
 	private Instant createdAt;
 
+	@Column(name = "queued_at", nullable = false)
+	private Instant queuedAt;
+
 	@Column(name = "updated_at", nullable = false)
 	private Instant updatedAt;
 
@@ -88,6 +91,7 @@ public class Operation {
 		this.status = OperationStatus.QUEUED;
 		this.operationOrder = operationOrder;
 		this.createdAt = now;
+		this.queuedAt = now;
 		this.updatedAt = now;
 	}
 
@@ -117,6 +121,10 @@ public class Operation {
 
 	public Instant getCreatedAt() {
 		return createdAt;
+	}
+
+	public Instant getQueuedAt() {
+		return queuedAt;
 	}
 
 	public Instant getUpdatedAt() {
@@ -213,6 +221,7 @@ public class Operation {
 		assignedAt = null;
 		assignedWorkerId = null;
 		currentAssignmentId = null;
+		queuedAt = now;
 		updatedAt = now;
 	}
 
@@ -227,6 +236,28 @@ public class Operation {
 		assignedAt = null;
 		assignedWorkerId = null;
 		currentAssignmentId = null;
+		queuedAt = now;
+		updatedAt = now;
+	}
+
+	public void markRetryQueued(Instant now) {
+		if (status != OperationStatus.FAILED) {
+			throw new IllegalOperationStateException(
+					id,
+					retryRejectedMessage()
+			);
+		}
+		status = OperationStatus.QUEUED;
+		startedAt = null;
+		completedAt = null;
+		actualRuntimeMs = null;
+		failureReason = null;
+		resultJson = null;
+		currentAttemptId = null;
+		assignedAt = null;
+		assignedWorkerId = null;
+		currentAssignmentId = null;
+		queuedAt = now;
 		updatedAt = now;
 	}
 
@@ -306,5 +337,16 @@ public class Operation {
 		return status == OperationStatus.COMPLETED
 				|| status == OperationStatus.FAILED
 				|| status == OperationStatus.CANCELLED;
+	}
+
+	public String retryRejectedMessage() {
+		if (status == OperationStatus.CANCELLED) {
+			return "Operation " + id + " is CANCELLED and cannot be retried; "
+					+ "explicit retry is for execution failures, not intentionally cancelled work";
+		}
+		if (status == OperationStatus.COMPLETED) {
+			return "Operation " + id + " is COMPLETED and cannot be retried";
+		}
+		return "Operation " + id + " is " + status + " and cannot be retried";
 	}
 }

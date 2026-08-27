@@ -36,7 +36,7 @@ public interface OperationRepository extends JpaRepository<Operation, UUID> {
 			    lower(j.inputUri) like 'file:%'
 			    or lower(j.inputUri) like 's3:%'
 			  )
-			order by o.createdAt asc, o.operationOrder asc, o.id asc
+			order by o.queuedAt asc, o.operationOrder asc, o.id asc
 			""")
 	List<Operation> findSchedulableQueued();
 

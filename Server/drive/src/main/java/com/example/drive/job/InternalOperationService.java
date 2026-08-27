@@ -360,12 +360,6 @@ public class InternalOperationService {
 
 	private ExecutionAttempt createRunningAttempt(Operation operation, String workerId, Instant now) {
 		int nextNumber = attemptRepository.maxAttemptNumber(operation.getId()) + 1;
-		if (nextNumber > leaseProperties.getMaxAttempts()) {
-			throw new WorkerNotEligibleException(
-					"MAX_EXECUTION_ATTEMPTS_EXCEEDED",
-					"maximum execution attempts exceeded"
-			);
-		}
 		ExecutionAttempt attempt = new ExecutionAttempt(
 				UUID.randomUUID(),
 				operation,
@@ -565,7 +559,7 @@ public class InternalOperationService {
 				    LOWER(j.input_uri) LIKE 'file:%'
 				    OR LOWER(j.input_uri) LIKE 's3:%'
 				  )
-				ORDER BY o.created_at ASC, o.operation_order ASC
+				ORDER BY o.queued_at ASC, o.operation_order ASC, o.id ASC
 				FOR UPDATE OF o SKIP LOCKED
 				LIMIT 1
 				""").getResultList();

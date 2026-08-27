@@ -199,8 +199,8 @@ class JobApiIntegrationTest {
 				}
 				""");
 		assertThatThrownBy(() -> jdbcTemplate.update("""
-				insert into operations (id, job_id, operation_type, status, operation_order, created_at, updated_at)
-				values (?, ?, 'TRANSCODE_4K_TO_1080P', 'QUEUED', 1, now(), now())
+				insert into operations (id, job_id, operation_type, status, operation_order, created_at, queued_at, updated_at)
+				values (?, ?, 'TRANSCODE_4K_TO_1080P', 'QUEUED', 1, now(), now(), now())
 				""", UUID.randomUUID(), jobId))
 				.hasMessageContaining("operations_type_check");
 	}
