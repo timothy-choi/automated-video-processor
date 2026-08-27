@@ -1,5 +1,6 @@
 package com.example.drive.job;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
@@ -26,7 +27,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @DispatchServiceTest
-class ExecutionAttemptIntegrationTest {
+class ExecutionAttemptIntegrationTest extends AuthenticatedApiTest {
 
 	private static final String SHA256 =
 			"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -64,7 +65,7 @@ class ExecutionAttemptIntegrationTest {
 	void startCreatesRunningAttemptWithLease() throws Exception {
 		Started started = assignAndStart("worker-a");
 
-		mockMvc.perform(get("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/attempts"))
+		mockMvc.perform(authed(get("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/attempts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.attempts.length()").value(1))
 				.andExpect(jsonPath("$.attempts[0].attemptNumber").value(1))
@@ -276,7 +277,7 @@ class ExecutionAttemptIntegrationTest {
 		assertThat(jobStatus(first.jobId())).isEqualTo("COMPLETED");
 		assertThat(attemptStatus(attempt2)).isEqualTo("COMPLETED");
 
-		mockMvc.perform(get("/jobs/" + first.jobId() + "/operations/" + first.operationId() + "/attempts"))
+		mockMvc.perform(authed(get("/jobs/" + first.jobId() + "/operations/" + first.operationId() + "/attempts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.attempts.length()").value(2))
 				.andExpect(jsonPath("$.attempts[0].status").value("INTERRUPTED"))
@@ -548,7 +549,7 @@ class ExecutionAttemptIntegrationTest {
 	}
 
 	private UUID createJob(String json) throws Exception {
-		MvcResult result = mockMvc.perform(post("/jobs")
+		MvcResult result = mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(json))
 				.andExpect(status().isAccepted())

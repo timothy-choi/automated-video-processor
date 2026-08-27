@@ -45,10 +45,10 @@ public class JobCancellationService {
 	}
 
 	@Transactional
-	public JobResponse cancelJob(UUID jobId) {
-		lockJob(jobId);
+	public JobResponse cancelJob(UUID jobId, UUID accountId) {
+		lockOwnedJob(jobId, accountId);
 		Instant now = nowUtc();
-		Job job = jobRepository.findByIdWithOperations(jobId)
+		Job job = jobRepository.findByIdAndAccountIdWithOperations(jobId, accountId)
 				.orElseThrow(() -> new JobNotFoundException(jobId));
 		if (job.getStatus() == JobStatus.CANCELLED) {
 			return toResponse(job);
@@ -65,13 +65,13 @@ public class JobCancellationService {
 	}
 
 	@Transactional
-	public CancelOperationResponse cancelOperation(UUID jobId, UUID operationId) {
-		if (!jobRepository.existsById(jobId)) {
+	public CancelOperationResponse cancelOperation(UUID jobId, UUID operationId, UUID accountId) {
+		if (!jobRepository.existsByIdAndAccountId(jobId, accountId)) {
 			throw new JobNotFoundException(jobId);
 		}
-		lockJob(jobId);
+		lockOwnedJob(jobId, accountId);
 		Instant now = nowUtc();
-		Job job = jobRepository.findByIdWithOperations(jobId)
+		Job job = jobRepository.findByIdAndAccountIdWithOperations(jobId, accountId)
 				.orElseThrow(() -> new JobNotFoundException(jobId));
 		Operation operation = job.getOperations().stream()
 				.filter(candidate -> candidate.getId().equals(operationId))
@@ -135,12 +135,13 @@ public class JobCancellationService {
 				.executeUpdate();
 	}
 
-	private void lockJob(UUID jobId) {
+	private void lockOwnedJob(UUID jobId, UUID accountId) {
 		@SuppressWarnings("unchecked")
 		List<Object> rows = entityManager.createNativeQuery("""
-				SELECT id FROM jobs WHERE id = :id FOR UPDATE
+				SELECT id FROM jobs WHERE id = :id AND account_id = :accountId FOR UPDATE
 				""")
 				.setParameter("id", jobId)
+				.setParameter("accountId", accountId)
 				.getResultList();
 		if (rows.isEmpty()) {
 			throw new JobNotFoundException(jobId);

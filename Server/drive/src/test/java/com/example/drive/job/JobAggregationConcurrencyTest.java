@@ -1,5 +1,6 @@
 package com.example.drive.job;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -33,7 +34,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ControlServiceTest
-class JobAggregationConcurrencyTest {
+class JobAggregationConcurrencyTest extends AuthenticatedApiTest {
 
 	private static final String SHA256 =
 			"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -132,7 +133,7 @@ class JobAggregationConcurrencyTest {
 	}
 
 	private UUID createTwoOpJob() throws Exception {
-		MvcResult result = mockMvc.perform(post("/jobs")
+		MvcResult result = mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{

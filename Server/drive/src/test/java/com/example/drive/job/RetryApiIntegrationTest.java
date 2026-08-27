@@ -1,5 +1,6 @@
 package com.example.drive.job;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
@@ -37,7 +38,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @DispatchServiceTest
-class RetryApiIntegrationTest {
+class RetryApiIntegrationTest extends AuthenticatedApiTest {
 
 	private static final String SHA256 =
 			"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -87,7 +88,7 @@ class RetryApiIntegrationTest {
 		fail(started, "mpeg4 is not h264");
 		assertThat(jobStatus(started.jobId())).isEqualTo("FAILED");
 
-		mockMvc.perform(post("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/retry")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.jobId").value(started.jobId().toString()))
 				.andExpect(jsonPath("$.jobStatus").value("QUEUED"))
@@ -122,7 +123,7 @@ class RetryApiIntegrationTest {
 		internalOperationService.fail(metadataId, new FailOperationRequest(metaAttempt, 9L, "probe failed"));
 		assertThat(jobStatus(jobId)).isEqualTo("FAILED");
 
-		mockMvc.perform(post("/jobs/" + jobId + "/operations/" + metadataId + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/operations/" + metadataId + "/retry")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.jobStatus").value("RUNNING"))
 				.andExpect(jsonPath("$.operationStatus").value("QUEUED"));
@@ -134,7 +135,7 @@ class RetryApiIntegrationTest {
 	void completedOperationCannotBeRetried() throws Exception {
 		Started started = assignAndStart("METADATA");
 		completeMetadata(started.operationId(), started.attemptId());
-		mockMvc.perform(post("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/retry")))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("INVALID_OPERATION_STATE"));
 		assertThat(operationStatus(started.operationId())).isEqualTo("COMPLETED");
@@ -147,9 +148,9 @@ class RetryApiIntegrationTest {
 				{"inputUri":"s3://media-input/video.mp4","operations":[{"type":"METADATA"}]}
 				""");
 		UUID operationId = operationId(jobId, "METADATA");
-		mockMvc.perform(post("/jobs/" + jobId + "/operations/" + operationId + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/operations/" + operationId + "/cancel")))
 				.andExpect(status().isOk());
-		mockMvc.perform(post("/jobs/" + jobId + "/operations/" + operationId + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/operations/" + operationId + "/retry")))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("INVALID_OPERATION_STATE"))
 				.andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("intentionally cancelled")));
@@ -159,14 +160,14 @@ class RetryApiIntegrationTest {
 	@Test
 	void runningAndQueuedOperationsCannotBeRetried() throws Exception {
 		Started started = assignAndStart("METADATA");
-		mockMvc.perform(post("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/retry")))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("INVALID_OPERATION_STATE"));
 		UUID queuedJob = createJob("""
 				{"inputUri":"s3://media-input/other.mp4","operations":[{"type":"THUMBNAIL"}]}
 				""");
 		UUID queuedOp = operationId(queuedJob, "THUMBNAIL");
-		mockMvc.perform(post("/jobs/" + queuedJob + "/operations/" + queuedOp + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + queuedJob + "/operations/" + queuedOp + "/retry")))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("INVALID_OPERATION_STATE"));
 	}
@@ -174,7 +175,7 @@ class RetryApiIntegrationTest {
 	@Test
 	void unknownJobAndOperationReturn404() throws Exception {
 		UUID missing = UUID.fromString("99999999-9999-9999-9999-999999999999");
-		mockMvc.perform(post("/jobs/" + missing + "/operations/" + missing + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + missing + "/operations/" + missing + "/retry")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
 		UUID jobA = createJob("""
@@ -184,10 +185,10 @@ class RetryApiIntegrationTest {
 				{"inputUri":"s3://media-input/b.mp4","operations":[{"type":"THUMBNAIL"}]}
 				""");
 		UUID opB = operationId(jobB, "THUMBNAIL");
-		mockMvc.perform(post("/jobs/" + jobA + "/operations/" + opB + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + jobA + "/operations/" + opB + "/retry")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("OPERATION_NOT_FOUND"));
-		mockMvc.perform(post("/jobs/" + missing + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + missing + "/retry")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
 	}
@@ -206,7 +207,7 @@ class RetryApiIntegrationTest {
 		assertThat(decisionCount(started.operationId())).isEqualTo(2);
 
 		completeMetadata(started.operationId(), second.attemptId());
-		mockMvc.perform(get("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/attempts"))
+		mockMvc.perform(authed(get("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/attempts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.attempts.length()").value(2))
 				.andExpect(jsonPath("$.attempts[0].status").value("FAILED"))
@@ -272,7 +273,7 @@ class RetryApiIntegrationTest {
 		runConcurrent(
 				() -> {
 					try {
-						jobRetryService.retryOperation(started.jobId(), started.operationId());
+						jobRetryService.retryOperation(started.jobId(), started.operationId(), account.accountId());
 					}
 					catch (RuntimeException ex) {
 						firstErr.set(ex);
@@ -280,7 +281,7 @@ class RetryApiIntegrationTest {
 				},
 				() -> {
 					try {
-						jobRetryService.retryOperation(started.jobId(), started.operationId());
+						jobRetryService.retryOperation(started.jobId(), started.operationId(), account.accountId());
 					}
 					catch (RuntimeException ex) {
 						secondErr.set(ex);
@@ -306,7 +307,7 @@ class RetryApiIntegrationTest {
 		runConcurrent(
 				() -> {
 					try {
-						jobRetryService.retryOperation(started.jobId(), started.operationId());
+						jobRetryService.retryOperation(started.jobId(), started.operationId(), account.accountId());
 					}
 					catch (RuntimeException ex) {
 						retryErr.set(ex);
@@ -314,7 +315,7 @@ class RetryApiIntegrationTest {
 				},
 				() -> {
 					try {
-						jobCancellationService.cancelJob(started.jobId());
+						jobCancellationService.cancelJob(started.jobId(), account.accountId());
 					}
 					catch (RuntimeException ex) {
 						cancelErr.set(ex);
@@ -395,7 +396,7 @@ class RetryApiIntegrationTest {
 		completeThumbnail(jobId, thumbnailId, thumbAttempt);
 		UUID metaAttempt = assignAndStart(jobId, metadataId).attemptId();
 		internalOperationService.fail(metadataId, new FailOperationRequest(metaAttempt, 8L, "bad"));
-		mockMvc.perform(post("/jobs/" + jobId + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/retry")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.jobId").value(jobId.toString()))
 				.andExpect(jsonPath("$.jobStatus").value("RUNNING"))
@@ -411,12 +412,12 @@ class RetryApiIntegrationTest {
 		UUID jobId = createJob("""
 				{"inputUri":"s3://media-input/video.mp4","operations":[{"type":"METADATA"}]}
 				""");
-		mockMvc.perform(post("/jobs/" + jobId + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/retry")))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("NOTHING_TO_RETRY"));
 		Started started = assignAndStart("THUMBNAIL");
 		completeThumbnail(started.jobId(), started.operationId(), started.attemptId());
-		mockMvc.perform(post("/jobs/" + started.jobId() + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + started.jobId() + "/retry")))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("NOTHING_TO_RETRY"));
 	}
@@ -426,7 +427,7 @@ class RetryApiIntegrationTest {
 		Started started = assignAndStart("METADATA");
 		fail(started, "once");
 		retry(started.jobId(), started.operationId());
-		mockMvc.perform(post("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/retry")))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("INVALID_OPERATION_STATE"));
 	}
@@ -480,7 +481,7 @@ class RetryApiIntegrationTest {
 	}
 
 	private void retry(UUID jobId, UUID operationId) throws Exception {
-		mockMvc.perform(post("/jobs/" + jobId + "/operations/" + operationId + "/retry"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/operations/" + operationId + "/retry")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.operationStatus").value("QUEUED"));
 	}
@@ -528,7 +529,7 @@ class RetryApiIntegrationTest {
 
 	private UUID createJob(String body) {
 		try {
-			MvcResult result = mockMvc.perform(post("/jobs")
+			MvcResult result = mockMvc.perform(authed(post("/jobs"))
 							.contentType(MediaType.APPLICATION_JSON)
 							.content(body))
 					.andExpect(status().isAccepted())

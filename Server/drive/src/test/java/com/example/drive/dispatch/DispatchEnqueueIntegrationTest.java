@@ -1,5 +1,6 @@
 package com.example.drive.dispatch;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -21,7 +22,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @DispatchServiceTest
-class DispatchEnqueueIntegrationTest {
+class DispatchEnqueueIntegrationTest extends AuthenticatedApiTest {
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -77,7 +78,7 @@ class DispatchEnqueueIntegrationTest {
 
 		assertThat(enqueueService.enqueueDispatchableOperations()).isEqualTo(2);
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("ASSIGNED"))
 				.andExpect(jsonPath("$.operations[0].status").value("ASSIGNED"))
@@ -126,7 +127,7 @@ class DispatchEnqueueIntegrationTest {
 
 		assertThat(enqueueService.enqueueDispatchableOperations()).isEqualTo(2);
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("ASSIGNED"))
 				.andExpect(jsonPath("$.operations[0].status").value("ASSIGNED"))
@@ -266,7 +267,7 @@ class DispatchEnqueueIntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("FAILED"));
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(jsonPath("$.status").value("FAILED"));
 		mockMvc.perform(post("/internal/operations/" + operationId + "/start")
 						.contentType(MediaType.APPLICATION_JSON)
@@ -307,7 +308,7 @@ class DispatchEnqueueIntegrationTest {
 								""".formatted(attemptId, objectUri)))
 				.andExpect(status().isOk());
 
-		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/artifacts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(1))
 				.andExpect(jsonPath("$.artifacts[0].objectUri").value(objectUri));
@@ -323,7 +324,7 @@ class DispatchEnqueueIntegrationTest {
 	}
 
 	private UUID createJob(String json) throws Exception {
-		MvcResult result = mockMvc.perform(post("/jobs")
+		MvcResult result = mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(json))
 				.andExpect(status().isAccepted())

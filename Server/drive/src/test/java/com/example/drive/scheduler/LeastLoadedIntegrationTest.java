@@ -1,5 +1,6 @@
 package com.example.drive.scheduler;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
@@ -29,7 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @DispatchServiceTest
-class LeastLoadedIntegrationTest {
+class LeastLoadedIntegrationTest extends AuthenticatedApiTest {
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -291,7 +292,7 @@ class LeastLoadedIntegrationTest {
 	}
 
 	private UUID queued(String type) throws Exception {
-		MvcResult result = mockMvc.perform(post("/jobs")
+		MvcResult result = mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{"inputUri":"s3://media-input/video.mp4","operations":[{"type":"%s"}]}

@@ -1,5 +1,6 @@
 package com.example.drive.job;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -47,7 +48,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @ControlServiceTest
 @Testcontainers
-class ArtifactDownloadMinioIntegrationTest {
+class ArtifactDownloadMinioIntegrationTest extends AuthenticatedApiTest {
 
 	private static final String ACCESS_KEY = "minioaccess";
 	private static final String SECRET_KEY = "miniosecretvalue";
@@ -97,7 +98,7 @@ class ArtifactDownloadMinioIntegrationTest {
 		putObject(key, PAYLOAD);
 		UUID artifactId = insertArtifact(jobId, operationId, key, PAYLOAD.length, sha256(PAYLOAD));
 
-		MvcResult result = mockMvc.perform(post("/jobs/" + jobId + "/artifacts/" + artifactId + "/download-url"))
+		MvcResult result = mockMvc.perform(authed(post("/jobs/" + jobId + "/artifacts/" + artifactId + "/download-url")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifactId").value(artifactId.toString()))
 				.andExpect(jsonPath("$.url").isString())
@@ -130,7 +131,7 @@ class ArtifactDownloadMinioIntegrationTest {
 		ensureBucket();
 		UUID artifactId = insertArtifact(jobId, operationId, key, 1L, sha256(PAYLOAD));
 
-		mockMvc.perform(post("/jobs/" + jobId + "/artifacts/" + artifactId + "/download-url"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/artifacts/" + artifactId + "/download-url")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("OBJECT_NOT_FOUND"))
 				.andExpect(jsonPath("$.url").doesNotExist());
@@ -141,7 +142,7 @@ class ArtifactDownloadMinioIntegrationTest {
 	}
 
 	private UUID createJob() throws Exception {
-		MvcResult result = mockMvc.perform(post("/jobs")
+		MvcResult result = mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{"inputUri":"s3://media-input/clip.mp4","operations":[{"type":"THUMBNAIL"}]}

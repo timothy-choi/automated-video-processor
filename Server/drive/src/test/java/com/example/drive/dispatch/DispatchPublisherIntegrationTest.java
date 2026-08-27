@@ -1,5 +1,6 @@
 package com.example.drive.dispatch;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.AmqpException;
@@ -39,7 +40,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 })
 @AutoConfigureMockMvc
 @Import({PostgresTestcontainersConfig.class, MockRabbitTemplateConfig.class})
-class DispatchPublisherIntegrationTest {
+class DispatchPublisherIntegrationTest extends AuthenticatedApiTest {
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -107,7 +108,7 @@ class DispatchPublisherIntegrationTest {
 	}
 
 	private void createMetadataJob() throws Exception {
-		mockMvc.perform(post("/jobs")
+		mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{

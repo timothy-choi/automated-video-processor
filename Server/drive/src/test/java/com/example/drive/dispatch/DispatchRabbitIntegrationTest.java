@@ -1,5 +1,6 @@
 package com.example.drive.dispatch;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
@@ -43,7 +44,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ImportAutoConfiguration(RabbitAutoConfiguration.class)
 @AutoConfigureMockMvc
 @Import({PostgresTestcontainersConfig.class, RabbitTestcontainersConfig.class})
-class DispatchRabbitIntegrationTest {
+class DispatchRabbitIntegrationTest extends AuthenticatedApiTest {
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -134,7 +135,7 @@ class DispatchRabbitIntegrationTest {
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(WorkerTestSupport.identityJson("worker-a")))
 				.andExpect(jsonPath("$.outcome").value("ALREADY_TERMINAL"));
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(jsonPath("$.status").value("COMPLETED"));
 	}
 
@@ -162,7 +163,7 @@ class DispatchRabbitIntegrationTest {
 	}
 
 	private UUID createJob(String json) throws Exception {
-		MvcResult result = mockMvc.perform(post("/jobs")
+		MvcResult result = mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(json))
 				.andExpect(status().isAccepted())

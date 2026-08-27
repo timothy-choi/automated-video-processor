@@ -1,5 +1,6 @@
 package com.example.drive.scheduler;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
@@ -33,7 +34,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @DispatchServiceTest
-class SchedulerApiIntegrationTest {
+class SchedulerApiIntegrationTest extends AuthenticatedApiTest {
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -375,7 +376,7 @@ class SchedulerApiIntegrationTest {
 				.andExpect(jsonPath("$.decisionId").isString())
 				.andReturn();
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("ASSIGNED"))
 				.andExpect(jsonPath("$.operations[0].status").value("ASSIGNED"));
@@ -676,7 +677,7 @@ class SchedulerApiIntegrationTest {
 	}
 
 	private UUID createJob(String json) throws Exception {
-		MvcResult result = mockMvc.perform(post("/jobs")
+		MvcResult result = mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(json))
 				.andExpect(status().isAccepted())

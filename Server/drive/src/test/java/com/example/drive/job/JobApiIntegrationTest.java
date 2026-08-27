@@ -9,6 +9,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import com.example.drive.support.AuthTestSupport;
+import com.example.drive.support.AuthenticatedApiTest;
 import com.example.drive.support.ControlServiceTest;
 import com.jayway.jsonpath.JsonPath;
 
@@ -20,7 +22,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ControlServiceTest
-class JobApiIntegrationTest {
+class JobApiIntegrationTest extends AuthenticatedApiTest {
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -30,7 +32,7 @@ class JobApiIntegrationTest {
 
 	@Test
 	void createJobReturns202AndPersistsQueuedJobAndOperations() throws Exception {
-		MvcResult result = mockMvc.perform(post("/jobs")
+		MvcResult result = mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
@@ -74,6 +76,36 @@ class JobApiIntegrationTest {
 		);
 		assertThat(jobCount).isEqualTo(1);
 		assertThat(operationCount).isEqualTo(3);
+		UUID owner = jdbcTemplate.queryForObject(
+				"select account_id from jobs where id = ?",
+				UUID.class,
+				jobId
+		);
+		assertThat(owner).isEqualTo(account.accountId());
+	}
+
+	@Test
+	void createJobIgnoresClientSuppliedAccountId() throws Exception {
+		AuthTestSupport.TestAccount other = AuthTestSupport.createAccount(mockMvc, "other-owner");
+		MvcResult result = mockMvc.perform(authed(post("/jobs"))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{
+								  "accountId": "%s",
+								  "inputUri": "s3://media-input/spoof.mp4",
+								  "operations": [{"type": "METADATA"}]
+								}
+								""".formatted(other.accountId())))
+				.andExpect(status().isAccepted())
+				.andReturn();
+		UUID jobId = UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
+		UUID owner = jdbcTemplate.queryForObject(
+				"select account_id from jobs where id = ?",
+				UUID.class,
+				jobId
+		);
+		assertThat(owner).isEqualTo(account.accountId());
+		assertThat(owner).isNotEqualTo(other.accountId());
 	}
 
 	@Test
@@ -85,7 +117,7 @@ class JobApiIntegrationTest {
 				}
 				""");
 
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.id").value(jobId.toString()))
 				.andExpect(jsonPath("$.inputUri").value("s3://media-input/clip.mov"))
@@ -111,7 +143,7 @@ class JobApiIntegrationTest {
 				}
 				""");
 
-		mockMvc.perform(get("/jobs/" + jobId + "/operations"))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/operations")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.jobId").value(jobId.toString()))
 				.andExpect(jsonPath("$.operations.length()").value(3))
@@ -125,7 +157,7 @@ class JobApiIntegrationTest {
 
 	@Test
 	void omittedPriorityDefaultsToNormal() throws Exception {
-		mockMvc.perform(post("/jobs")
+		mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
@@ -139,7 +171,7 @@ class JobApiIntegrationTest {
 
 	@Test
 	void missingInputUriReturns400() throws Exception {
-		mockMvc.perform(post("/jobs")
+		mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
@@ -152,7 +184,7 @@ class JobApiIntegrationTest {
 
 	@Test
 	void emptyOperationsReturns400() throws Exception {
-		mockMvc.perform(post("/jobs")
+		mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
@@ -166,7 +198,7 @@ class JobApiIntegrationTest {
 
 	@Test
 	void invalidOperationTypeReturns400() throws Exception {
-		mockMvc.perform(post("/jobs")
+		mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
@@ -180,7 +212,7 @@ class JobApiIntegrationTest {
 
 	@Test
 	void retiredTranscode4kTo1080pReturns400() throws Exception {
-		mockMvc.perform(post("/jobs")
+		mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
@@ -209,7 +241,7 @@ class JobApiIntegrationTest {
 
 	@Test
 	void pastDeadlineReturns400() throws Exception {
-		mockMvc.perform(post("/jobs")
+		mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
@@ -226,23 +258,23 @@ class JobApiIntegrationTest {
 	void unknownJobReturns404() throws Exception {
 		UUID missingId = UUID.randomUUID();
 
-		mockMvc.perform(get("/jobs/" + missingId))
+		mockMvc.perform(authed(get("/jobs/" + missingId)))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
 
-		mockMvc.perform(get("/jobs/" + missingId + "/operations"))
+		mockMvc.perform(authed(get("/jobs/" + missingId + "/operations")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
 
-		mockMvc.perform(get("/jobs/" + missingId + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + missingId + "/artifacts")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
 
-		mockMvc.perform(get("/jobs/" + missingId + "/artifacts/" + UUID.randomUUID()))
+		mockMvc.perform(authed(get("/jobs/" + missingId + "/artifacts/" + UUID.randomUUID())))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
 
-		mockMvc.perform(post("/jobs/" + missingId + "/artifacts/" + UUID.randomUUID() + "/download-url"))
+		mockMvc.perform(authed(post("/jobs/" + missingId + "/artifacts/" + UUID.randomUUID() + "/download-url")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
 	}
@@ -256,14 +288,14 @@ class JobApiIntegrationTest {
 				}
 				""");
 
-		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/artifacts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.jobId").value(jobId.toString()))
 				.andExpect(jsonPath("$.artifacts.length()").value(0));
 	}
 
 	private UUID createJob(String json) throws Exception {
-		MvcResult result = mockMvc.perform(post("/jobs")
+		MvcResult result = mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(json))
 				.andExpect(status().isAccepted())

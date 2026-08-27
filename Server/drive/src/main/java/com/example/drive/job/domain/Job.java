@@ -24,6 +24,9 @@ public class Job {
 	@Id
 	private UUID id;
 
+	@Column(name = "account_id", nullable = false)
+	private UUID accountId;
+
 	@Column(name = "input_uri", nullable = false)
 	private String inputUri;
 
@@ -51,8 +54,9 @@ public class Job {
 	protected Job() {
 	}
 
-	public Job(UUID id, String inputUri, JobPriority priority, Instant deadline, Instant now) {
+	public Job(UUID id, UUID accountId, String inputUri, JobPriority priority, Instant deadline, Instant now) {
 		this.id = id;
+		this.accountId = accountId;
 		this.inputUri = inputUri;
 		this.status = JobStatus.QUEUED;
 		this.priority = priority;
@@ -68,6 +72,10 @@ public class Job {
 
 	public UUID getId() {
 		return id;
+	}
+
+	public UUID getAccountId() {
+		return accountId;
 	}
 
 	public String getInputUri() {

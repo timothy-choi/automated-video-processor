@@ -1,5 +1,6 @@
 package com.example.drive.worker;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
@@ -29,7 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ControlServiceTest
-class WorkerHeartbeatIntegrationTest {
+class WorkerHeartbeatIntegrationTest extends AuthenticatedApiTest {
 
 	@Autowired
 	private MockMvc mockMvc;
@@ -62,7 +63,7 @@ class WorkerHeartbeatIntegrationTest {
 		);
 		assertThat(lastHeartbeat).isNotNull();
 
-		mockMvc.perform(get("/workers/worker-a"))
+		mockMvc.perform(authed(get("/workers/worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("AVAILABLE"))
 				.andExpect(jsonPath("$.lastHeartbeat").isString());
@@ -76,7 +77,7 @@ class WorkerHeartbeatIntegrationTest {
 		int marked = workerService.markStaleWorkers();
 		assertThat(marked).isEqualTo(1);
 
-		mockMvc.perform(get("/workers/stale-worker"))
+		mockMvc.perform(authed(get("/workers/stale-worker")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("UNAVAILABLE"));
 	}
@@ -88,7 +89,7 @@ class WorkerHeartbeatIntegrationTest {
 		int marked = workerService.markStaleWorkers();
 		assertThat(marked).isEqualTo(0);
 
-		mockMvc.perform(get("/workers/fresh-worker"))
+		mockMvc.perform(authed(get("/workers/fresh-worker")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("AVAILABLE"))
 				.andExpect(jsonPath("$.lastHeartbeat").isString());
@@ -106,7 +107,7 @@ class WorkerHeartbeatIntegrationTest {
 				.andExpect(jsonPath("$.status").value("AVAILABLE"))
 				.andExpect(jsonPath("$.lastHeartbeat").isString());
 
-		mockMvc.perform(get("/workers/worker-a"))
+		mockMvc.perform(authed(get("/workers/worker-a")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("AVAILABLE"));
 	}
@@ -173,7 +174,7 @@ class WorkerHeartbeatIntegrationTest {
 				""", Timestamp.from(now), Timestamp.from(now));
 
 		assertThat(workerService.markStaleWorkers()).isEqualTo(0);
-		mockMvc.perform(get("/workers/migrated"))
+		mockMvc.perform(authed(get("/workers/migrated")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("UNAVAILABLE"))
 				.andExpect(jsonPath("$.lastHeartbeat").value(org.hamcrest.Matchers.nullValue()));
@@ -215,7 +216,7 @@ class WorkerHeartbeatIntegrationTest {
 			pool.shutdownNow();
 		}
 
-		mockMvc.perform(get("/workers/worker-race"))
+		mockMvc.perform(authed(get("/workers/worker-race")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("AVAILABLE"));
 		Instant lastHeartbeat = jdbcTemplate.queryForObject(
@@ -228,7 +229,7 @@ class WorkerHeartbeatIntegrationTest {
 	@Test
 	void markingWorkerUnavailableDoesNotReassignRunningWork() throws Exception {
 		register("worker-a");
-		mockMvc.perform(post("/jobs")
+		mockMvc.perform(authed(post("/jobs"))
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
 								{
@@ -258,7 +259,7 @@ class WorkerHeartbeatIntegrationTest {
 				operationId
 		);
 		assertThat(operationStatus).isEqualTo("RUNNING");
-		mockMvc.perform(get("/workers/worker-a"))
+		mockMvc.perform(authed(get("/workers/worker-a")))
 				.andExpect(jsonPath("$.status").value("UNAVAILABLE"));
 	}
 

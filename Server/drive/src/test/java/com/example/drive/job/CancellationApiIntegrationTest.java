@@ -1,5 +1,6 @@
 package com.example.drive.job;
 
+import com.example.drive.support.AuthenticatedApiTest;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
@@ -38,7 +39,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @DispatchServiceTest
-class CancellationApiIntegrationTest {
+class CancellationApiIntegrationTest extends AuthenticatedApiTest {
 
 	private static final String SHA256 =
 			"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -88,7 +89,7 @@ class CancellationApiIntegrationTest {
 	@Test
 	void unknownJobCancelReturns404() throws Exception {
 		UUID missing = UUID.fromString("99999999-9999-9999-9999-999999999999");
-		mockMvc.perform(post("/jobs/" + missing + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + missing + "/cancel")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("JOB_NOT_FOUND"));
 	}
@@ -99,7 +100,7 @@ class CancellationApiIntegrationTest {
 				{"inputUri":"s3://media-input/video.mp4","operations":[{"type":"METADATA"}]}
 				""");
 		UUID missing = UUID.fromString("99999999-9999-9999-9999-999999999999");
-		mockMvc.perform(post("/jobs/" + jobId + "/operations/" + missing + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/operations/" + missing + "/cancel")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("OPERATION_NOT_FOUND"));
 	}
@@ -113,7 +114,7 @@ class CancellationApiIntegrationTest {
 				{"inputUri":"s3://media-input/b.mp4","operations":[{"type":"THUMBNAIL"}]}
 				""");
 		UUID opB = operationId(jobB, "THUMBNAIL");
-		mockMvc.perform(post("/jobs/" + jobA + "/operations/" + opB + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + jobA + "/operations/" + opB + "/cancel")))
 				.andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("OPERATION_NOT_FOUND"));
 	}
@@ -124,7 +125,7 @@ class CancellationApiIntegrationTest {
 				{"inputUri":"s3://media-input/video.mp4","operations":[{"type":"METADATA"}]}
 				""");
 		UUID operationId = operationId(jobId, "METADATA");
-		mockMvc.perform(post("/jobs/" + jobId + "/operations/" + operationId + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/operations/" + operationId + "/cancel")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.jobId").value(jobId.toString()))
 				.andExpect(jsonPath("$.jobStatus").value("CANCELLED"))
@@ -136,11 +137,11 @@ class CancellationApiIntegrationTest {
 		mockMvc.perform(get("/internal/scheduler/snapshot"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.operations.length()").value(0));
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("CANCELLED"))
 				.andExpect(jsonPath("$.operations[0].status").value("CANCELLED"));
-		mockMvc.perform(post("/jobs/" + jobId + "/operations/" + operationId + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/operations/" + operationId + "/cancel")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.operationStatus").value("CANCELLED"));
 	}
@@ -148,7 +149,7 @@ class CancellationApiIntegrationTest {
 	@Test
 	void cancelJobCancelsAllQueuedOperations() throws Exception {
 		UUID jobId = createJob(ALL_OPS);
-		mockMvc.perform(post("/jobs/" + jobId + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/cancel")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.id").value(jobId.toString()))
 				.andExpect(jsonPath("$.status").value("CANCELLED"));
@@ -161,7 +162,7 @@ class CancellationApiIntegrationTest {
 				"select count(*) from execution_attempts",
 				Integer.class
 		)).isZero();
-		mockMvc.perform(post("/jobs/" + jobId + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/cancel")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("CANCELLED"));
 	}
@@ -177,7 +178,7 @@ class CancellationApiIntegrationTest {
 		assertThat(operationStatus(operationId)).isEqualTo("ASSIGNED");
 		assertThat(outboxCount(operationId)).isEqualTo(1);
 
-		mockMvc.perform(post("/jobs/" + jobId + "/operations/" + operationId + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/operations/" + operationId + "/cancel")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.operationStatus").value("CANCELLED"))
 				.andExpect(jsonPath("$.jobStatus").value("CANCELLED"));
@@ -197,7 +198,7 @@ class CancellationApiIntegrationTest {
 	@Test
 	void cancelRunningOperationRequestsCancelThenAckFinalizes() throws Exception {
 		Started started = assignAndStart("METADATA");
-		mockMvc.perform(post("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/cancel")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.operationStatus").value("CANCEL_REQUESTED"))
 				.andExpect(jsonPath("$.jobStatus").value("CANCEL_REQUESTED"));
@@ -230,7 +231,7 @@ class CancellationApiIntegrationTest {
 						.content("{\"workerId\":\"worker-a\",\"actualRuntimeMs\":15}"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("CANCELLED"));
-		mockMvc.perform(get("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/attempts"))
+		mockMvc.perform(authed(get("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/attempts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.attempts[0].status").value("CANCELLED"))
 				.andExpect(jsonPath("$.attempts[0].id").value(started.attemptId().toString()));
@@ -240,12 +241,12 @@ class CancellationApiIntegrationTest {
 	void completedJobCannotBeCancelled() throws Exception {
 		Started started = assignAndStart("METADATA");
 		completeMetadata(started.operationId(), started.attemptId());
-		mockMvc.perform(post("/jobs/" + started.jobId() + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + started.jobId() + "/cancel")))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("JOB_ALREADY_COMPLETED"));
 		assertThat(jobStatus(started.jobId())).isEqualTo("COMPLETED");
 		assertThat(operationStatus(started.operationId())).isEqualTo("COMPLETED");
-		mockMvc.perform(post("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + started.jobId() + "/operations/" + started.operationId() + "/cancel")))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("INVALID_OPERATION_STATE"));
 	}
@@ -257,7 +258,7 @@ class CancellationApiIntegrationTest {
 				started.operationId(),
 				new FailOperationRequest(started.attemptId(), 4L, "probe failed")
 		);
-		mockMvc.perform(post("/jobs/" + started.jobId() + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + started.jobId() + "/cancel")))
 				.andExpect(status().isConflict())
 				.andExpect(jsonPath("$.code").value("JOB_ALREADY_FAILED"));
 		assertThat(jobStatus(started.jobId())).isEqualTo("FAILED");
@@ -281,17 +282,17 @@ class CancellationApiIntegrationTest {
 		UUID thumbnailAttempt = assignAndStart(thumbnailId).attemptId();
 		completeThumbnail(jobId, thumbnailId, thumbnailAttempt);
 
-		mockMvc.perform(post("/jobs/" + jobId + "/operations/" + av1Id + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/operations/" + av1Id + "/cancel")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.operationStatus").value("CANCELLED"))
 				.andExpect(jsonPath("$.jobStatus").value("CANCELLED"));
-		mockMvc.perform(get("/jobs/" + jobId))
+		mockMvc.perform(authed(get("/jobs/" + jobId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.status").value("CANCELLED"));
 		assertThat(operationStatus(metadataId)).isEqualTo("COMPLETED");
 		assertThat(operationStatus(thumbnailId)).isEqualTo("COMPLETED");
 		assertThat(artifactCount(thumbnailId)).isEqualTo(1);
-		mockMvc.perform(get("/jobs/" + jobId + "/artifacts"))
+		mockMvc.perform(authed(get("/jobs/" + jobId + "/artifacts")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.artifacts.length()").value(1));
 	}
@@ -308,7 +309,7 @@ class CancellationApiIntegrationTest {
 		UUID thumbnailId = operationId(jobId, "THUMBNAIL");
 		UUID attempt = assignAndStart(metadataId).attemptId();
 		internalOperationService.fail(metadataId, new FailOperationRequest(attempt, 3L, "boom"));
-		mockMvc.perform(post("/jobs/" + jobId + "/operations/" + thumbnailId + "/cancel"))
+		mockMvc.perform(authed(post("/jobs/" + jobId + "/operations/" + thumbnailId + "/cancel")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.operationStatus").value("CANCELLED"))
 				.andExpect(jsonPath("$.jobStatus").value("FAILED"));
@@ -319,7 +320,7 @@ class CancellationApiIntegrationTest {
 	@Test
 	void staleCompleteAfterCancelIsRejectedAndCreatesNoArtifact() throws Exception {
 		Started started = assignAndStart("THUMBNAIL");
-		jobCancellationService.cancelOperation(started.jobId(), started.operationId());
+		jobCancellationService.cancelOperation(started.jobId(), started.operationId(), account.accountId());
 		mockMvc.perform(post("/internal/operations/" + started.operationId() + "/complete")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(thumbnailJson(started.jobId(), started.operationId(), started.attemptId())))
@@ -335,7 +336,7 @@ class CancellationApiIntegrationTest {
 	@Test
 	void staleFailureAfterCancelIsRejected() throws Exception {
 		Started started = assignAndStart("METADATA");
-		jobCancellationService.cancelOperation(started.jobId(), started.operationId());
+		jobCancellationService.cancelOperation(started.jobId(), started.operationId(), account.accountId());
 		mockMvc.perform(post("/internal/operations/" + started.operationId() + "/fail")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content("""
@@ -365,7 +366,7 @@ class CancellationApiIntegrationTest {
 	@Test
 	void wrongWorkerCancellationAckIsRejected() throws Exception {
 		Started started = assignAndStart("METADATA");
-		jobCancellationService.cancelOperation(started.jobId(), started.operationId());
+		jobCancellationService.cancelOperation(started.jobId(), started.operationId(), account.accountId());
 		mockMvc.perform(post(
 						"/internal/operations/" + started.operationId() + "/attempts/" + started.attemptId() + "/cancelled"
 				)
@@ -379,7 +380,7 @@ class CancellationApiIntegrationTest {
 	@Test
 	void leaseExpiryAfterCancelRequestedFinalizesCancelledWithoutRequeue() {
 		Started started = assignAndStart("H264_TO_AV1");
-		jobCancellationService.cancelOperation(started.jobId(), started.operationId());
+		jobCancellationService.cancelOperation(started.jobId(), started.operationId(), account.accountId());
 		expireLease(started.attemptId());
 		assertThat(internalOperationService.reclaimExpiredAttempts()).isEqualTo(1);
 		assertThat(attemptStatus(started.attemptId())).isEqualTo("CANCELLED");
@@ -392,7 +393,7 @@ class CancellationApiIntegrationTest {
 	@Test
 	void workerDisappearanceDuringCancellationDoesNotRequeue() {
 		Started started = assignAndStart("TRANSCODE_1080P");
-		jobCancellationService.cancelOperation(started.jobId(), started.operationId());
+		jobCancellationService.cancelOperation(started.jobId(), started.operationId(), account.accountId());
 		expireLease(started.attemptId());
 		jdbcTemplate.update("update workers set status = 'UNAVAILABLE' where id = 'worker-a'");
 		assertThat(internalOperationService.reclaimExpiredAttempts()).isEqualTo(1);
@@ -409,9 +410,9 @@ class CancellationApiIntegrationTest {
 		UUID cancelledJob = createJob("""
 				{"inputUri":"s3://media-input/cancelled.mp4","operations":[{"type":"THUMBNAIL"}]}
 				""");
-		jobCancellationService.cancelJob(cancelledJob);
+		jobCancellationService.cancelJob(cancelledJob, account.accountId());
 		Started running = assignAndStart("AUDIO_EXTRACTION");
-		jobCancellationService.cancelOperation(running.jobId(), running.operationId());
+		jobCancellationService.cancelOperation(running.jobId(), running.operationId(), account.accountId());
 		UUID stillQueued = operationId(queued, "METADATA");
 		try {
 			mockMvc.perform(get("/internal/scheduler/snapshot"))
@@ -434,7 +435,7 @@ class CancellationApiIntegrationTest {
 		UUID assignmentId = currentAssignmentId(operationId);
 		AtomicReference<StartOperationResponse> startResult = new AtomicReference<>();
 		runConcurrent(
-				() -> jobCancellationService.cancelOperation(jobId, operationId),
+				() -> jobCancellationService.cancelOperation(jobId, operationId, account.accountId()),
 				() -> startResult.set(internalOperationService.start(operationId, "worker-a", assignmentId))
 		);
 		String status = operationStatus(operationId);
@@ -457,7 +458,7 @@ class CancellationApiIntegrationTest {
 		runConcurrent(
 				() -> {
 					try {
-						jobCancellationService.cancelOperation(started.jobId(), started.operationId());
+						jobCancellationService.cancelOperation(started.jobId(), started.operationId(), account.accountId());
 					}
 					catch (RuntimeException ex) {
 						cancelErr.set(ex);
@@ -500,7 +501,7 @@ class CancellationApiIntegrationTest {
 		UUID operationId = operationId(jobId, "METADATA");
 		AtomicReference<Throwable> assignErr = new AtomicReference<>();
 		runConcurrent(
-				() -> jobCancellationService.cancelJob(jobId),
+				() -> jobCancellationService.cancelJob(jobId, account.accountId()),
 				() -> {
 					try {
 						schedulerService.assign(new AssignOperationRequest(
@@ -532,7 +533,7 @@ class CancellationApiIntegrationTest {
 		UUID audioId = operationId(jobId, "AUDIO_EXTRACTION");
 		UUID thumbAttempt = assignAndStart(thumbnailId).attemptId();
 		completeThumbnail(jobId, thumbnailId, thumbAttempt);
-		jobCancellationService.cancelOperation(jobId, audioId);
+		jobCancellationService.cancelOperation(jobId, audioId, account.accountId());
 		assertThat(artifactCount(thumbnailId)).isEqualTo(1);
 		assertThat(artifactCount(audioId)).isZero();
 		assertThat(jobStatus(jobId)).isEqualTo("CANCELLED");
@@ -594,7 +595,7 @@ class CancellationApiIntegrationTest {
 
 	private UUID createJob(String json) {
 		try {
-			MvcResult result = mockMvc.perform(post("/jobs")
+			MvcResult result = mockMvc.perform(authed(post("/jobs"))
 							.contentType(MediaType.APPLICATION_JSON)
 							.content(json))
 					.andExpect(status().isAccepted())
