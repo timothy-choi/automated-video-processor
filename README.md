@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 5A**: users can cancel jobs and individual operations, including work that is actively running FFmpeg/ffprobe. FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
+This repository is currently at **Phase 5B**: users can cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation using current queue-entry time. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, and adaptive scoring are not implemented.
 
-## Current status: Phase 5A — Distributed job and operation cancellation
+## Current status: Phase 5B — Explicit retry of failed operations
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,10 +34,13 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
-Phase 5A currently:
+Phase 5B currently:
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write and does **not** publish RabbitMQ)
 - lets users cancel a job (`POST /jobs/{id}/cancel`) or one operation (`POST /jobs/{id}/operations/{operationId}/cancel`) without deleting history
+- lets users explicitly retry a **FAILED** operation (`POST /jobs/{id}/operations/{operationId}/retry`) or every FAILED operation in a job (`POST /jobs/{id}/retry`)
+- retry returns the operation to `QUEUED` for normal FIFO scheduling; it does not publish RabbitMQ, create an attempt, or change input URI
+- old `ExecutionAttempt` and `SchedulingDecision` rows remain; the next `/start` creates the next attempt number
 - cancels `QUEUED` and `ASSIGNED` work immediately; a delayed RabbitMQ assignment cannot start a cancelled operation
 - records `CANCEL_REQUESTED` for `RUNNING` work, tells the owning worker on the next lease renew, and only then marks the attempt and operation `CANCELLED`
 - actually stops the FFmpeg/ffprobe process; cancelled execution cannot persist a new Artifact
@@ -285,6 +288,45 @@ Approximate cancellation latency for running FFmpeg is one **lease renew** (defa
 
 `priority` defaults to `NORMAL` when omitted. `deadline` is optional. Unknown jobs return **404**. Invalid bodies (missing `inputUri`, empty `operations`, unknown operation type, past deadline) return **400**.
 
+### Retry a failed operation
+
+Retry is a `POST` because it starts a new execution cycle of the same Operation. It is **not** idempotent: `FAILED → QUEUED` is one cycle. A second retry while the operation is already `QUEUED` returns **409** `INVALID_OPERATION_STATE`.
+
+```bash
+curl -sS -X POST http://localhost:8080/jobs/<job-id>/operations/<operation-id>/retry
+```
+
+Example response:
+
+```json
+{
+  "jobId": "...",
+  "jobStatus": "QUEUED",
+  "operationId": "...",
+  "operationStatus": "QUEUED",
+  "attemptCount": 1
+}
+```
+
+`attemptCount` is how many `ExecutionAttempt` rows already exist (history). Retry does not create Attempt 2; the worker does that at `/start`.
+
+| Current operation state | Retry |
+| --- | --- |
+| `FAILED` | → `QUEUED`; current failure fields are cleared; attempts stay in history |
+| `COMPLETED` | **409** `INVALID_OPERATION_STATE` — artifacts are not overwritten |
+| `CANCELLED` | **409** `INVALID_OPERATION_STATE` — retry is for execution failures, not intentional cancellation |
+| `QUEUED` / `ASSIGNED` / `RUNNING` / `CANCEL_REQUESTED` | **409** `INVALID_OPERATION_STATE` |
+
+Same `inputUri`. The Go scheduler places the work again with the **current** FIFO + worker policy. The worker may differ from Attempt 1. Successful sibling operations and their artifacts are kept. The parent Job leaves `FAILED` and becomes `QUEUED`, `ASSIGNED`, or `RUNNING` according to remaining operations.
+
+Optional whole-job retry queues every **FAILED** operation and leaves `COMPLETED` / `CANCELLED` operations untouched. If none are `FAILED`:
+
+```text
+409 NOTHING_TO_RETRY
+```
+
+Retry is **explicit**. The platform does not automatically retry FFmpeg/ffprobe application failures. `MAX_EXECUTION_ATTEMPTS` only stops automatic **lease-recovery** requeues; a user can still retry a FAILED operation afterward.
+
 `inputUri` is stored as a URI string. The public API does **not** contact S3 or verify that the object exists. Dispatch executes `file://` and `s3://` for `METADATA`, `THUMBNAIL`, `AUDIO_EXTRACTION`, `TRANSCODE_1080P`, and `H264_TO_AV1`. A job is not `COMPLETED` while any of those remain queued or running.
 
 Supported operation types for submission:
@@ -334,13 +376,20 @@ POST /internal/operations/{id}/start  (current assignmentId + workerId; then att
 
 ### FIFO (operation ordering)
 
-Scheduling unit is **Operation**, not whole Job. FIFO means the oldest **schedulable operation across jobs**:
+Scheduling unit is **Operation**, not whole Job. FIFO means the oldest **current queue entry** across jobs:
 
 ```text
-createdAt ASC, operationOrder ASC, id ASC
+queuedAt ASC, operationOrder ASC, id ASC
 ```
 
-Job `priority` and `deadline` are persisted but **intentionally ignored** so FIFO stays a pure baseline. This phase does not skip an older unschedulable operation to run a younger one; if the oldest queued `THUMBNAIL` has no eligible worker, it stays `QUEUED` and the scheduler logs `no_eligible_worker` (no hot loop — it sleeps `SCHEDULER_POLL_INTERVAL`). Worker registration/recovery may make it schedulable later. The operation is not failed.
+`queuedAt` is the time the operation entered (or re-entered) the scheduling queue:
+
+- initial submit: `queuedAt = createdAt`
+- explicit user retry: `queuedAt = retry time`
+- assignment-timeout recovery: `queuedAt = recovery time`
+- lease-interruption requeue: `queuedAt = recovery time`
+
+Logical `createdAt` is unchanged. Retried or recovered work therefore goes to the **back** of the FIFO queue rather than jumping ahead of newer submissions. Job `priority` and `deadline` are persisted but **intentionally ignored** so FIFO stays a pure baseline. This phase does not skip an older unschedulable operation to run a younger one; if the oldest queued `THUMBNAIL` has no eligible worker, it stays `QUEUED` and the scheduler logs `no_eligible_worker` (no hot loop — it sleeps `SCHEDULER_POLL_INTERVAL`). Worker registration/recovery may make it schedulable later. The operation is not failed.
 
 ### Worker placement
 
@@ -919,7 +968,7 @@ The operation is requeued rather than left in a lasting `INTERRUPTED` status. Th
 
 An expired lease on an `AVAILABLE` worker is **not** reclaimed. That avoids stealing work after one missed renew.
 
-After `MAX_EXECUTION_ATTEMPTS` infrastructure interruptions, the operation becomes `FAILED` with reason `maximum execution attempts exceeded`. Real FFmpeg/ffprobe errors still fail the attempt immediately and are **not** auto-retried.
+After `MAX_EXECUTION_ATTEMPTS` infrastructure interruptions, the operation becomes `FAILED` with reason `maximum execution attempts exceeded`. Real FFmpeg/ffprobe errors still fail the attempt immediately and are **not** auto-retried. An explicit `POST .../retry` can queue that FAILED operation again; automatic lease recovery will not keep looping forever.
 
 ### Stale-result safety
 
@@ -945,7 +994,7 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 
 `GET /jobs/{jobId}/operations/{operationId}/attempts` is a read-only history API (no lease internals).
 
-### Phase 5A limitations
+### Phase 5B limitations
 
 - TRANSCODE_4K_TO_1080P is retired; use TRANSCODE_1080P for 1080p H.264 output including 4K sources
 - H264_TO_AV1 requires an H.264 video stream and a software AV1 encoder (`libsvtav1` or `libaom-av1`)
@@ -966,7 +1015,7 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 - the legacy Java enqueue path remains for tests (`drive.dispatch.scheduling-enabled`); keep it off in production
 - running cancellation is observed on lease renew (about 10s by default), not a dedicated cancel broker
 - orphan MinIO objects from a cancelled upload are not garbage-collected
-- no retry API and no automatic user retries
+- no automatic retries or retry backoff; only explicit `POST .../retry` of FAILED operations
 
 ## What is inactive
 
@@ -1021,4 +1070,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next **product** milestone is explicit retry of failed work, or a clearly distinct delivery format that is not another redundant H.264 1080p path. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.
+The smallest next **product** milestone is a clearly distinct delivery format that is not another redundant H.264 1080p path, or operator-facing recovery tools such as dead-letter inspection. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.

@@ -8,6 +8,7 @@ type Operation struct {
 	Type           string    `json:"type"`
 	InputURI       string    `json:"inputUri"`
 	CreatedAt      time.Time `json:"createdAt"`
+	QueuedAt       time.Time `json:"queuedAt"`
 	OperationOrder int       `json:"operationOrder"`
 }
 

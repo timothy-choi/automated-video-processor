@@ -34,6 +34,25 @@ func TestFIFOSelectsOldestOperation(t *testing.T) {
 	}
 }
 
+func TestFIFOQueuedAtOverridesCreatedAt(t *testing.T) {
+	createdEarly := time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)
+	queuedLate := time.Date(2026, 8, 25, 11, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC)
+	got, ok := mustSelector(t, FIFO, Lexicographic).Select(model.Snapshot{
+		Operations: []model.Operation{
+			{OperationID: "retried", Type: "METADATA", CreatedAt: createdEarly, QueuedAt: queuedLate, OperationOrder: 0},
+			{OperationID: "fresh", Type: "METADATA", CreatedAt: newer, QueuedAt: newer, OperationOrder: 0},
+		},
+		Workers: []model.Worker{available("worker-a", "METADATA")},
+	})
+	if !ok {
+		t.Fatal("expected placement")
+	}
+	if got.OperationID != "fresh" {
+		t.Fatalf("retried work must re-enter behind newer queued work, got %+v", got)
+	}
+}
+
 func TestFIFOTieBreaksByOrderThenID(t *testing.T) {
 	same := time.Date(2026, 8, 25, 11, 0, 0, 0, time.UTC)
 	got, ok := mustSelector(t, FIFO, Lexicographic).Select(model.Snapshot{

@@ -12,6 +12,7 @@ public record SchedulableOperationResponse(
 		OperationType type,
 		String inputUri,
 		Instant createdAt,
+		Instant queuedAt,
 		int operationOrder
 ) {
 	public static SchedulableOperationResponse from(Operation operation) {
@@ -21,6 +22,7 @@ public record SchedulableOperationResponse(
 				operation.getType(),
 				operation.getJob().getInputUri(),
 				operation.getCreatedAt(),
+				operation.getQueuedAt(),
 				operation.getOperationOrder()
 		);
 	}
