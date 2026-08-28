@@ -32,11 +32,20 @@ import com.example.drive.job.dto.StartOutcome;
 import com.example.drive.job.repository.ArtifactRepository;
 import com.example.drive.job.repository.ExecutionAttemptRepository;
 import com.example.drive.job.repository.OperationRepository;
+import com.example.drive.observability.LogCorrelation;
+import com.example.drive.observability.MediaAttributes;
+import com.example.drive.observability.MediaMetrics;
+import com.example.drive.observability.MediaSpans;
+import com.example.drive.observability.OperationTimings;
+import com.example.drive.observability.TelemetryRedaction;
 import com.example.drive.security.CurrentInternalCaller;
 import com.example.drive.worker.WorkerNotFoundException;
 import com.example.drive.worker.domain.Worker;
 import com.example.drive.worker.domain.WorkerStatus;
 import com.example.drive.worker.repository.WorkerRepository;
+
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.StatusCode;
 
 import jakarta.persistence.EntityManager;
 
@@ -52,6 +61,7 @@ public class InternalOperationService {
 	private final WorkerRepository workerRepository;
 	private final OperationLeaseProperties leaseProperties;
 	private final Clock clock;
+	private final MediaMetrics mediaMetrics;
 
 	public InternalOperationService(
 			EntityManager entityManager,
@@ -60,7 +70,8 @@ public class InternalOperationService {
 			ExecutionAttemptRepository attemptRepository,
 			WorkerRepository workerRepository,
 			OperationLeaseProperties leaseProperties,
-			Clock clock
+			Clock clock,
+			MediaMetrics mediaMetrics
 	) {
 		this.entityManager = entityManager;
 		this.operationRepository = operationRepository;
@@ -69,6 +80,7 @@ public class InternalOperationService {
 		this.workerRepository = workerRepository;
 		this.leaseProperties = leaseProperties;
 		this.clock = clock;
+		this.mediaMetrics = mediaMetrics;
 	}
 
 	@Transactional
@@ -84,18 +96,37 @@ public class InternalOperationService {
 		return switch (operation.getStatus()) {
 			case ASSIGNED -> {
 				requireCurrentAssignment(operation, worker.getId(), assignmentId);
+				Instant assignedAt = operation.getAssignedAt();
 				ExecutionAttempt attempt = createRunningAttempt(operation, worker.getId(), now);
 				operation.markRunning(now);
 				operation.attachRunningAttempt(attempt.getId());
+				var previousJobStatus = operation.getJob().getStatus();
 				operation.getJob().refreshStatusFromOperations(now);
-				log.info(
-						"event=attempt_started operationId={} attemptId={} attemptNumber={} workerId={} leaseExpiresAt={}",
+				OperationTimings.assignmentWait(assignedAt, now).ifPresent(wait ->
+						mediaMetrics.recordAssignmentWait(operation.getType().name(), wait)
+				);
+				mediaMetrics.jobTransition(previousJobStatus, operation.getJob().getStatus());
+				Span span = Span.current();
+				MediaSpans.set(span, MediaAttributes.JOB_ID, operation.getJob().getId().toString());
+				MediaSpans.set(span, MediaAttributes.OPERATION_ID, operation.getId().toString());
+				MediaSpans.set(span, MediaAttributes.OPERATION_TYPE, operation.getType().name());
+				MediaSpans.set(span, MediaAttributes.ATTEMPT_ID, attempt.getId().toString());
+				MediaSpans.set(span, MediaAttributes.WORKER_ID, worker.getId());
+				try (LogCorrelation correlation = LogCorrelation.open(
+						operation.getJob().getId(),
 						operation.getId(),
 						attempt.getId(),
-						attempt.getAttemptNumber(),
-						worker.getId(),
-						attempt.getLeaseExpiresAt()
-				);
+						worker.getId()
+				)) {
+					log.info(
+							"event=attempt_started operationId={} attemptId={} attemptNumber={} workerId={} leaseExpiresAt={}",
+							operation.getId(),
+							attempt.getId(),
+							attempt.getAttemptNumber(),
+							worker.getId(),
+							attempt.getLeaseExpiresAt()
+					);
+				}
 				yield StartOperationResponse.started(
 						operation,
 						attempt.getId(),
@@ -130,7 +161,9 @@ public class InternalOperationService {
 		ExecutionAttempt attempt = createRunningAttempt(operation, worker.getId(), now);
 		operation.markRunning(now);
 		operation.attachRunningAttempt(attempt.getId());
+		var previousJobStatus = operation.getJob().getStatus();
 		operation.getJob().refreshStatusFromOperations(now);
+		mediaMetrics.jobTransition(previousJobStatus, operation.getJob().getStatus());
 		log.info(
 				"event=attempt_started operationId={} attemptId={} attemptNumber={} workerId={} leaseExpiresAt={}",
 				operation.getId(),
@@ -214,14 +247,26 @@ public class InternalOperationService {
 		}
 		attempt.markCancelled(now, runtimeMs, null);
 		operation.markCancelled(now);
+		var previousJobStatus = operation.getJob().getStatus();
 		operation.getJob().refreshStatusFromOperations(now);
-		log.info(
-				"event=attempt_cancelled operationId={} attemptId={} workerId={} runtimeMs={}",
+		mediaMetrics.jobTransition(previousJobStatus, operation.getJob().getStatus());
+		Span span = Span.current();
+		span.setAttribute(MediaAttributes.OPERATION_CANCELLED, true);
+		span.setStatus(StatusCode.UNSET);
+		try (LogCorrelation correlation = LogCorrelation.open(
+				operation.getJob().getId(),
 				operation.getId(),
 				attempt.getId(),
-				attempt.getWorkerId(),
-				runtimeMs
-		);
+				attempt.getWorkerId()
+		)) {
+			log.info(
+					"event=attempt_cancelled operationId={} attemptId={} workerId={} runtimeMs={}",
+					operation.getId(),
+					attempt.getId(),
+					attempt.getWorkerId(),
+					runtimeMs
+			);
+		}
 		return OperationResponse.from(operation);
 	}
 
@@ -242,14 +287,25 @@ public class InternalOperationService {
 			case H264_TO_AV1 -> completeArtifact(operation, attempt, request, now, ArtifactType.H264_TO_AV1);
 		};
 		if (changed) {
+			var previousJobStatus = operation.getJob().getStatus();
 			operation.getJob().refreshStatusFromOperations(now);
-			log.info(
-					"event=attempt_completed operationId={} attemptId={} workerId={} runtimeMs={}",
+			mediaMetrics.operationCompleted(operation.getType().name());
+			mediaMetrics.recordRuntime(operation.getType().name(), request.actualRuntimeMs());
+			mediaMetrics.jobTransition(previousJobStatus, operation.getJob().getStatus());
+			try (LogCorrelation correlation = LogCorrelation.open(
+					operation.getJob().getId(),
 					operation.getId(),
 					attempt.getId(),
-					attempt.getWorkerId(),
-					request.actualRuntimeMs()
-			);
+					attempt.getWorkerId()
+			)) {
+				log.info(
+						"event=attempt_completed operationId={} attemptId={} workerId={} runtimeMs={}",
+						operation.getId(),
+						attempt.getId(),
+						attempt.getWorkerId(),
+						request.actualRuntimeMs()
+				);
+			}
 		}
 		return OperationResponse.from(operation);
 	}
@@ -268,14 +324,27 @@ public class InternalOperationService {
 			changed = operation.markFailed(now, request.actualRuntimeMs(), request.reason().trim());
 		}
 		if (changed) {
+			var previousJobStatus = operation.getJob().getStatus();
 			operation.getJob().refreshStatusFromOperations(now);
-			log.info(
-					"event=attempt_failed operationId={} attemptId={} workerId={} reason={}",
+			mediaMetrics.operationFailed(operation.getType().name());
+			mediaMetrics.recordRuntime(operation.getType().name(), request.actualRuntimeMs());
+			mediaMetrics.jobTransition(previousJobStatus, operation.getJob().getStatus());
+			Span span = Span.current();
+			span.setStatus(StatusCode.ERROR, TelemetryRedaction.boundedMessage(request.reason()));
+			try (LogCorrelation correlation = LogCorrelation.open(
+					operation.getJob().getId(),
 					operation.getId(),
 					attempt.getId(),
-					attempt.getWorkerId(),
-					request.reason().trim()
-			);
+					attempt.getWorkerId()
+			)) {
+				log.info(
+						"event=attempt_failed operationId={} attemptId={} workerId={} reason={}",
+						operation.getId(),
+						attempt.getId(),
+						attempt.getWorkerId(),
+						request.reason().trim()
+				);
+			}
 		}
 		return OperationResponse.from(operation);
 	}
@@ -315,7 +384,9 @@ public class InternalOperationService {
 		if (operation.getStatus() == com.example.drive.job.domain.OperationStatus.CANCEL_REQUESTED) {
 			attempt.markCancelled(now, null, "cancellation acknowledged by lease expiry");
 			operation.markCancelled(now);
+			var previousJobStatus = operation.getJob().getStatus();
 			operation.getJob().refreshStatusFromOperations(now);
+			mediaMetrics.jobTransition(previousJobStatus, operation.getJob().getStatus());
 			log.info(
 					"event=attempt_cancelled_by_lease operationId={} attemptId={} workerId={}",
 					operation.getId(),
@@ -335,7 +406,10 @@ public class InternalOperationService {
 		attempt.markInterrupted(now);
 		if (attempt.getAttemptNumber() >= leaseProperties.getMaxAttempts()) {
 			operation.markFailed(now, null, "maximum execution attempts exceeded");
+			var previousJobStatus = operation.getJob().getStatus();
 			operation.getJob().refreshStatusFromOperations(now);
+			mediaMetrics.operationFailed(operation.getType().name());
+			mediaMetrics.jobTransition(previousJobStatus, operation.getJob().getStatus());
 			log.info(
 					"event=attempt_interrupted operationId={} attemptId={} workerId={} attemptNumber={} terminal=max_attempts",
 					operation.getId(),
@@ -348,7 +422,9 @@ public class InternalOperationService {
 
 		operation.markRequeued(now);
 		clearDispatchOutbox(operation.getId());
+		var previousJobStatus = operation.getJob().getStatus();
 		operation.getJob().refreshStatusFromOperations(now);
+		mediaMetrics.jobTransition(previousJobStatus, operation.getJob().getStatus());
 		log.info(
 				"event=attempt_interrupted operationId={} attemptId={} workerId={} attemptNumber={}",
 				operation.getId(),

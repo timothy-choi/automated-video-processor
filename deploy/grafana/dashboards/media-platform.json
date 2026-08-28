@@ -1,0 +1,107 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "custom": {} }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Jobs submitted / completed / failed / cancelled",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum(rate(media_jobs_submitted_total[5m]))", "legendFormat": "submitted" },
+        { "expr": "sum(rate(media_jobs_completed_total[5m]))", "legendFormat": "completed" },
+        { "expr": "sum(rate(media_jobs_failed_total[5m]))", "legendFormat": "failed" },
+        { "expr": "sum(rate(media_jobs_cancelled_total[5m]))", "legendFormat": "cancelled" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "title": "Operation throughput by type",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum by (type) (rate(media_operations_completed_total{service_name=\"media-control-service\"}[5m]))", "legendFormat": "completed {{type}}" },
+        { "expr": "sum by (type) (rate(media_operations_failed_total{service_name=\"media-control-service\"}[5m]))", "legendFormat": "failed {{type}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "title": "Operation runtime p50 / p95",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le, type) (rate(media_operation_runtime_seconds_bucket{service_name=\"media-control-service\"}[5m])))", "legendFormat": "p50 {{type}}" },
+        { "expr": "histogram_quantile(0.95, sum by (le, type) (rate(media_operation_runtime_seconds_bucket{service_name=\"media-control-service\"}[5m])))", "legendFormat": "p95 {{type}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "title": "Queue wait p50 / p95",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le, type) (rate(media_operation_queue_wait_seconds_bucket[5m])))", "legendFormat": "p50 {{type}}" },
+        { "expr": "histogram_quantile(0.95, sum by (le, type) (rate(media_operation_queue_wait_seconds_bucket[5m])))", "legendFormat": "p95 {{type}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 5,
+      "title": "Assignment wait p50 / p95",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le, type) (rate(media_operation_assignment_wait_seconds_bucket[5m])))", "legendFormat": "p50 {{type}}" },
+        { "expr": "histogram_quantile(0.95, sum by (le, type) (rate(media_operation_assignment_wait_seconds_bucket[5m])))", "legendFormat": "p95 {{type}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 16 },
+      "id": 6,
+      "title": "Worker availability",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "media_worker_available", "legendFormat": "{{service_name}} {{worker_id}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 16 },
+      "id": 7,
+      "title": "Running operations",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "media_worker_running_operations", "legendFormat": "{{service_name}} {{worker_id}}" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "id": 8,
+      "title": "Scheduler decisions by policy",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "sum by (worker_policy) (rate(media_scheduler_decisions_total{service_name=\"media-scheduler\"}[5m]))", "legendFormat": "{{worker_policy}}" }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["media-platform"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "title": "Media platform operations",
+  "uid": "media-platform-ops",
+  "version": 1
+}

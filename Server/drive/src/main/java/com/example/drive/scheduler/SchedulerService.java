@@ -40,6 +40,15 @@ import com.example.drive.worker.domain.Worker;
 import com.example.drive.worker.domain.WorkerStatus;
 import com.example.drive.worker.dto.WorkerResponse;
 import com.example.drive.worker.repository.WorkerRepository;
+import com.example.drive.observability.LogCorrelation;
+import com.example.drive.observability.MediaAttributes;
+import com.example.drive.observability.MediaMetrics;
+import com.example.drive.observability.MediaSpans;
+import com.example.drive.observability.OperationTimings;
+
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Scope;
 
 import jakarta.persistence.EntityManager;
 
@@ -58,6 +67,8 @@ public class SchedulerService {
 	private final SchedulingDecisionRepository decisionRepository;
 	private final DispatchOutboxRepository outboxRepository;
 	private final Clock clock;
+	private final MediaMetrics mediaMetrics;
+	private final Tracer tracer;
 
 	public SchedulerService(
 			EntityManager entityManager,
@@ -66,7 +77,9 @@ public class SchedulerService {
 			ExecutionAttemptRepository attemptRepository,
 			SchedulingDecisionRepository decisionRepository,
 			DispatchOutboxRepository outboxRepository,
-			Clock clock
+			Clock clock,
+			MediaMetrics mediaMetrics,
+			Tracer tracer
 	) {
 		this.entityManager = entityManager;
 		this.operationRepository = operationRepository;
@@ -75,6 +88,8 @@ public class SchedulerService {
 		this.decisionRepository = decisionRepository;
 		this.outboxRepository = outboxRepository;
 		this.clock = clock;
+		this.mediaMetrics = mediaMetrics;
+		this.tracer = tracer;
 	}
 
 	@Transactional(readOnly = true)
@@ -97,6 +112,20 @@ public class SchedulerService {
 
 	@Transactional
 	public AssignOperationResponse assign(AssignOperationRequest request) {
+		Span span = MediaSpans.start(tracer, MediaSpans.SCHEDULER_ASSIGN);
+		try (Scope ignored = span.makeCurrent()) {
+			return assignInSpan(request, span);
+		}
+		catch (RuntimeException ex) {
+			MediaSpans.recordError(span, ex);
+			throw ex;
+		}
+		finally {
+			span.end();
+		}
+	}
+
+	private AssignOperationResponse assignInSpan(AssignOperationRequest request, Span span) {
 		String operationPolicy = requireOperationPolicy(request);
 		String workerPolicy = requireWorkerPolicy(request);
 		String workerId = requireWorkerId(request.workerId());
@@ -132,8 +161,14 @@ public class SchedulerService {
 		requireCurrentPlacement(workerPolicy, operation.getType(), workerId);
 
 		UUID assignmentId = UUID.randomUUID();
+		Instant queuedAt = operation.getQueuedAt();
 		operation.markAssigned(now, workerId, assignmentId);
+		var previousJobStatus = operation.getJob().getStatus();
 		operation.getJob().refreshStatusFromOperations(now);
+		mediaMetrics.jobTransition(previousJobStatus, operation.getJob().getStatus());
+		OperationTimings.queueWait(queuedAt, now).ifPresent(wait ->
+				mediaMetrics.recordQueueWait(operation.getType().name(), wait)
+		);
 		String routingKey = DispatchTopology.workerRoutingKey(workerId);
 		String payload = AssignmentJson.v3(
 				operation.getId(),
@@ -163,18 +198,35 @@ public class SchedulerService {
 				now
 		));
 		int selectedLoad = runningAttemptCounts().getOrDefault(workerId, 0);
-		log.info(
-				"event=scheduling_decision operationId={} jobId={} workerId={} operationType={} operation_policy={} worker_policy={} selected_load={} decisionId={} routingKey={}",
-				operation.getId(),
+		MediaSpans.set(span, MediaAttributes.OPERATION_ID, operation.getId().toString());
+		MediaSpans.set(span, MediaAttributes.JOB_ID, operation.getJob().getId().toString());
+		MediaSpans.set(span, MediaAttributes.OPERATION_TYPE, operation.getType().name());
+		MediaSpans.set(span, MediaAttributes.WORKER_ID, workerId);
+		MediaSpans.set(span, MediaAttributes.OPERATION_POLICY, operationPolicy);
+		MediaSpans.set(span, MediaAttributes.WORKER_POLICY, workerPolicy);
+		if (WorkerPlacement.LEAST_LOADED.equals(workerPolicy)) {
+			MediaSpans.set(span, MediaAttributes.ACTIVE_OPERATIONS, (long) selectedLoad);
+		}
+		mediaMetrics.schedulerDecision(workerPolicy);
+		try (LogCorrelation correlation = LogCorrelation.open(
 				operation.getJob().getId(),
-				workerId,
-				operation.getType(),
-				operationPolicy,
-				workerPolicy,
-				selectedLoad,
-				decision.getId(),
-				routingKey
-		);
+				operation.getId(),
+				null,
+				workerId
+		)) {
+			log.info(
+					"event=scheduling_decision operationId={} jobId={} workerId={} operationType={} operation_policy={} worker_policy={} selected_load={} decisionId={} routingKey={}",
+					operation.getId(),
+					operation.getJob().getId(),
+					workerId,
+					operation.getType(),
+					operationPolicy,
+					workerPolicy,
+					selectedLoad,
+					decision.getId(),
+					routingKey
+			);
+		}
 		return new AssignOperationResponse(
 				decision.getId(),
 				operation.getId(),

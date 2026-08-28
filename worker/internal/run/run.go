@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -10,8 +11,10 @@ import (
 	"github.com/timothy-choi/automated-video-processor/worker/internal/executor"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/inputuri"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/model"
+	"github.com/timothy-choi/automated-video-processor/worker/internal/otelx"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/storage"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/workspace"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type Deps struct {
@@ -63,7 +66,12 @@ func Execute(ctx context.Context, claimed *model.ClaimedOperation, deps Deps) (R
 
 	switch claimed.Type {
 	case "METADATA":
-		metadata, err := deps.Probe(ctx, deps.FfprobePath, inputPath)
+		var metadata model.MetadataResult
+		err := withMediaSpan(ctx, "ffprobe.metadata", claimed, func(ctx context.Context) error {
+			var probeErr error
+			metadata, probeErr = deps.Probe(ctx, deps.FfprobePath, inputPath)
+			return probeErr
+		})
 		result := Result{RuntimeMs: time.Since(start).Milliseconds()}
 		if err != nil {
 			return result, err
@@ -72,7 +80,9 @@ func Execute(ctx context.Context, claimed *model.ClaimedOperation, deps Deps) (R
 		return result, nil
 	case "THUMBNAIL":
 		outputPath := ws.File("thumbnail.jpg")
-		if err := deps.Thumbnail(ctx, deps.FfmpegPath, inputPath, outputPath); err != nil {
+		if err := withMediaSpan(ctx, "ffmpeg.thumbnail", claimed, func(ctx context.Context) error {
+			return deps.Thumbnail(ctx, deps.FfmpegPath, inputPath, outputPath)
+		}); err != nil {
 			return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
 		}
 		return finishArtifact(ctx, claimed, deps, outputPath, storage.ThumbnailObjectKey(claimed.JobID, claimed.OperationID), "image/jpeg", start)
@@ -81,7 +91,9 @@ func Execute(ctx context.Context, claimed *model.ClaimedOperation, deps Deps) (R
 		if deps.Audio == nil {
 			return Result{RuntimeMs: time.Since(start).Milliseconds()}, fmt.Errorf("audio extraction is not configured")
 		}
-		if err := deps.Audio(ctx, deps.FfmpegPath, inputPath, outputPath); err != nil {
+		if err := withMediaSpan(ctx, "ffmpeg.audio_extract", claimed, func(ctx context.Context) error {
+			return deps.Audio(ctx, deps.FfmpegPath, inputPath, outputPath)
+		}); err != nil {
 			return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
 		}
 		return finishArtifact(ctx, claimed, deps, outputPath, storage.AudioObjectKey(claimed.JobID, claimed.OperationID), executor.AudioContentType, start)
@@ -90,7 +102,9 @@ func Execute(ctx context.Context, claimed *model.ClaimedOperation, deps Deps) (R
 		if deps.Transcode == nil {
 			return Result{RuntimeMs: time.Since(start).Milliseconds()}, fmt.Errorf("transcode is not configured")
 		}
-		if err := deps.Transcode(ctx, deps.FfmpegPath, inputPath, outputPath); err != nil {
+		if err := withMediaSpan(ctx, "ffmpeg.transcode_1080p", claimed, func(ctx context.Context) error {
+			return deps.Transcode(ctx, deps.FfmpegPath, inputPath, outputPath)
+		}); err != nil {
 			return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
 		}
 		return finishArtifact(ctx, claimed, deps, outputPath, storage.Transcode1080pObjectKey(claimed.JobID, claimed.OperationID), executor.TranscodeContentType, start)
@@ -108,7 +122,9 @@ func Execute(ctx context.Context, claimed *model.ClaimedOperation, deps Deps) (R
 				return executor.TranscodeAV1(ctx, ffmpegPath, in, out, deps.AV1Encoder)
 			}
 		}
-		if err := encode(ctx, deps.FfmpegPath, inputPath, outputPath); err != nil {
+		if err := withMediaSpan(ctx, "ffmpeg.h264_to_av1", claimed, func(ctx context.Context) error {
+			return encode(ctx, deps.FfmpegPath, inputPath, outputPath)
+		}); err != nil {
 			return Result{RuntimeMs: time.Since(start).Milliseconds()}, err
 		}
 		return finishArtifact(ctx, claimed, deps, outputPath, storage.AV1ObjectKey(claimed.JobID, claimed.OperationID), executor.AV1ContentType, start)
@@ -190,4 +206,23 @@ func resolveInput(ctx context.Context, rawURI string, ws *workspace.Workspace, s
 	default:
 		return "", fmt.Errorf("unsupported URI scheme")
 	}
+}
+
+func withMediaSpan(ctx context.Context, name string, claimed *model.ClaimedOperation, fn func(context.Context) error) error {
+	ctx, span := otelx.Tracer().Start(ctx, name)
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("media.operation.type", claimed.Type),
+		attribute.String("media.job.id", claimed.JobID),
+		attribute.String("media.operation.id", claimed.OperationID),
+	)
+	err := fn(ctx)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			span.SetAttributes(attribute.Bool("operation.cancelled", true))
+			return err
+		}
+		otelx.RecordError(span, err)
+	}
+	return err
 }

@@ -16,6 +16,18 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.example.drive.observability.LogCorrelation;
+import com.example.drive.observability.MediaAttributes;
+import com.example.drive.observability.MediaSpans;
+import com.example.drive.observability.TracePropagation;
+
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanKind;
+import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
+
 import jakarta.persistence.EntityManager;
 
 @Service
@@ -30,19 +42,22 @@ public class DispatchPublisher {
 	private final RabbitTemplate rabbitTemplate;
 	private final DispatchProperties properties;
 	private final Clock clock;
+	private final Tracer tracer;
 
 	public DispatchPublisher(
 			EntityManager entityManager,
 			DispatchOutboxRepository outboxRepository,
 			RabbitTemplate rabbitTemplate,
 			DispatchProperties properties,
-			Clock clock
+			Clock clock,
+			Tracer tracer
 	) {
 		this.entityManager = entityManager;
 		this.outboxRepository = outboxRepository;
 		this.rabbitTemplate = rabbitTemplate;
 		this.properties = properties;
 		this.clock = clock;
+		this.tracer = tracer;
 	}
 
 	@Transactional
@@ -57,20 +72,18 @@ public class DispatchPublisher {
 			}
 			try {
 				String routingKey = routingKey(row);
-				rabbitTemplate.send(
-						DispatchTopology.EXCHANGE,
-						routingKey,
-						persistentJson(row.getPayloadJson())
-				);
+				publish(row, routingKey);
 				row.markSent(now);
 				sent++;
-				log.info(
-						"published assignment outboxId={} operationId={} routingKey={} workerId={}",
-						row.getId(),
-						row.getOperationId(),
-						routingKey,
-						row.getWorkerId()
-				);
+				try (LogCorrelation correlation = LogCorrelation.open(null, row.getOperationId(), null, row.getWorkerId())) {
+					log.info(
+							"published assignment outboxId={} operationId={} routingKey={} workerId={}",
+							row.getId(),
+							row.getOperationId(),
+							routingKey,
+							row.getWorkerId()
+					);
+				}
 			}
 			catch (RuntimeException ex) {
 				row.recordFailedAttempt();
@@ -111,10 +124,30 @@ public class DispatchPublisher {
 		return row.getRoutingKey();
 	}
 
-	private static Message persistentJson(String payload) {
-		MessageProperties properties = new MessageProperties();
-		properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
-		properties.setDeliveryMode(MessageDeliveryMode.PERSISTENT);
-		return new Message(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8), properties);
+	private void publish(DispatchOutbox row, String routingKey) {
+		Context parent = TracePropagation.restore(row.getTraceparent(), row.getTracestate());
+		Span span = tracer.spanBuilder(MediaSpans.RABBITMQ_PUBLISH)
+				.setParent(parent)
+				.setSpanKind(SpanKind.PRODUCER)
+				.startSpan();
+		try (Scope ignored = span.makeCurrent()) {
+			MediaSpans.set(span, MediaAttributes.OPERATION_ID, row.getOperationId().toString());
+			if (row.getWorkerId() != null) {
+				MediaSpans.set(span, MediaAttributes.WORKER_ID, row.getWorkerId());
+			}
+			MessageProperties properties = new MessageProperties();
+			properties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
+			properties.setDeliveryMode(MessageDeliveryMode.PERSISTENT);
+			TracePropagation.injectAmqp(properties, Context.current());
+			Message message = new Message(row.getPayloadJson().getBytes(java.nio.charset.StandardCharsets.UTF_8), properties);
+			rabbitTemplate.send(DispatchTopology.EXCHANGE, routingKey, message);
+		}
+		catch (RuntimeException ex) {
+			span.setStatus(StatusCode.ERROR, ex.getClass().getSimpleName());
+			throw ex;
+		}
+		finally {
+			span.end();
+		}
 	}
 }

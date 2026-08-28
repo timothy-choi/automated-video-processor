@@ -7,7 +7,10 @@ import (
 
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/client"
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/model"
+	"github.com/timothy-choi/automated-video-processor/scheduler/internal/otelx"
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/policy"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type ControlClient interface {
@@ -65,7 +68,30 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 		)
 		return interval
 	}
+
 	placement, ok := l.Selector.Select(snapshot)
+	if op := operationOf(snapshot, placement.OperationID); op != nil {
+		ctx = otelx.Continue(ctx, op.Traceparent, op.Tracestate)
+	}
+
+	ctx, snapshotSpan := otelx.Tracer().Start(ctx, "scheduler.snapshot")
+	defer snapshotSpan.End()
+	snapshotSpan.SetAttributes(
+		attribute.String("media.scheduler.operation_policy", l.Selector.OperationPolicy),
+		attribute.String("media.scheduler.worker_policy", l.Selector.WorkerPolicy),
+		attribute.Int("scheduler.queued_operations", len(snapshot.Operations)),
+	)
+
+	ctx, selectOp := otelx.Tracer().Start(ctx, "scheduler.select_operation")
+	if op := operationOf(snapshot, placement.OperationID); op != nil {
+		selectOp.SetAttributes(
+			attribute.String("media.operation.id", op.OperationID),
+			attribute.String("media.operation.type", op.Type),
+			attribute.String("media.job.id", op.JobID),
+			attribute.String("media.scheduler.operation_policy", l.Selector.OperationPolicy),
+		)
+	}
+	selectOp.End()
 	if !ok {
 		opType := ""
 		for _, op := range snapshot.Operations {
@@ -75,7 +101,8 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 			}
 		}
 		log.Printf(
-			"event=no_eligible_worker operation_policy=%s worker_policy=%s operationId=%s type=%s queued=%d",
+			"%sevent=no_eligible_worker operation_policy=%s worker_policy=%s operationId=%s type=%s queued=%d",
+			otelx.Prefix(ctx),
 			l.Selector.OperationPolicy,
 			l.Selector.WorkerPolicy,
 			placement.OperationID,
@@ -84,11 +111,27 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 		)
 		return interval
 	}
+
+	ctx, selectWorker := otelx.Tracer().Start(ctx, "scheduler.select_worker")
+	selectWorker.SetAttributes(
+		attribute.String("media.worker.id", placement.WorkerID),
+		attribute.String("media.scheduler.worker_policy", placement.WorkerPolicy),
+		attribute.String("media.scheduler.operation_policy", placement.OperationPolicy),
+	)
+	if placement.WorkerPolicy == policy.LeastLoaded {
+		selectWorker.SetAttributes(attribute.Int64("media.scheduler.active_operations", int64(placement.ActiveOperations)))
+	}
+	selectWorker.End()
+
+	ctx, assignSpan := otelx.Tracer().Start(ctx, "scheduler.assign", trace.WithSpanKind(trace.SpanKindClient))
 	assigned, err := l.Client.Assign(ctx, placement)
 	if err != nil {
+		otelx.RecordError(assignSpan, err)
+		assignSpan.End()
 		if client.IsConflict(err) {
 			log.Printf(
-				"event=assign_conflict operationId=%s workerId=%s operation_policy=%s worker_policy=%s err=%v",
+				"%sevent=assign_conflict operationId=%s workerId=%s operation_policy=%s worker_policy=%s err=%v",
+				otelx.Prefix(ctx),
 				placement.OperationID,
 				placement.WorkerID,
 				placement.OperationPolicy,
@@ -98,19 +141,30 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 			return 0
 		}
 		if client.IsUnauthorized(err) {
-			log.Printf("event=assign_unauthorized operationId=%s workerId=%s", placement.OperationID, placement.WorkerID)
+			log.Printf("%sevent=assign_unauthorized operationId=%s workerId=%s", otelx.Prefix(ctx), placement.OperationID, placement.WorkerID)
 			return interval
 		}
 		log.Printf(
-			"event=assign_failed operationId=%s workerId=%s err=%v",
+			"%sevent=assign_failed operationId=%s workerId=%s err=%v",
+			otelx.Prefix(ctx),
 			placement.OperationID,
 			placement.WorkerID,
 			err,
 		)
 		return interval
 	}
+	assignSpan.SetAttributes(
+		attribute.String("media.operation.id", assigned.OperationID),
+		attribute.String("media.job.id", assigned.JobID),
+		attribute.String("media.worker.id", assigned.WorkerID),
+		attribute.String("media.scheduler.operation_policy", assigned.OperationPolicy),
+		attribute.String("media.scheduler.worker_policy", assigned.WorkerPolicy),
+	)
+	assignSpan.End()
+	otelx.RecordDecision(ctx, assigned.WorkerPolicy)
 	log.Printf(
-		"event=assigned operationId=%s workerId=%s operation_policy=%s worker_policy=%s operation_type=%s selected_load=%d decisionId=%s routingKey=%s",
+		"%sevent=assigned operationId=%s workerId=%s operation_policy=%s worker_policy=%s operation_type=%s selected_load=%d decisionId=%s routingKey=%s",
+		otelx.Prefix(ctx),
 		assigned.OperationID,
 		assigned.WorkerID,
 		assigned.OperationPolicy,
@@ -121,6 +175,15 @@ func (l *Loop) tick(ctx context.Context) time.Duration {
 		assigned.RoutingKey,
 	)
 	return 0
+}
+
+func operationOf(snapshot model.Snapshot, operationID string) *model.Operation {
+	for i := range snapshot.Operations {
+		if snapshot.Operations[i].OperationID == operationID {
+			return &snapshot.Operations[i]
+		}
+	}
+	return nil
 }
 
 func operationType(snapshot model.Snapshot, operationID string) string {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/model"
+	"github.com/timothy-choi/automated-video-processor/scheduler/internal/otelx"
 )
 
 type StatusError struct {
@@ -38,6 +39,7 @@ func New(baseURL string, timeout time.Duration, serviceToken string) *Client {
 	if strings.TrimSpace(serviceToken) != "" {
 		transport = &bearerTransport{base: http.DefaultTransport, token: strings.TrimSpace(serviceToken)}
 	}
+	transport = otelx.WrapTransport(transport)
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		httpClient: &http.Client{

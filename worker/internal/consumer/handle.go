@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net/url"
 	"sync/atomic"
 	"time"
 
@@ -12,7 +13,10 @@ import (
 	"github.com/timothy-choi/automated-video-processor/worker/internal/client"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/lease"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/model"
+	"github.com/timothy-choi/automated-video-processor/worker/internal/otelx"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/run"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Decision int
@@ -60,56 +64,71 @@ func HandleWithCapabilities(ctx context.Context, workerID string, supported []st
 }
 
 func HandleWithOptions(ctx context.Context, workerID string, body []byte, ctrl Control, exec Executor, opts Options) Decision {
+	ctx, consumeSpan := otelx.Tracer().Start(ctx, "worker.consume", trace.WithSpanKind(trace.SpanKindConsumer))
+	defer consumeSpan.End()
 	parsed, err := assignment.Parse(body)
 	if err != nil {
 		log.Printf("worker=%s event=malformed_message err=%v decision=%s", workerID, err, NackDrop)
 		return NackDrop
 	}
+	consumeSpan.SetAttributes(
+		attribute.String("media.job.id", parsed.JobID),
+		attribute.String("media.operation.id", parsed.OperationID),
+		attribute.String("media.operation.type", parsed.Type),
+		attribute.String("media.worker.id", workerID),
+	)
 	supported := opts.Supported
 	if supported == nil {
 		supported = capability.ImplementedOperations()
 	}
 	if parsed.WorkerID != "" && parsed.WorkerID != workerID {
 		log.Printf(
-			"worker=%s assignment_worker=%s job=%s operation=%s type=%s event=worker_id_mismatch decision=%s",
-			workerID, parsed.WorkerID, parsed.JobID, parsed.OperationID, parsed.Type, NackDrop,
+			"%sworker=%s assignment_worker=%s job=%s operation=%s type=%s event=worker_id_mismatch decision=%s",
+			otelx.Prefix(ctx), workerID, parsed.WorkerID, parsed.JobID, parsed.OperationID, parsed.Type, NackDrop,
 		)
 		return NackDrop
 	}
 	if !supportsOperation(supported, parsed.Type) {
 		log.Printf(
-			"worker=%s job=%s operation=%s type=%s event=capability_mismatch decision=%s",
-			workerID, parsed.JobID, parsed.OperationID, parsed.Type, NackDrop,
+			"%sworker=%s job=%s operation=%s type=%s event=capability_mismatch decision=%s",
+			otelx.Prefix(ctx), workerID, parsed.JobID, parsed.OperationID, parsed.Type, NackDrop,
 		)
 		return NackDrop
 	}
 	log.Printf(
-		"worker=%s job=%s operation=%s type=%s event=received input=%s",
-		workerID, parsed.JobID, parsed.OperationID, parsed.Type, parsed.InputURI,
+		"%sworker=%s job=%s operation=%s type=%s event=received input=%s",
+		otelx.Prefix(ctx), workerID, parsed.JobID, parsed.OperationID, parsed.Type, sanitizeURI(parsed.InputURI),
 	)
 
-	start, err := ctrl.Start(ctx, parsed.OperationID, workerID, parsed.AssignmentID)
+	startCtx, startSpan := otelx.Tracer().Start(ctx, "operation.start")
+	start, err := ctrl.Start(startCtx, parsed.OperationID, workerID, parsed.AssignmentID)
 	if err != nil {
+		otelx.RecordError(startSpan, err)
+		startSpan.End()
 		if client.IsUnavailable(err) {
 			log.Printf(
-				"worker=%s job=%s operation=%s type=%s event=start_unavailable err=%v decision=%s",
-				workerID, parsed.JobID, parsed.OperationID, parsed.Type, err, NackRequeue,
+				"%sworker=%s job=%s operation=%s type=%s event=start_unavailable err=%v decision=%s",
+				otelx.Prefix(ctx), workerID, parsed.JobID, parsed.OperationID, parsed.Type, err, NackRequeue,
 			)
 			return NackRequeue
 		}
 		if client.IsConflict(err) {
 			log.Printf(
-				"worker=%s job=%s operation=%s assignment=%s type=%s event=stale_assignment_start_rejected err=%v decision=%s",
-				workerID, parsed.JobID, parsed.OperationID, parsed.AssignmentID, parsed.Type, err, NackDrop,
+				"%sworker=%s job=%s operation=%s assignment=%s type=%s event=stale_assignment_start_rejected err=%v decision=%s",
+				otelx.Prefix(ctx), workerID, parsed.JobID, parsed.OperationID, parsed.AssignmentID, parsed.Type, err, NackDrop,
 			)
 			return NackDrop
 		}
 		log.Printf(
-			"worker=%s job=%s operation=%s type=%s event=start_rejected err=%v decision=%s",
-			workerID, parsed.JobID, parsed.OperationID, parsed.Type, err, NackDrop,
+			"%sworker=%s job=%s operation=%s type=%s event=start_rejected err=%v decision=%s",
+			otelx.Prefix(ctx), workerID, parsed.JobID, parsed.OperationID, parsed.Type, err, NackDrop,
 		)
 		return NackDrop
 	}
+	if start.AttemptID != "" {
+		startSpan.SetAttributes(attribute.String("media.attempt.id", start.AttemptID))
+	}
+	startSpan.End()
 
 	switch start.Outcome {
 	case model.StartAlreadyRunning, model.StartAlreadyTerminal:
@@ -166,49 +185,68 @@ func HandleWithOptions(ctx context.Context, workerID string, body []byte, ctrl C
 	})
 
 	log.Printf(
-		"worker=%s job=%s operation=%s type=%s attempt=%s event=execution_start",
-		workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID,
+		"%sworker=%s job=%s operation=%s type=%s attempt=%s event=execution_start",
+		otelx.Prefix(ctx), workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID,
 	)
-	result, execErr := exec(execCtx, parsed.Claimed())
+	otelx.AddRunning(1)
+	defer otelx.AddRunning(-1)
+	mediaCtx, mediaSpan := otelx.Tracer().Start(execCtx, "media.execute")
+	mediaSpan.SetAttributes(
+		attribute.String("media.job.id", parsed.JobID),
+		attribute.String("media.operation.id", parsed.OperationID),
+		attribute.String("media.operation.type", parsed.Type),
+		attribute.String("media.attempt.id", start.AttemptID),
+		attribute.String("media.worker.id", workerID),
+	)
+	result, execErr := exec(mediaCtx, parsed.Claimed())
 	stopRenew()
 	if userCancel.Load() {
+		mediaSpan.SetAttributes(attribute.Bool("operation.cancelled", true))
+		mediaSpan.End()
 		decision := reportWithRetry(ctx, func(reportCtx context.Context) error {
 			return ctrl.Cancelled(reportCtx, parsed.OperationID, start.AttemptID, workerID, result.RuntimeMs)
 		})
 		log.Printf(
-			"worker=%s job=%s operation=%s type=%s attempt=%s event=execution_cancelled runtime_ms=%d decision=%s",
-			workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID, result.RuntimeMs, decision,
+			"%sworker=%s job=%s operation=%s type=%s attempt=%s event=execution_cancelled runtime_ms=%d decision=%s",
+			otelx.Prefix(ctx), workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID, result.RuntimeMs, decision,
 		)
 		return decision
 	}
 	if execErr != nil {
+		otelx.RecordError(mediaSpan, execErr)
+		mediaSpan.End()
 		if errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				reason := "execution timeout exceeded"
 				decision := reportWithRetry(ctx, func(reportCtx context.Context) error {
 					return ctrl.Fail(reportCtx, parsed.OperationID, &result.RuntimeMs, reason, start.AttemptID)
 				})
+				otelx.RecordOperationFailed(ctx, parsed.Type)
+				otelx.RecordRuntime(ctx, parsed.Type, time.Duration(result.RuntimeMs)*time.Millisecond)
 				log.Printf(
-					"worker=%s job=%s operation=%s type=%s attempt=%s event=execution_timeout runtime_ms=%d decision=%s",
-					workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID, result.RuntimeMs, decision,
+					"%sworker=%s job=%s operation=%s type=%s attempt=%s event=execution_timeout runtime_ms=%d decision=%s",
+					otelx.Prefix(ctx), workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID, result.RuntimeMs, decision,
 				)
 				return decision
 			}
 			log.Printf(
-				"worker=%s job=%s operation=%s type=%s attempt=%s event=execution_interrupted err=%v decision=%s",
-				workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID, execErr, NackRequeue,
+				"%sworker=%s job=%s operation=%s type=%s attempt=%s event=execution_interrupted err=%v decision=%s",
+				otelx.Prefix(ctx), workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID, execErr, NackRequeue,
 			)
 			return NackRequeue
 		}
 		decision := reportWithRetry(ctx, func(reportCtx context.Context) error {
 			return ctrl.Fail(reportCtx, parsed.OperationID, &result.RuntimeMs, execErr.Error(), start.AttemptID)
 		})
+		otelx.RecordOperationFailed(ctx, parsed.Type)
+		otelx.RecordRuntime(ctx, parsed.Type, time.Duration(result.RuntimeMs)*time.Millisecond)
 		log.Printf(
-			"worker=%s job=%s operation=%s type=%s attempt=%s event=execution_failure runtime_ms=%d err=%v decision=%s",
-			workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID, result.RuntimeMs, execErr, decision,
+			"%sworker=%s job=%s operation=%s type=%s attempt=%s event=execution_failure runtime_ms=%d err=%v decision=%s",
+			otelx.Prefix(ctx), workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID, result.RuntimeMs, execErr, decision,
 		)
 		return decision
 	}
+	mediaSpan.End()
 
 	complete := model.CompleteRequest{AttemptID: start.AttemptID, ActualRuntimeMs: result.RuntimeMs}
 	if result.Metadata != nil {
@@ -220,9 +258,11 @@ func HandleWithOptions(ctx context.Context, workerID string, body []byte, ctrl C
 	decision := reportWithRetry(ctx, func(reportCtx context.Context) error {
 		return ctrl.Complete(reportCtx, parsed.OperationID, complete)
 	})
+	otelx.RecordOperationCompleted(ctx, parsed.Type)
+	otelx.RecordRuntime(ctx, parsed.Type, time.Duration(result.RuntimeMs)*time.Millisecond)
 	log.Printf(
-		"worker=%s job=%s operation=%s type=%s attempt=%s event=execution_completed runtime_ms=%d decision=%s",
-		workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID, result.RuntimeMs, decision,
+		"%sworker=%s job=%s operation=%s type=%s attempt=%s event=execution_completed runtime_ms=%d decision=%s",
+		otelx.Prefix(ctx), workerID, parsed.JobID, parsed.OperationID, parsed.Type, start.AttemptID, result.RuntimeMs, decision,
 	)
 	return decision
 }
@@ -266,4 +306,15 @@ func supportsOperation(supported []string, operationType string) bool {
 		}
 	}
 	return false
+}
+
+func sanitizeURI(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "invalid-uri"
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }

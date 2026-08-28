@@ -9,6 +9,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"github.com/timothy-choi/automated-video-processor/worker/internal/consumer"
+	"github.com/timothy-choi/automated-video-processor/worker/internal/otelx"
 )
 
 type Config struct {
@@ -120,6 +121,7 @@ func (c *Consumer) consumeSession(ctx context.Context) error {
 func (c *Consumer) handleDelivery(ctx context.Context, delivery *amqp.Delivery) {
 	workCtx, stopWork := context.WithCancel(context.Background())
 	defer stopWork()
+	workCtx = otelx.ExtractAMQP(workCtx, delivery.Headers)
 	if c.cfg.ExecutionTimeout > 0 {
 		var extra context.CancelFunc
 		workCtx, extra = context.WithTimeout(workCtx, c.cfg.ExecutionTimeout)

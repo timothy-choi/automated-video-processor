@@ -19,6 +19,8 @@ import com.example.drive.job.dto.CancelOperationResponse;
 import com.example.drive.job.dto.JobResponse;
 import com.example.drive.job.repository.ArtifactRepository;
 import com.example.drive.job.repository.JobRepository;
+import com.example.drive.observability.LogCorrelation;
+import com.example.drive.observability.MediaMetrics;
 
 import jakarta.persistence.EntityManager;
 
@@ -31,17 +33,20 @@ public class JobCancellationService {
 	private final JobRepository jobRepository;
 	private final ArtifactRepository artifactRepository;
 	private final Clock clock;
+	private final MediaMetrics mediaMetrics;
 
 	public JobCancellationService(
 			EntityManager entityManager,
 			JobRepository jobRepository,
 			ArtifactRepository artifactRepository,
-			Clock clock
+			Clock clock,
+			MediaMetrics mediaMetrics
 	) {
 		this.entityManager = entityManager;
 		this.jobRepository = jobRepository;
 		this.artifactRepository = artifactRepository;
 		this.clock = clock;
+		this.mediaMetrics = mediaMetrics;
 	}
 
 	@Transactional
@@ -59,8 +64,12 @@ public class JobCancellationService {
 		for (Operation operation : job.getOperations()) {
 			requestCancel(operation, now, true);
 		}
+		JobStatus previous = job.getStatus();
 		job.refreshStatusFromOperations(now);
-		log.info("event=job_cancel_requested jobId={} jobStatus={}", job.getId(), job.getStatus());
+		mediaMetrics.jobTransition(previous, job.getStatus());
+		try (LogCorrelation correlation = LogCorrelation.open(job.getId(), null, null, null)) {
+			log.info("event=job_cancel_requested jobId={} jobStatus={}", job.getId(), job.getStatus());
+		}
 		return toResponse(job);
 	}
 
@@ -78,14 +87,18 @@ public class JobCancellationService {
 				.findFirst()
 				.orElseThrow(() -> new OperationNotFoundException(operationId));
 		requestCancel(operation, now, false);
+		JobStatus previous = job.getStatus();
 		job.refreshStatusFromOperations(now);
-		log.info(
-				"event=operation_cancel_requested jobId={} operationId={} operationStatus={} jobStatus={}",
-				job.getId(),
-				operation.getId(),
-				operation.getStatus(),
-				job.getStatus()
-		);
+		mediaMetrics.jobTransition(previous, job.getStatus());
+		try (LogCorrelation correlation = LogCorrelation.open(job.getId(), operation.getId(), null, null)) {
+			log.info(
+					"event=operation_cancel_requested jobId={} operationId={} operationStatus={} jobStatus={}",
+					job.getId(),
+					operation.getId(),
+					operation.getStatus(),
+					job.getStatus()
+			);
+		}
 		return new CancelOperationResponse(
 				job.getId(),
 				job.getStatus(),

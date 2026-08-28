@@ -10,6 +10,10 @@ import (
 	"time"
 
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/model"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestSnapshotAndAssign(t *testing.T) {
@@ -78,6 +82,35 @@ func TestSnapshotAndAssign(t *testing.T) {
 	}
 	if snapshotAuth != "Bearer test-scheduler-token" || assignAuth != "Bearer test-scheduler-token" {
 		t.Fatalf("snapshotAuth=%q assignAuth=%q", snapshotAuth, assignAuth)
+	}
+}
+
+func TestAssignPropagatesIncomingTraceContext(t *testing.T) {
+	var got string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/internal/scheduler/assign" {
+			got = r.Header.Get("traceparent")
+			_ = json.NewEncoder(w).Encode(model.AssignResponse{DecisionID: "dec-1", OperationID: "op-1", WorkerID: "worker-a"})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp), sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+	ctx, span := otel.Tracer("test").Start(context.Background(), "scheduler.assign")
+	defer span.End()
+	c := New(server.URL, time.Second, "test-scheduler-token")
+	if _, err := c.Assign(ctx, model.Placement{OperationID: "op-1", WorkerID: "worker-a", OperationPolicy: "FIFO", WorkerPolicy: "FIFO"}); err != nil {
+		t.Fatal(err)
+	}
+	if got == "" || !strings.Contains(got, span.SpanContext().TraceID().String()) {
+		t.Fatalf("traceparent=%q", got)
 	}
 }
 

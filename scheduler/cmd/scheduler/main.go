@@ -12,6 +12,7 @@ import (
 
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/auth"
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/client"
+	"github.com/timothy-choi/automated-video-processor/scheduler/internal/otelx"
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/policy"
 	"github.com/timothy-choi/automated-video-processor/scheduler/internal/scheduler"
 )
@@ -36,6 +37,17 @@ func main() {
 		cfg.controlURL,
 		cfg.pollInterval,
 	)
+	shutdownTelemetry, err := otelx.Setup(context.Background(), otelx.Config{ServiceName: "media-scheduler"})
+	if err != nil {
+		log.Printf("event=otel_setup_failed err=%v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if shutdownTelemetry != nil {
+			_ = shutdownTelemetry(ctx)
+		}
+	}()
 	loop := &scheduler.Loop{
 		Client:       client.New(cfg.controlURL, 15*time.Second, token),
 		Selector:     selected,
