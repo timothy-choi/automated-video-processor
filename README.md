@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 6A**: the Compose product from Phase 5G plus operator observability (OpenTelemetry traces/metrics, Collector, Jaeger, Prometheus, Grafana). User-facing APIs require an Account API key with ownership isolation. Scheduler/worker calls to `/internal/**` use separate internal service credentials. Users can list owned Jobs and request a **time-limited HTTP URL** for an owned Artifact. They can cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, adaptive scoring, Kubernetes, cloud-provider deploy, and a user-facing Job timeline API are not implemented.
+This repository is currently at **Phase 6B**: the Compose product from Phase 5G, operator observability from Phase 6A, plus a user-facing Job timeline assembled from persisted Job/Operation/attempt/decision/artifact history. User-facing APIs require an Account API key with ownership isolation. Scheduler/worker calls to `/internal/**` use separate internal service credentials. Users can list owned Jobs, inspect a chronological timeline of what happened, and request a **time-limited HTTP URL** for an owned Artifact. They can cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, adaptive scoring, Kubernetes, and cloud-provider deploy are not implemented.
 
-## Current status: Phase 6A — Operational Observability
+## Current status: Phase 6B — Job Timeline & Execution Details API
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,6 +34,14 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
+Phase 6B currently:
+
+- includes everything from Phase 6A
+- exposes `GET /jobs/{jobId}/timeline` so an Account can read a chronological explanation of an owned Job from PostgreSQL (not from Jaeger)
+- keeps `GET /jobs/{id}/operations` and `GET /jobs/{id}/operations/{operationId}/attempts` as structured resource APIs; timeline is complementary
+- does **not** query the Collector, Jaeger, or Prometheus when serving the product timeline
+- does **not** add an event-sourcing table, frontend, WebSocket/SSE, or timeline search
+
 Phase 6A currently:
 
 - includes everything from Phase 5G (Compose, HTTPS ingress, API-key auth, internal service auth, cancel/retry, five media operations)
@@ -48,13 +56,13 @@ Phase 5G currently:
 - authenticates users with `Authorization: Bearer <api-key>` on `/jobs/**`, `/workers/**`, `/api-keys/**`
 
 - stores API keys as SHA-256 hashes (raw keys are shown only when created)
-- scopes Job listing, inspection, cancel, retry, artifacts, and download URLs to the authenticated Account
+- scopes Job listing, inspection, **timeline**, cancel, retry, artifacts, and download URLs to the authenticated Account
 - authenticates `/internal/**` with scheduler and per-worker service tokens (not Account API keys)
 - can disable open `POST /accounts` registration (`ACCOUNT_REGISTRATION_ENABLED`, default false)
 
 - accepts job submissions and persists `Job` + `Operation` records in PostgreSQL (`POST /jobs` stays a fast DB write and does **not** publish RabbitMQ)
 - lists Jobs with PostgreSQL pagination, deterministic newest-first ordering, and AND filters (`GET /jobs`)
-- lets users inspect one Job, its operations, execution attempts, and artifacts without embedding the entire graph in the list payload
+- lets users inspect one Job, its **timeline**, operations, execution attempts, and artifacts without embedding the entire graph in the list payload
 - issues a time-limited HTTP download URL for an Artifact (`POST /jobs/{jobId}/artifacts/{artifactId}/download-url`) without returning object-store credentials
 - lets users cancel a job (`POST /jobs/{id}/cancel`) or one operation (`POST /jobs/{id}/operations/{operationId}/cancel`) without deleting history
 - lets users explicitly retry a **FAILED** operation (`POST /jobs/{id}/operations/{operationId}/retry`) or every FAILED operation in a job (`POST /jobs/{id}/retry`)
@@ -267,7 +275,23 @@ submission → persistence → scheduling → assignment → queue wait
 → worker start → FFmpeg/ffprobe → object storage → completion
 ```
 
-This is not a user-facing timeline API. Jaeger, Prometheus, and Grafana are **local operator tools**. They are bound to localhost and are **not** exposed through Caddy.
+This is not a substitute for the product timeline. Jaeger, Prometheus, and Grafana are **local operator tools**. They are bound to localhost and are **not** exposed through Caddy. `GET /jobs/{jobId}/timeline` is the Account-scoped product explanation and stays correct if telemetry backends are down.
+
+```text
+Product timeline (GET /jobs/{id}/timeline)
+------------------------------------------
+persisted PostgreSQL rows
+user-facing, Account-scoped
+stable business lifecycle
+available even if telemetry is down
+
+Operator trace (Jaeger)
+-----------------------
+OpenTelemetry spans
+operator-facing, sampled/ephemeral
+implementation path and cross-service debugging
+not the source of truth for Job history
+```
 
 ```text
 Java / scheduler / worker
@@ -634,6 +658,8 @@ filter by status / type / priority / created time
     ↓
 inspect one job
     ↓
+read the job timeline
+    ↓
 inspect operations / attempts / artifacts
     ↓
 retrieve artifact identity (s3://bucket/key)
@@ -704,6 +730,96 @@ curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" http://localhost:808
 Returns the Job plus its operations (status, `queuedAt`, `failureReason` when present, result metadata). Also includes `operationCount` and `artifactCount`. Attempts and artifacts stay on their own endpoints so clients can fetch them when needed.
 
 Unknown jobs, and Jobs owned by a different Account, return **404** `JOB_NOT_FOUND`.
+
+### Job timeline
+
+`GET /jobs/{jobId}/timeline` is the user-facing explanation of **what happened to this Job**. It is assembled from persisted rows (`jobs`, `operations`, `scheduling_decisions`, `execution_attempts`, `artifacts`). It does not query Jaeger, Prometheus, or the OpenTelemetry Collector.
+
+```bash
+curl -sS -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" http://localhost:8080/jobs/<job-id>/timeline
+```
+
+On Compose HTTPS ingress, use `https://localhost` with `curl -k` instead of `http://localhost:8080`.
+
+Authentication and ownership match other Job resources: Bearer API key required; another Account receives **404** `JOB_NOT_FOUND` (no existence disclosure). The request is read-only: it does not update timestamps, retry work, mint download URLs, or rebuild Job status.
+
+`GET /jobs/{id}/operations` remains the structured per-operation resource. `GET /jobs/{id}/operations/{operationId}/attempts` remains the detailed attempt history. Timeline is a chronological narrative over the same persisted facts.
+
+Events are globally chronological (overlapping operations are interleaved, not grouped). Tie-break is:
+
+```text
+timestamp → event-type precedence → operation order → record id
+```
+
+Only events that current data can timestamp are emitted. `CANCEL_REQUESTED` has no dedicated column, so it is omitted rather than stamped with `updatedAt`. `JOB_RUNNING` is omitted for the same reason. Job `completedAt` is derived as the latest operation `completedAt` when the persisted Job status is already terminal.
+
+Supported event types:
+
+```text
+JOB_CREATED
+OPERATION_QUEUED          (operations.createdAt; stable across retry)
+OPERATION_RETRIED         (queuedAt after a failed/interrupted attempt)
+OPERATION_ASSIGNED        (each scheduling_decisions row)
+OPERATION_STARTED         (each execution_attempts.startedAt)
+ARTIFACT_CREATED
+OPERATION_COMPLETED / OPERATION_FAILED / OPERATION_CANCELLED
+JOB_COMPLETED / JOB_FAILED / JOB_CANCELLED
+```
+
+Per-operation latency uses the Phase 6A definitions. Missing timestamps yield `null` (omitted in JSON), never a negative or invented zero:
+
+```text
+queueWaitMs            = assignedAt − queuedAt
+assignmentWaitMs       = startedAt − assignedAt
+executionRuntimeMs     = attempt actualRuntimeMs (or endedAt − startedAt)
+totalOperationLatencyMs = operation.completedAt − operation.createdAt
+durationMs (job)       = job completedAt − job.createdAt
+```
+
+`assignedAt` on the operation is cleared when the worker starts, so assignment times come from `scheduling_decisions.createdAt` after start. Failure text is sanitized (no stack traces, signed URLs, tokens, or connection strings). Artifacts include id, type, size, and checksum — not a presigned URL. Optional `traceId` is parsed from the Job’s stored W3C `traceparent` when present; it is correlation only.
+
+The response is not paginated. A Job currently has a bounded number of operations and attempts. Very long retry histories may need pagination later.
+
+Example (abridged):
+
+```json
+{
+  "jobId": "…",
+  "status": "COMPLETED",
+  "createdAt": "2026-08-27T20:00:00Z",
+  "updatedAt": "2026-08-27T20:00:08.421Z",
+  "completedAt": "2026-08-27T20:00:08.421Z",
+  "durationMs": 8421,
+  "operationCount": 2,
+  "completedOperationCount": 2,
+  "failedOperationCount": 0,
+  "cancelledOperationCount": 0,
+  "artifactCount": 1,
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "events": [
+    {"timestamp": "2026-08-27T20:00:00Z", "type": "JOB_CREATED", "message": "Job created with 2 operations"},
+    {"timestamp": "2026-08-27T20:00:00Z", "type": "OPERATION_QUEUED", "operationType": "METADATA", "operationOrder": 0},
+    {"timestamp": "2026-08-27T20:00:00.240Z", "type": "OPERATION_ASSIGNED", "workerId": "worker-b", "operationPolicy": "FIFO", "workerPolicy": "LEAST_LOADED"},
+    {"timestamp": "2026-08-27T20:00:00.271Z", "type": "OPERATION_STARTED", "attemptNumber": 1, "workerId": "worker-b"},
+    {"timestamp": "2026-08-27T20:00:02.113Z", "type": "ARTIFACT_CREATED", "artifactType": "THUMBNAIL", "sizeBytes": 12345},
+    {"timestamp": "2026-08-27T20:00:02.113Z", "type": "OPERATION_COMPLETED", "attemptNumber": 1, "runtimeMs": 1842},
+    {"timestamp": "2026-08-27T20:00:08.421Z", "type": "JOB_COMPLETED", "message": "Job completed"}
+  ],
+  "operations": [
+    {
+      "type": "THUMBNAIL",
+      "status": "COMPLETED",
+      "queueWaitMs": 240,
+      "assignmentWaitMs": 31,
+      "executionRuntimeMs": 1842,
+      "lastWorkerId": "worker-b",
+      "attemptCount": 1
+    }
+  ]
+}
+```
+
+Retry history is preserved: a failed attempt, `OPERATION_RETRIED`, a later decision, and a new attempt all appear. The attempts endpoint still has the full per-attempt rows.
 
 ### Operations, attempts, and artifacts
 
@@ -1555,7 +1671,8 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 - FIFO ignores persisted priority and deadline
 - no runtime estimator, queue-wait prediction, or utilization telemetry
 - no CPU/memory scoring even though static cores/memory are registered
-- operator OpenTelemetry (Jaeger/Prometheus/Grafana) is in Phase 6A; there is no user-facing Job timeline API yet
+- operator OpenTelemetry (Jaeger/Prometheus/Grafana) is in Phase 6A; the product timeline is `GET /jobs/{id}/timeline` from persisted state, not from traces
+- timeline is not paginated, filtered, or streamed (no SSE/WebSocket); a future phase may need pagination if retry history grows large
 - no benchmark framework
 - worker queues are not deleted when a worker becomes `UNAVAILABLE`
 - the legacy Java enqueue path remains for tests (`drive.dispatch.scheduling-enabled`); keep it off in production
@@ -1627,4 +1744,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next **product** milestone is a user-facing Job timeline (from persisted timestamps plus traces), a hardened production secret/TLS story, or cloud-hosted deploy. This phase is local Compose only — not Kubernetes, Terraform, or a registry publish. A scheduling benchmark harness, SJF, EDF, runtime estimation, alerting, and SLO frameworks remain later still.
+The smallest next **product** milestone is a live Job view (polling or later SSE) on top of this timeline API, a hardened production secret/TLS story, or cloud-hosted deploy. This phase is local Compose only — not Kubernetes, Terraform, or a registry publish. A scheduling benchmark harness, SJF, EDF, runtime estimation, alerting, and SLO frameworks remain later still.

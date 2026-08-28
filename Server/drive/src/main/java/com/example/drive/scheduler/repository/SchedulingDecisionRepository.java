@@ -1,5 +1,6 @@
 package com.example.drive.scheduler.repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -13,6 +14,8 @@ import com.example.drive.scheduler.domain.SchedulingDecision;
 public interface SchedulingDecisionRepository extends JpaRepository<SchedulingDecision, UUID> {
 
 	List<SchedulingDecision> findByOperationIdOrderByCreatedAtAsc(UUID operationId);
+
+	List<SchedulingDecision> findByOperationIdInOrderByCreatedAtAscIdAsc(Collection<UUID> operationIds);
 
 	@Query(value = """
 			SELECT sd.worker_id

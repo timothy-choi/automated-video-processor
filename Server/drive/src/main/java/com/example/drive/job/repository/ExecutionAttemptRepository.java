@@ -16,6 +16,14 @@ public interface ExecutionAttemptRepository extends JpaRepository<ExecutionAttem
 
 	List<ExecutionAttempt> findByOperation_IdOrderByAttemptNumberAsc(UUID operationId);
 
+	@Query("""
+			select a from ExecutionAttempt a
+			join fetch a.operation o
+			where o.job.id = :jobId
+			order by a.attemptNumber asc, a.id asc
+			""")
+	List<ExecutionAttempt> findByJobIdOrderByAttemptNumberAscIdAsc(@Param("jobId") UUID jobId);
+
 	Optional<ExecutionAttempt> findByIdAndOperation_Id(UUID id, UUID operationId);
 
 	@Query("select coalesce(max(a.attemptNumber), 0) from ExecutionAttempt a where a.operation.id = :operationId")
