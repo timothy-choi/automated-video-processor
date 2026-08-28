@@ -7,12 +7,44 @@ localhost, 127.0.0.1 {
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
+		X-Frame-Options DENY
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; script-src 'self'; style-src 'self'; connect-src 'self'"
+	}
+
+	# Internal control-plane routes stay on the Compose network (scheduler/workers → Java :8080).
+	handle /internal* {
+		respond "Not found" 404
 	}
 	handle /actuator* {
 		respond "Not found" 404
 	}
-	handle {
+
+	# Browser console uses /api/* (prefix stripped). Direct public API paths remain for curl.
+	handle_path /api/* {
 		reverse_proxy control-service:8080
+	}
+
+	handle /health {
+		reverse_proxy control-service:8080
+	}
+	handle /jobs* {
+		reverse_proxy control-service:8080
+	}
+	handle /api-keys* {
+		reverse_proxy control-service:8080
+	}
+	handle /workers* {
+		reverse_proxy control-service:8080
+	}
+	handle /accounts* {
+		reverse_proxy control-service:8080
+	}
+
+	handle {
+		root * /srv
+		encode gzip
+		try_files {path} /index.html
+		file_server
 	}
 }
 

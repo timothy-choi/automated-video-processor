@@ -37,8 +37,8 @@ Do not push feature work directly to `main`. Open a pull request instead.
 
 | File | Workflow name | When it runs | What it validates |
 | --- | --- | --- | --- |
-| `.github/workflows/branch-ci.yml` | **Branch CI** | Pushes to every branch except `main` | **Java tests**: Java 21 + `./mvnw clean test` in `Server/drive`. **Go tests**: `go vet` / `go test` in `worker/` and `scheduler/` |
-| `.github/workflows/main-ci.yml` | **PR / Main CI** | Pull requests targeting `main`, and pushes/merges to `main` | The same Java and Go jobs |
+| `.github/workflows/branch-ci.yml` | **Branch CI** | Pushes to every branch except `main` | **Java tests**: Java 21 + `./mvnw clean test` in `Server/drive`. **Go tests**: `go vet` / `go test` in `worker/` and `scheduler/`. **Web**: Node 22 + `npm ci`, Vitest, and `npm run build` in `web/`. **Compose config**. |
+| `.github/workflows/main-ci.yml` | **PR / Main CI** | Pull requests targeting `main`, and pushes/merges to `main` | The same Java, Go, Web, and Compose jobs |
 
 The Java job is still named **Java tests**. That remains the existing required status check on `main`. The new job is named **Go tests**. After it has appeared on a pull request, add it as a required check too. Do not rename **Java tests**; that would break existing branch protection.
 
@@ -68,6 +68,14 @@ From `scheduler/`:
 ```bash
 go vet ./...
 go test ./...
+```
+
+From `web/`:
+
+```bash
+npm ci
+npm test -- --run
+npm run build
 ```
 
 CI does not install FFmpeg or MinIO. Go tests that generate a tiny clip are skipped when `ffmpeg`/`ffprobe` are missing. Object-storage tests use an in-memory fake, not a MinIO container. Go broker tests start RabbitMQ via Testcontainers and therefore also need Docker.

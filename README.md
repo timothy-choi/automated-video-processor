@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 6B**: the Compose product from Phase 5G, operator observability from Phase 6A, plus a user-facing Job timeline assembled from persisted Job/Operation/attempt/decision/artifact history. User-facing APIs require an Account API key with ownership isolation. Scheduler/worker calls to `/internal/**` use separate internal service credentials. Users can list owned Jobs, inspect a chronological timeline of what happened, and request a **time-limited HTTP URL** for an owned Artifact. They can cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, adaptive scoring, Kubernetes, and cloud-provider deploy are not implemented.
+This repository is currently at **Phase 6C**: the Compose product from Phase 5G, operator observability from Phase 6A, the Job timeline API from Phase 6B, plus a small browser console so reviewers can operate Jobs without curl. User-facing APIs require an Account API key with ownership isolation. Scheduler/worker calls to `/internal/**` use separate internal service credentials. Users can list owned Jobs, inspect a chronological timeline of what happened, and request a **time-limited HTTP URL** for an owned Artifact. They can cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, adaptive scoring, Kubernetes, and cloud-provider deploy are not implemented.
 
-## Current status: Phase 6B — Job Timeline & Execution Details API
+## Current status: Phase 6C — Minimal Web Console
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,13 +34,20 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
+Phase 6C currently:
+
+- includes everything from Phase 6B
+- serves a React + TypeScript console from Caddy at `https://localhost` (same HTTPS origin as the API)
+- lets a reviewer paste an Account API key (memory-only; refresh clears it), list Jobs, open a Job, watch live status by polling, read the timeline, retry FAILED operations, cancel a Job, and download artifacts via the existing presigned-URL API
+- does **not** add username/password, OAuth, browser sessions on Java, SSE/WebSockets, or a media upload path
+
 Phase 6B currently:
 
 - includes everything from Phase 6A
 - exposes `GET /jobs/{jobId}/timeline` so an Account can read a chronological explanation of an owned Job from PostgreSQL (not from Jaeger)
 - keeps `GET /jobs/{id}/operations` and `GET /jobs/{id}/operations/{operationId}/attempts` as structured resource APIs; timeline is complementary
 - does **not** query the Collector, Jaeger, or Prometheus when serving the product timeline
-- does **not** add an event-sourcing table, frontend, WebSocket/SSE, or timeline search
+- does **not** add an event-sourcing table, WebSocket/SSE, or timeline search
 
 Phase 6A currently:
 
@@ -107,26 +114,29 @@ Least Loaded is a baseline that reacts to current executing work. It is not a th
 | FIFO             | LEAST_LOADED  |
 
 ```text
-                         Client
+                         Browser
                            |
                          HTTPS
                            |
                            v
-                    Reverse Proxy
-                           |
-                           v
-                   Java Control Plane
-                    /       |       \
-                   /        |        \
-            PostgreSQL  Go Scheduler  Worker Registry
-                            |
-                         RabbitMQ
-                      /             \
-                     v               v
-                 Worker A         Worker B
-                     \               /
-                      \             /
-                         MinIO/S3
+                    Caddy ingress
+                   /            \
+                  /              \
+         React static         /api (and /jobs, /health, …)
+           console                    |
+                                      v
+                             Java Control Plane
+                              /       |       \
+                             /        |        \
+                      PostgreSQL  Go Scheduler  Worker Registry
+                                      |
+                                   RabbitMQ
+                                /             \
+                               v               v
+                           Worker A         Worker B
+                               \               /
+                                \             /
+                                   MinIO/S3
 
 Java / Scheduler / Worker
           |
@@ -221,7 +231,14 @@ go test ./...
 go vet ./...
 ```
 
-Java tests start a temporary PostgreSQL container. Dispatcher and scheduler RabbitMQ tests also start RabbitMQ via Testcontainers. They do **not** require the Compose database, MinIO, or Compose RabbitMQ. Some Go tests generate a tiny clip with FFmpeg when `ffmpeg`/`ffprobe` are on `PATH`; they are skipped if those binaries are missing. GitHub Actions does **not** install FFmpeg or MinIO. Object-storage unit tests use an in-memory fake. Worker broker tests start RabbitMQ via Testcontainers. Scheduler tests are unit tests (no Docker). CI also runs `docker compose --env-file .env.example config`.
+```bash
+cd web
+npm ci
+npm test -- --run
+npm run build
+```
+
+Java tests start a temporary PostgreSQL container. Dispatcher and scheduler RabbitMQ tests also start RabbitMQ via Testcontainers. They do **not** require the Compose database, MinIO, or Compose RabbitMQ. Some Go tests generate a tiny clip with FFmpeg when `ffmpeg`/`ffprobe` are on `PATH`; they are skipped if those binaries are missing. GitHub Actions does **not** install FFmpeg or MinIO. Object-storage unit tests use an in-memory fake. Worker broker tests start RabbitMQ via Testcontainers. Scheduler tests are unit tests (no Docker). CI also runs `docker compose --env-file .env.example config`, plus the **Web** job (`npm ci`, tests, production build).
 
 ## Prerequisites
 
@@ -265,6 +282,62 @@ curl -k -sS \
 ```
 
 HTTP on port 80 redirects to HTTPS. The authenticated product API is not served as public plaintext HTTP.
+
+## Web console
+
+After the stack is healthy, open:
+
+```text
+https://localhost
+```
+
+If `INGRESS_HTTPS_PORT` in `.env` is not 443, include that port (for example `https://localhost:8443`).
+
+Caddy uses an **internal CA**. The browser will warn until you trust that certificate (see Local TLS below). `curl -k` is enough for API checks.
+
+### Authentication
+
+Paste the bootstrap Account API key from `.env` (`MEDIA_PLATFORM_BOOTSTRAP_API_KEY`), or another key created with `POST /api-keys`. The console sends `Authorization: Bearer <api-key>` to the existing REST API.
+
+The key is kept **only in JavaScript memory** for this tab. It is not written to `localStorage`, `sessionStorage`, or cookies. Refreshing the page or clicking **Disconnect** clears it. A 401 (invalid or revoked key) also returns to the connect screen.
+
+This is a developer-oriented API-key console, not an end-user identity system. HTTPS is required. XSS or a malicious browser extension can still read in-memory keys. Browser API keys are **not** equivalent to HttpOnly cookie sessions.
+
+### Console features
+
+- Jobs list with status, created/updated, priority, operation and artifact counts, pagination, and filters the API already supports (`status`, `operationType`, `priority`)
+- Job detail: status, input URI, operations, attempt history, Phase 6B timeline, queue/assignment/runtime timings
+- **Retry** on FAILED operations and **Cancel Job** when the Job is still cancelable (both ask for confirmation)
+- Artifact **Download** via `POST /jobs/{id}/artifacts/{artifactId}/download-url`, then a top-level navigation to the returned MinIO URL (the console does not rewrite or keep that URL)
+- Live polling about every 3 seconds on a non-terminal Job detail page; polling stops at `COMPLETED`, `FAILED`, or `CANCELLED`
+
+**New Job** is an advanced/dev form: you must already have an object at `s3://media-input/...`. The console does not upload media. First-class ingest is the next product gap.
+
+The UI is built on the existing REST API. Curl examples below still work. Direct paths such as `https://localhost/jobs` remain proxied. The browser console calls `/api/jobs` (Caddy strips `/api`) so SPA routes like `/job/:id` do not collide with `/jobs`.
+
+Jaeger, Prometheus, and Grafana stay on localhost operator ports. They are not linked from the product console. `/internal/**` is blocked at Caddy; scheduler and workers continue to call Java on `http://control-service:8080`.
+
+Caddy sets `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`, and a narrow Content-Security-Policy (`default-src 'self'` plus `script-src`/`style-src`/`connect-src 'self'`). Artifact downloads are a top-level navigation to the presigned MinIO URL, not a `fetch`, so they are not blocked by `connect-src`. Production JS does not need `unsafe-eval`. CORS is not opened with `Access-Control-Allow-Origin: *`; the console is same-origin.
+
+### Frontend development
+
+For UI work without rebuilding the ingress image:
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Vite listens on `http://localhost:5173` and proxies `/api` to `https://localhost` (set `VITE_DEV_API_ORIGIN` if HTTPS is on another port). To talk to host Java on port 8080 instead, set `VITE_DEV_API_ORIGIN=http://localhost:8080` and `VITE_DEV_API_STRIP_PREFIX=true`. Production CORS is not opened for this.
+
+```bash
+cd web
+npm test -- --run
+npm run build
+```
+
+Normal usage is still `docker compose up --build`. You do not need `npm run dev` for the product stack.
 
 ## Observability
 
@@ -1688,8 +1761,8 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 - if an old RabbitMQ volume was created with a different image/user, a `.erlang.cookie` permission error may require `docker compose down` and removing that volume (or `down -v` as a full reset)
 - no user RBAC, organizations/teams, audit log, or rate limiting
 - `POST /accounts` can be disabled but is still a bootstrap, not production-grade identity administration
-- no frontend, passwords, JWT, or OAuth
-- no upload/presigned PUT APIs
+- no username/password, JWT, or OAuth; the console uses the existing Account API key in memory
+- no upload/presigned PUT APIs; Job creation still expects a pre-existing `s3://` object
 
 ## What is inactive
 
@@ -1736,7 +1809,7 @@ Then:
 
 Do not routinely push feature work directly to `main`.
 
-Pushes to non-`main` branches run **Branch CI**. Pull requests to `main` and pushes/merges to `main` run **PR / Main CI**. Java CI executes `./mvnw clean test` from `Server/drive`. The **Go tests** job runs `go vet` / `go test` in `worker/` and `scheduler/`. A **Compose config** job runs `docker compose config`. The existing required-check names **Java tests** and **Go tests** are unchanged.
+Pushes to non-`main` branches run **Branch CI**. Pull requests to `main` and pushes/merges to `main` run **PR / Main CI**. Java CI executes `./mvnw clean test` from `Server/drive`. The **Go tests** job runs `go vet` / `go test` in `worker/` and `scheduler/`. A **Web** job runs `npm ci`, Vitest, and the Vite production build in `web/`. A **Compose config** job runs `docker compose config`. The existing required-check names **Java tests** and **Go tests** are unchanged.
 
 These workflows are a **build/test gate**. They do not deploy anything. Deployment will be designed later.
 
@@ -1744,4 +1817,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next **product** milestone is a live Job view (polling or later SSE) on top of this timeline API, a hardened production secret/TLS story, or cloud-hosted deploy. This phase is local Compose only — not Kubernetes, Terraform, or a registry publish. A scheduling benchmark harness, SJF, EDF, runtime estimation, alerting, and SLO frameworks remain later still.
+The smallest next **product** milestone is first-class media ingest (upload or a MediaAsset flow) so operators do not have to pre-place `s3://media-input/...` objects. A hardened production secret/TLS story or cloud-hosted deploy can follow. This phase is local Compose only — not Kubernetes, Terraform, or a registry publish. A scheduling benchmark harness, SJF, EDF, runtime estimation, alerting, and SLO frameworks remain later still.
