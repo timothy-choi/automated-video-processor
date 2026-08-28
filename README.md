@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 5G**: the platform runs as one Compose stack (control service, scheduler, workers, PostgreSQL, RabbitMQ, MinIO, HTTPS ingress). User-facing APIs require an Account API key with ownership isolation. Scheduler/worker calls to `/internal/**` use separate internal service credentials. Users can list owned Jobs and request a **time-limited HTTP URL** for an owned Artifact. They can cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, adaptive scoring, Kubernetes, and cloud-provider deploy are not implemented.
+This repository is currently at **Phase 6A**: the Compose product from Phase 5G plus operator observability (OpenTelemetry traces/metrics, Collector, Jaeger, Prometheus, Grafana). User-facing APIs require an Account API key with ownership isolation. Scheduler/worker calls to `/internal/**` use separate internal service credentials. Users can list owned Jobs and request a **time-limited HTTP URL** for an owned Artifact. They can cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, adaptive scoring, Kubernetes, cloud-provider deploy, and a user-facing Job timeline API are not implemented.
 
-## Current status: Phase 5G — Production-Style Deployment, Ingress, TLS, and One-Command Startup
+## Current status: Phase 6A — Operational Observability
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -33,6 +33,13 @@ contracts/operation-assignment.v1.schema.json   (legacy shared-queue path)
 contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rejected at runtime)
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
+
+Phase 6A currently:
+
+- includes everything from Phase 5G (Compose, HTTPS ingress, API-key auth, internal service auth, cancel/retry, five media operations)
+- exports OpenTelemetry traces and metrics from the control service, scheduler, and workers over OTLP
+- runs a local Collector that writes traces to Jaeger and metrics to Prometheus (Grafana optional dashboards)
+- keeps media processing running if the telemetry backend is down
 
 Phase 5G currently:
 
@@ -112,6 +119,18 @@ Least Loaded is a baseline that reacts to current executing work. It is not a th
                      \               /
                       \             /
                          MinIO/S3
+
+Java / Scheduler / Worker
+          |
+         OTLP
+          v
+ OpenTelemetry Collector
+      /            \
+     v              v
+  Jaeger        Prometheus
+                    |
+                    v
+                 Grafana
 ```
 
 ```text
@@ -163,7 +182,7 @@ Go Scheduler (placement authority)
   +--> snapshot --> FIFO operation --> LEXICOGRAPHIC / ROUND_ROBIN / LEAST_LOADED worker --> assign
 ```
 
-Stack: **Java 21**, **Spring Boot 4.1.1**, **Maven**, **PostgreSQL**, **Flyway**, **Spring Data JPA**, **Spring AMQP**, **Go**, **amqp091-go**, **ffprobe/FFmpeg**, **MinIO**, **RabbitMQ**. The Maven `artifactId` remains `drive`.
+Stack: **Java 21**, **Spring Boot 4.1.1**, **Maven**, **PostgreSQL**, **Flyway**, **Spring Data JPA**, **Spring AMQP**, **Go**, **amqp091-go**, **ffprobe/FFmpeg**, **MinIO**, **RabbitMQ**, **OpenTelemetry**, **Jaeger**, **Prometheus**, **Grafana**. The Maven `artifactId` remains `drive`.
 
 ## Build
 
@@ -238,6 +257,108 @@ curl -k -sS \
 ```
 
 HTTP on port 80 redirects to HTTPS. The authenticated product API is not served as public plaintext HTTP.
+
+## Observability
+
+Operator traces and metrics explain where a Job spent time:
+
+```text
+submission → persistence → scheduling → assignment → queue wait
+→ worker start → FFmpeg/ffprobe → object storage → completion
+```
+
+This is not a user-facing timeline API. Jaeger, Prometheus, and Grafana are **local operator tools**. They are bound to localhost and are **not** exposed through Caddy.
+
+```text
+Java / scheduler / worker
+        ↓ OTLP
+OpenTelemetry Collector
+        ├── traces → Jaeger   (http://127.0.0.1:16686)
+        └── metrics → Prometheus (http://127.0.0.1:9090)
+                          ↓
+                       Grafana (http://127.0.0.1:3000)
+```
+
+Grafana anonymous Viewer is enabled for local use (`admin`/`admin` if you sign in). Do not publish these ports.
+
+### Starting the stack
+
+`docker compose up --build` starts the product and the observability backends. Product processing does **not** wait on Collector health. If Collector/Jaeger/Prometheus are down, Jobs still complete.
+
+### How to find a slow Job
+
+1. Note the Job id from `POST /jobs` / `GET /jobs/{id}`.
+2. Open Jaeger, service `media-control-service`, search tags `media.job.id=<id>`.
+3. Follow the trace across `media-scheduler`, `rabbitmq.publish`, `media-worker`, FFmpeg, object storage, and complete/fail.
+4. Public HTTP responses also include a `traceparent` header (W3C). The trace id is the 32-hex middle field.
+
+The original `POST /jobs` trace is stored on the Job (not in the assignment JSON). The internal scheduler snapshot includes that W3C context so later placement continues the same trace. Heartbeats, lease renewals, idle snapshots, and empty outbox polls are not traced.
+
+Queue wait is **assignedAt − queuedAt** (persisted). Assignment wait is **startedAt − assignedAt**. Job end-to-end latency is **terminal time − Job.createdAt** (Job has no dedicated completedAt; use `updatedAt` at the terminal transition, or the root span duration). Runtime in the API remains `actualRuntimeMs` / attempt timestamps; OTel does not replace those fields.
+
+### Important metrics
+
+| Metric | Meaning |
+| --- | --- |
+| `media_jobs_submitted_total` / `_completed_total` / `_failed_total` / `_cancelled_total` | Job lifecycle |
+| `media_operations_completed_total{type}` / `_failed_total{type}` | Operation outcomes |
+| `media_operation_runtime_seconds{type}` | Histogram from persisted `actualRuntimeMs` (control service) and live worker duration |
+| `media_operation_queue_wait_seconds{type}` | `assignedAt - queuedAt` |
+| `media_operation_assignment_wait_seconds{type}` | start − `assignedAt` |
+| `media_worker_available` / `media_worker_running_operations` | Per-worker process gauges |
+| `media_scheduler_decisions_total{worker_policy}` | Successful placements |
+
+Labels are bounded (`type`, `worker_policy`). Job/operation/worker ids belong in traces and logs, not metric labels.
+
+### Configuration
+
+Standard-ish env vars:
+
+```text
+OTEL_EXPORTER_OTLP_ENDPOINT   base URL, no path: http://otel-collector:4318 (Compose) or http://localhost:4318
+OTEL_EXPORTER_OTLP_PROTOCOL   http/protobuf (Collector HTTP on 4318)
+OTEL_SERVICE_NAME             media-control-service | media-scheduler | media-worker
+OTEL_TRACES_SAMPLER           parentbased_traceidratio | always_on | always_off | traceidratio
+OTEL_TRACES_SAMPLER_ARG       1.0 locally; lower in production-style deploys
+OTEL_TRACES_ENABLED           true/false
+OTEL_METRICS_ENABLED          true/false
+OTEL_SDK_DISABLED             true disables the Go SDK
+```
+
+Local Compose samples 100%. Heartbeats, lease renewals, idle scheduler snapshots, and empty outbox polls are not traced.
+
+### Security / privacy
+
+Traces and metrics must not include API keys, scheduler/worker tokens, worker pepper, `Authorization`, secret access keys, or presigned URL query strings. Input URIs are not recorded as span attributes. Observability UIs are not Account-authenticated in this phase.
+
+Actuator Prometheus is **not** exposed. Metrics leave via OTLP. `/actuator/**` is not a public ingress route.
+
+### Trace example
+
+A completed METADATA Job typically shows:
+
+```text
+POST /jobs                    media-control-service
+  job.persist
+scheduler.snapshot            media-scheduler
+scheduler.select_operation
+scheduler.select_worker
+scheduler.assign
+  POST /internal/scheduler/assign   media-control-service
+    scheduler.assign
+    rabbitmq.publish
+worker.consume                media-worker
+  operation.start
+  media.execute
+    ffprobe.metadata
+    objectstore.download   (s3 inputs)
+  operation.complete          media-control-service
+```
+
+### What this phase does not add
+
+No Loki/ELK, alerting, SLO framework, service mesh, or user-facing performance analysis API.
+
 
 ### Submit a job, download an artifact
 
@@ -1434,7 +1555,7 @@ Thumbnail object keys stay `s3://media-output/jobs/<jobId>/operations/<operation
 - FIFO ignores persisted priority and deadline
 - no runtime estimator, queue-wait prediction, or utilization telemetry
 - no CPU/memory scoring even though static cores/memory are registered
-- no OpenTelemetry / Prometheus / Grafana / Jaeger
+- operator OpenTelemetry (Jaeger/Prometheus/Grafana) is in Phase 6A; there is no user-facing Job timeline API yet
 - no benchmark framework
 - worker queues are not deleted when a worker becomes `UNAVAILABLE`
 - the legacy Java enqueue path remains for tests (`drive.dispatch.scheduling-enabled`); keep it off in production
@@ -1506,4 +1627,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next **product** milestone is a hardened production secret/TLS story (public CA or operator-supplied certs, not Caddy `tls internal`) or a cloud-hosted deploy. This phase is local Compose only — not Kubernetes, Terraform, or a registry publish. A scheduling benchmark harness, SJF, EDF, runtime estimation, richer utilization telemetry, and OpenTelemetry remain later still.
+The smallest next **product** milestone is a user-facing Job timeline (from persisted timestamps plus traces), a hardened production secret/TLS story, or cloud-hosted deploy. This phase is local Compose only — not Kubernetes, Terraform, or a registry publish. A scheduling benchmark harness, SJF, EDF, runtime estimation, alerting, and SLO frameworks remain later still.

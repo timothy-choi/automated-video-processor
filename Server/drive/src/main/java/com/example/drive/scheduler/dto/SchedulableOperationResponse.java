@@ -13,7 +13,9 @@ public record SchedulableOperationResponse(
 		String inputUri,
 		Instant createdAt,
 		Instant queuedAt,
-		int operationOrder
+		int operationOrder,
+		String traceparent,
+		String tracestate
 ) {
 	public static SchedulableOperationResponse from(Operation operation) {
 		return new SchedulableOperationResponse(
@@ -23,7 +25,9 @@ public record SchedulableOperationResponse(
 				operation.getJob().getInputUri(),
 				operation.getCreatedAt(),
 				operation.getQueuedAt(),
-				operation.getOperationOrder()
+				operation.getOperationOrder(),
+				operation.getJob().getTraceparent(),
+				operation.getJob().getTracestate()
 		);
 	}
 }

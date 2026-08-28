@@ -28,7 +28,7 @@ class ObjectStoreConfiguration {
 
 	@Bean
 	@ConditionalOnMissingBean(ObjectStoreAccess.class)
-	ObjectStoreAccess objectStoreAccess(ObjectStoreProperties properties, Clock clock) {
+	ObjectStoreAccess objectStoreAccess(ObjectStoreProperties properties, Clock clock, io.opentelemetry.api.trace.Tracer tracer) {
 		URI internalEndpoint = URI.create(properties.getEndpoint());
 		URI presignEndpoint = URI.create(properties.getPresignEndpoint());
 		StaticCredentialsProvider credentials = StaticCredentialsProvider.create(
@@ -55,7 +55,7 @@ class ObjectStoreConfiguration {
 				properties.getEndpoint(),
 				properties.getPresignEndpoint()
 		);
-		return new S3ObjectStoreAccess(s3Client, s3Presigner, clock);
+		return new S3ObjectStoreAccess(s3Client, s3Presigner, clock, tracer);
 	}
 
 	@PreDestroy

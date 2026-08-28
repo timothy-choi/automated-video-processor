@@ -29,6 +29,15 @@ import com.example.drive.job.repository.ExecutionAttemptRepository;
 import com.example.drive.job.repository.JobIdCount;
 import com.example.drive.job.repository.JobRepository;
 import com.example.drive.job.repository.OperationRepository;
+import com.example.drive.observability.LogCorrelation;
+import com.example.drive.observability.MediaAttributes;
+import com.example.drive.observability.MediaMetrics;
+import com.example.drive.observability.MediaSpans;
+import com.example.drive.observability.TracePropagation;
+
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Scope;
 
 @Service
 public class JobService {
@@ -38,19 +47,25 @@ public class JobService {
 	private final ArtifactRepository artifactRepository;
 	private final ExecutionAttemptRepository attemptRepository;
 	private final Clock clock;
+	private final MediaMetrics mediaMetrics;
+	private final Tracer tracer;
 
 	public JobService(
 			JobRepository jobRepository,
 			OperationRepository operationRepository,
 			ArtifactRepository artifactRepository,
 			ExecutionAttemptRepository attemptRepository,
-			Clock clock
+			Clock clock,
+			MediaMetrics mediaMetrics,
+			Tracer tracer
 	) {
 		this.jobRepository = jobRepository;
 		this.operationRepository = operationRepository;
 		this.artifactRepository = artifactRepository;
 		this.attemptRepository = attemptRepository;
 		this.clock = clock;
+		this.mediaMetrics = mediaMetrics;
+		this.tracer = tracer;
 	}
 
 	@Transactional
@@ -67,6 +82,8 @@ public class JobService {
 				request.deadline(),
 				now
 		);
+		TracePropagation.Captured captured = TracePropagation.capture();
+		job.attachTrace(captured.traceparent(), captured.tracestate());
 
 		int order = 0;
 		for (CreateOperationRequest operationRequest : request.operations()) {
@@ -74,8 +91,25 @@ public class JobService {
 			order++;
 		}
 
-		Job saved = jobRepository.save(job);
-		return JobResponse.from(saved, 0L);
+		Span span = MediaSpans.start(tracer, MediaSpans.JOB_PERSIST);
+		try (Scope ignored = span.makeCurrent()) {
+			Job saved = jobRepository.save(job);
+			MediaSpans.set(span, MediaAttributes.JOB_ID, saved.getId().toString());
+			MediaSpans.set(span, MediaAttributes.ACCOUNT_ID, accountId.toString());
+			MediaSpans.set(span, MediaAttributes.JOB_PRIORITY, saved.getPriority().name());
+			MediaSpans.set(span, MediaAttributes.OPERATION_COUNT, (long) saved.getOperations().size());
+			try (LogCorrelation correlation = LogCorrelation.open(saved.getId(), null, null, null)) {
+				mediaMetrics.jobSubmitted();
+			}
+			return JobResponse.from(saved, 0L);
+		}
+		catch (RuntimeException ex) {
+			MediaSpans.recordError(span, ex);
+			throw ex;
+		}
+		finally {
+			span.end();
+		}
 	}
 
 	@Transactional(readOnly = true)

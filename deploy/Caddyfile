@@ -8,7 +8,12 @@ localhost, 127.0.0.1 {
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
 	}
-	reverse_proxy control-service:8080
+	handle /actuator* {
+		respond "Not found" 404
+	}
+	handle {
+		reverse_proxy control-service:8080
+	}
 }
 
 http://localhost, http://127.0.0.1 {

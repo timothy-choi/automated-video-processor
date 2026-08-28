@@ -10,6 +10,8 @@ type Operation struct {
 	CreatedAt      time.Time `json:"createdAt"`
 	QueuedAt       time.Time `json:"queuedAt"`
 	OperationOrder int       `json:"operationOrder"`
+	Traceparent    string    `json:"traceparent,omitempty"`
+	Tracestate     string    `json:"tracestate,omitempty"`
 }
 
 type Worker struct {

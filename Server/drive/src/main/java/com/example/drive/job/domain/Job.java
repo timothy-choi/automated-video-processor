@@ -47,6 +47,12 @@ public class Job {
 	@Column(name = "updated_at", nullable = false)
 	private Instant updatedAt;
 
+	@Column(name = "traceparent", length = 128)
+	private String traceparent;
+
+	@Column(name = "tracestate", length = 512)
+	private String tracestate;
+
 	@OneToMany(mappedBy = "job", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
 	@OrderBy("operationOrder ASC")
 	private List<Operation> operations = new ArrayList<>();
@@ -100,6 +106,22 @@ public class Job {
 
 	public Instant getUpdatedAt() {
 		return updatedAt;
+	}
+
+	public String getTraceparent() {
+		return traceparent;
+	}
+
+	public String getTracestate() {
+		return tracestate;
+	}
+
+	public void attachTrace(String traceparent, String tracestate) {
+		if (traceparent == null || traceparent.isBlank()) {
+			return;
+		}
+		this.traceparent = traceparent;
+		this.tracestate = tracestate;
 	}
 
 	public List<Operation> getOperations() {

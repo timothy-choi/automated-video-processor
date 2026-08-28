@@ -11,8 +11,10 @@ import (
 
 	"github.com/timothy-choi/automated-video-processor/worker/internal/auth"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/capability"
+	"github.com/timothy-choi/automated-video-processor/worker/internal/otelx"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/storage"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/worker"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 func main() {
@@ -57,6 +59,21 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTelemetry, err := otelx.Setup(context.Background(), otelx.Config{
+		ServiceName: "media-worker",
+		Attributes:  []attribute.KeyValue{attribute.String("worker.id", workerID)},
+	})
+	if err != nil {
+		log.Printf("event=otel_setup_failed err=%v", err)
+	}
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if shutdownTelemetry != nil {
+			_ = shutdownTelemetry(flushCtx)
+		}
+	}()
 
 	store, err := storage.NewS3Store(ctx, cfg.ObjectStore)
 	if err != nil {

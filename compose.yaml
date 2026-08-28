@@ -1,3 +1,10 @@
+x-otel-env: &otel-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+  OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
+  OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+
 x-worker-env: &worker-env
   CONTROL_SERVICE_URL: http://control-service:8080
   RABBITMQ_URL: amqp://${RABBITMQ_USERNAME:-media_platform}:${RABBITMQ_PASSWORD:-media_platform}@rabbitmq:5672/
@@ -10,6 +17,8 @@ x-worker-env: &worker-env
   HEARTBEAT_INTERVAL: 5s
   LEASE_RENEW_INTERVAL: 10s
   PREFETCH: "1"
+  <<: *otel-env
+  OTEL_SERVICE_NAME: media-worker
 
 x-worker: &worker
   build:
@@ -118,6 +127,9 @@ services:
       MEDIA_PLATFORM_BOOTSTRAP_API_KEY: ${MEDIA_PLATFORM_BOOTSTRAP_API_KEY:-}
       ACCOUNT_REGISTRATION_ENABLED: ${ACCOUNT_REGISTRATION_ENABLED:-false}
       ARTIFACT_URL_TTL: ${ARTIFACT_URL_TTL:-15m}
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: logstash
+      OTEL_SERVICE_NAME: media-control-service
+      <<: *otel-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -144,6 +156,8 @@ services:
       SCHEDULER_POLL_INTERVAL: ${SCHEDULER_POLL_INTERVAL:-500ms}
       OPERATION_POLICY: FIFO
       WORKER_PLACEMENT_POLICY: ${WORKER_PLACEMENT_POLICY:-LEAST_LOADED}
+      OTEL_SERVICE_NAME: media-scheduler
+      <<: *otel-env
     depends_on:
       control-service:
         condition: service_healthy
@@ -157,6 +171,7 @@ services:
       WORKER_ID: worker-a
       WORKER_HOSTNAME: worker-a
       WORKER_SERVICE_TOKEN: ${WORKER_A_TOKEN:?run scripts/setup-local-env.sh}
+      OTEL_RESOURCE_ATTRIBUTES: worker.id=worker-a
 
   worker-b:
     <<: *worker
@@ -165,6 +180,7 @@ services:
       WORKER_ID: worker-b
       WORKER_HOSTNAME: worker-b
       WORKER_SERVICE_TOKEN: ${WORKER_B_TOKEN:?run scripts/setup-local-env.sh}
+      OTEL_RESOURCE_ATTRIBUTES: worker.id=worker-b
 
   ingress:
     image: caddy:2-alpine
@@ -178,6 +194,55 @@ services:
     depends_on:
       control-service:
         condition: service_healthy
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.122.1
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./deploy/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "127.0.0.1:4318:4318"
+    depends_on:
+      - jaeger
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.68.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "127.0.0.1:${JAEGER_UI_PORT:-16686}:16686"
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: light
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/media-platform.json
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
     restart: unless-stopped
 
 volumes:

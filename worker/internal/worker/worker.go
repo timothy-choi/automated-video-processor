@@ -14,6 +14,7 @@ import (
 	"github.com/timothy-choi/automated-video-processor/worker/internal/consumer"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/lease"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/model"
+	"github.com/timothy-choi/automated-video-processor/worker/internal/otelx"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/run"
 	"github.com/timothy-choi/automated-video-processor/worker/internal/storage"
 )
@@ -61,7 +62,7 @@ func New(cfg Config, store storage.ObjectStore) *Worker {
 	w := &Worker{
 		cfg:    cfg,
 		client: client.New(cfg.ControlServiceURL, 30*time.Second, cfg.ServiceToken),
-		deps:   run.DefaultDeps(store, cfg.OutputBucket, cfg.FfprobePath, cfg.FfmpegPath),
+		deps:   run.DefaultDeps(storage.Traced(store), cfg.OutputBucket, cfg.FfprobePath, cfg.FfmpegPath),
 	}
 	w.detect = func(ctx context.Context) (capability.Snapshot, error) {
 		return capability.Detect(ctx, capability.Probe{
@@ -129,6 +130,8 @@ func (w *Worker) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	otelx.SetAvailable(1)
+	defer otelx.SetAvailable(0)
 	log.Printf(
 		"worker_id=%s hostname=%s cpu_arch=%s cpu_cores=%d memory_bytes=%d ffmpeg_version=%s supported_operations=%s supported_codecs=%s status=%s event=registered",
 		req.WorkerID,
