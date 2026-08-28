@@ -10,6 +10,7 @@ import com.example.drive.dispatch.DispatchProperties;
 import com.example.drive.job.OperationAssignmentProperties;
 import com.example.drive.job.OperationLeaseProperties;
 import com.example.drive.security.InternalAuthProperties;
+import com.example.drive.media.MediaUploadProperties;
 import com.example.drive.storage.ArtifactAccessProperties;
 import com.example.drive.storage.ObjectStoreProperties;
 import com.example.drive.worker.WorkerHeartbeatProperties;
@@ -24,7 +25,8 @@ import com.example.drive.worker.WorkerHeartbeatProperties;
 		OperationLeaseProperties.class,
 		OperationAssignmentProperties.class,
 		ObjectStoreProperties.class,
-		ArtifactAccessProperties.class
+		ArtifactAccessProperties.class,
+		MediaUploadProperties.class
 })
 public class DriveApplication {
 

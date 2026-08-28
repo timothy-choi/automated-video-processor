@@ -17,6 +17,10 @@ public final class MediaSpans {
 	public static final String OPERATION_CANCELLED = "operation.cancelled";
 	public static final String OBJECTSTORE_HEAD = "objectstore.head";
 	public static final String OBJECTSTORE_PRESIGN = "objectstore.presign";
+	public static final String OBJECTSTORE_DELETE = "objectstore.delete";
+	public static final String MEDIA_ASSET_CREATE = "media_asset.create";
+	public static final String MEDIA_ASSET_PRESIGN_UPLOAD = "media_asset.presign_upload";
+	public static final String MEDIA_ASSET_COMPLETE = "media_asset.complete";
 
 	private MediaSpans() {
 	}

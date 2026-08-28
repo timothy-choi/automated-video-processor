@@ -179,7 +179,7 @@ class JobApiIntegrationTest extends AuthenticatedApiTest {
 								}
 								"""))
 				.andExpect(status().isBadRequest())
-				.andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+				.andExpect(jsonPath("$.code").value("JOB_SOURCE_REQUIRED"));
 	}
 
 	@Test
@@ -252,6 +252,21 @@ class JobApiIntegrationTest extends AuthenticatedApiTest {
 								"""))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("DEADLINE_IN_THE_PAST"));
+	}
+
+	@Test
+	void bothInputUriAndMediaAssetIdReturns400() throws Exception {
+		mockMvc.perform(authed(post("/jobs"))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{
+								  "inputUri": "s3://media-input/video.mp4",
+								  "mediaAssetId": "00000000-0000-0000-0000-000000000099",
+								  "operations": [{"type": "THUMBNAIL"}]
+								}
+								"""))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("JOB_SOURCE_CONFLICT"));
 	}
 
 	@Test

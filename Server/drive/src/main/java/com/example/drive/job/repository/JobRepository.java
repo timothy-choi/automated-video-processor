@@ -19,4 +19,6 @@ public interface JobRepository extends JpaRepository<Job, UUID>, JpaSpecificatio
 	Optional<Job> findByIdAndAccountIdWithOperations(@Param("id") UUID id, @Param("accountId") UUID accountId);
 
 	boolean existsByIdAndAccountId(UUID id, UUID accountId);
+
+	boolean existsByMediaAssetId(UUID mediaAssetId);
 }

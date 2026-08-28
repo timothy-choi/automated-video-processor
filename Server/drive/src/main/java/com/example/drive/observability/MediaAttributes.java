@@ -17,6 +17,8 @@ public final class MediaAttributes {
 	public static final AttributeKey<Long> ACTIVE_OPERATIONS = AttributeKey.longKey("media.scheduler.active_operations");
 	public static final AttributeKey<String> OBJECT_BUCKET = AttributeKey.stringKey("media.objectstore.bucket");
 	public static final AttributeKey<String> OBJECT_OPERATION = AttributeKey.stringKey("media.objectstore.operation");
+	public static final AttributeKey<String> MEDIA_ASSET_ID = AttributeKey.stringKey("media.asset.id");
+	public static final AttributeKey<String> MEDIA_ASSET_STATUS = AttributeKey.stringKey("media.asset.status");
 	public static final AttributeKey<Boolean> OPERATION_CANCELLED = AttributeKey.booleanKey("operation.cancelled");
 
 	private MediaAttributes() {

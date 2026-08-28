@@ -3,14 +3,20 @@ import type {
   ArtifactDownloadResponse,
   AttemptResponse,
   CreateJobRequest,
+  CreateMediaAssetRequest,
+  CreateMediaAssetResponse,
   JobArtifactsResponse,
   JobListResponse,
   JobResponse,
   JobTimelineResponse,
+  MediaAssetListResponse,
+  MediaAssetResponse,
+  MediaAssetStatus,
   OperationAttemptsResponse,
   OperationType,
   JobPriority,
   JobStatus,
+  UploadUrlResponse,
 } from "./types";
 
 export class ApiClientError extends Error {
@@ -38,6 +44,9 @@ function messageForStatus(status: number, body: ApiErrorBody | null): string {
     return body?.message || "You are not allowed to perform this action.";
   }
   if (status === 404) {
+    if (body?.code === "MEDIA_ASSET_NOT_FOUND") {
+      return body.message || "Media asset not found.";
+    }
     return body?.code === "JOB_NOT_FOUND" || !body?.message ? "Job not found." : body.message;
   }
   if (status === 409) {
@@ -153,6 +162,32 @@ export function createApiClient(auth: AuthBridge) {
 
     createJob(body: CreateJobRequest): Promise<JobResponse> {
       return request("/jobs", { method: "POST", body: JSON.stringify(body) });
+    },
+
+    listMediaAssets(query: {
+      page?: number;
+      size?: number;
+      status?: MediaAssetStatus | "";
+    } = {}): Promise<MediaAssetListResponse> {
+      const params = new URLSearchParams();
+      params.set("page", String(query.page ?? 0));
+      params.set("size", String(query.size ?? 20));
+      if (query.status) {
+        params.set("status", query.status);
+      }
+      return request(`/media-assets?${params.toString()}`);
+    },
+
+    createMediaAsset(body: CreateMediaAssetRequest): Promise<CreateMediaAssetResponse> {
+      return request("/media-assets", { method: "POST", body: JSON.stringify(body) });
+    },
+
+    completeMediaAsset(id: string): Promise<MediaAssetResponse> {
+      return request(`/media-assets/${id}/complete`, { method: "POST" });
+    },
+
+    createMediaUploadUrl(id: string): Promise<UploadUrlResponse> {
+      return request(`/media-assets/${id}/upload-url`, { method: "POST" });
     },
 
     async loadAttemptsForOperations(

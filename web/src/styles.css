@@ -320,13 +320,20 @@ table.jobs a:hover { text-decoration: underline; }
   background: #fff;
   border-radius: 12px;
   padding: 20px;
-  max-width: 520px;
+  max-width: 560px;
   width: 100%;
+  max-height: 90vh;
+  overflow: auto;
 }
 .ops-picker {
   display: grid;
   gap: 6px;
   margin: 12px 0;
+}
+
+.upload-progress {
+  width: 100%;
+  margin: 0 0 12px;
 }
 
 .empty {

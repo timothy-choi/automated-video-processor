@@ -9,10 +9,13 @@ import com.example.drive.job.domain.Job;
 import com.example.drive.job.domain.JobPriority;
 import com.example.drive.job.domain.JobStatus;
 import com.example.drive.job.domain.Operation;
+import com.fasterxml.jackson.annotation.JsonInclude;
 
 public record JobResponse(
 		UUID id,
 		String inputUri,
+		@JsonInclude(JsonInclude.Include.NON_NULL)
+		UUID mediaAssetId,
 		JobStatus status,
 		JobPriority priority,
 		Instant deadline,
@@ -34,6 +37,7 @@ public record JobResponse(
 		return new JobResponse(
 				job.getId(),
 				job.getInputUri(),
+				job.getMediaAssetId(),
 				job.getStatus(),
 				job.getPriority(),
 				job.getDeadline(),

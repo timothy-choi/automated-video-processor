@@ -60,7 +60,10 @@ export function formatBytes(bytes: number | undefined | null): string {
   if (bytes < 1024 * 1024) {
     return `${(bytes / 1024).toFixed(1).replace(/\.0$/, "")} KB`;
   }
-  return `${(bytes / (1024 * 1024)).toFixed(1).replace(/\.0$/, "")} MB`;
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1).replace(/\.0$/, "")} MB`;
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1).replace(/\.0$/, "")} GB`;
 }
 
 export function shortId(id: string): string {

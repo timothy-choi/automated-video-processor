@@ -30,6 +30,9 @@ public class Job {
 	@Column(name = "input_uri", nullable = false)
 	private String inputUri;
 
+	@Column(name = "media_asset_id")
+	private UUID mediaAssetId;
+
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false, length = 32)
 	private JobStatus status;
@@ -61,9 +64,22 @@ public class Job {
 	}
 
 	public Job(UUID id, UUID accountId, String inputUri, JobPriority priority, Instant deadline, Instant now) {
+		this(id, accountId, inputUri, priority, deadline, now, null);
+	}
+
+	public Job(
+			UUID id,
+			UUID accountId,
+			String inputUri,
+			JobPriority priority,
+			Instant deadline,
+			Instant now,
+			UUID mediaAssetId
+	) {
 		this.id = id;
 		this.accountId = accountId;
 		this.inputUri = inputUri;
+		this.mediaAssetId = mediaAssetId;
 		this.status = JobStatus.QUEUED;
 		this.priority = priority;
 		this.deadline = deadline;
@@ -86,6 +102,10 @@ public class Job {
 
 	public String getInputUri() {
 		return inputUri;
+	}
+
+	public UUID getMediaAssetId() {
+		return mediaAssetId;
 	}
 
 	public JobStatus getStatus() {

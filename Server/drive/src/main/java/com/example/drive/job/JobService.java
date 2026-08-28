@@ -29,6 +29,7 @@ import com.example.drive.job.repository.ExecutionAttemptRepository;
 import com.example.drive.job.repository.JobIdCount;
 import com.example.drive.job.repository.JobRepository;
 import com.example.drive.job.repository.OperationRepository;
+import com.example.drive.media.MediaAssetService;
 import com.example.drive.observability.LogCorrelation;
 import com.example.drive.observability.MediaAttributes;
 import com.example.drive.observability.MediaMetrics;
@@ -46,6 +47,7 @@ public class JobService {
 	private final OperationRepository operationRepository;
 	private final ArtifactRepository artifactRepository;
 	private final ExecutionAttemptRepository attemptRepository;
+	private final MediaAssetService mediaAssetService;
 	private final Clock clock;
 	private final MediaMetrics mediaMetrics;
 	private final Tracer tracer;
@@ -55,6 +57,7 @@ public class JobService {
 			OperationRepository operationRepository,
 			ArtifactRepository artifactRepository,
 			ExecutionAttemptRepository attemptRepository,
+			MediaAssetService mediaAssetService,
 			Clock clock,
 			MediaMetrics mediaMetrics,
 			Tracer tracer
@@ -63,6 +66,7 @@ public class JobService {
 		this.operationRepository = operationRepository;
 		this.artifactRepository = artifactRepository;
 		this.attemptRepository = attemptRepository;
+		this.mediaAssetService = mediaAssetService;
 		this.clock = clock;
 		this.mediaMetrics = mediaMetrics;
 		this.tracer = tracer;
@@ -71,16 +75,17 @@ public class JobService {
 	@Transactional
 	public JobResponse createJob(CreateJobRequest request, UUID accountId) {
 		Instant now = clock.instant();
-		String inputUri = validateInputUri(request.inputUri());
+		ResolvedSource source = resolveSource(request, accountId);
 		validateDeadline(request.deadline(), now);
 
 		Job job = new Job(
 				UUID.randomUUID(),
 				accountId,
-				inputUri,
+				source.inputUri(),
 				request.priorityOrDefault(),
 				request.deadline(),
-				now
+				now,
+				source.mediaAssetId()
 		);
 		TracePropagation.Captured captured = TracePropagation.capture();
 		job.attachTrace(captured.traceparent(), captured.tracestate());
@@ -196,6 +201,31 @@ public class JobService {
 			counts.put(row.getJobId(), row.getCount());
 		}
 		return counts;
+	}
+
+	private ResolvedSource resolveSource(CreateJobRequest request, UUID accountId) {
+		boolean hasAsset = request.mediaAssetId() != null;
+		boolean hasUri = request.inputUri() != null && !request.inputUri().isBlank();
+		if (hasAsset && hasUri) {
+			throw new InvalidJobRequestException(
+					"JOB_SOURCE_CONFLICT",
+					"Provide exactly one of mediaAssetId or inputUri"
+			);
+		}
+		if (!hasAsset && !hasUri) {
+			throw new InvalidJobRequestException(
+					"JOB_SOURCE_REQUIRED",
+					"Provide exactly one of mediaAssetId or inputUri"
+			);
+		}
+		if (hasAsset) {
+			String objectUri = mediaAssetService.requireReadyObjectUri(accountId, request.mediaAssetId());
+			return new ResolvedSource(objectUri, request.mediaAssetId());
+		}
+		return new ResolvedSource(validateInputUri(request.inputUri()), null);
+	}
+
+	private record ResolvedSource(String inputUri, UUID mediaAssetId) {
 	}
 
 	private String validateInputUri(String rawInputUri) {

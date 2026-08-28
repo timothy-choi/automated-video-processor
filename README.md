@@ -4,9 +4,9 @@ This repository is evolving from the original **Automated Video Processor** into
 
 **Adaptive Distributed Media Processing Platform** — a distributed system that will eventually schedule heterogeneous media-processing jobs across workers based on workload characteristics, worker resources, load, priority, and deadlines.
 
-This repository is currently at **Phase 6C**: the Compose product from Phase 5G, operator observability from Phase 6A, the Job timeline API from Phase 6B, plus a small browser console so reviewers can operate Jobs without curl. User-facing APIs require an Account API key with ownership isolation. Scheduler/worker calls to `/internal/**` use separate internal service credentials. Users can list owned Jobs, inspect a chronological timeline of what happened, and request a **time-limited HTTP URL** for an owned Artifact. They can cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, adaptive scoring, Kubernetes, and cloud-provider deploy are not implemented.
+This repository is currently at **Phase 6D**: first-class Account-owned media ingest on top of the Compose product. Reviewers upload a local file in the web console; the browser PUTs bytes directly to object storage; Java only presigns and verifies. User-facing APIs require an Account API key with ownership isolation. Scheduler/worker calls to `/internal/**` use separate internal service credentials. Users can list owned Jobs, inspect a chronological timeline of what happened, and request a **time-limited HTTP URL** for an owned Artifact. They can cancel work and explicitly retry **FAILED** operations. FIFO still chooses the next operation. Worker placement can be lexicographic, Round Robin, or Least Loaded. Executable operations are **METADATA**, **THUMBNAIL**, **AUDIO_EXTRACTION**, **TRANSCODE_1080P**, and **H264_TO_AV1**. `TRANSCODE_4K_TO_1080P` is retired. SJF, EDF, adaptive scoring, Kubernetes, and cloud-provider deploy are not implemented.
 
-## Current status: Phase 6C — Minimal Web Console
+## Current status: Phase 6D — First-Class Media Ingestion
 
 The canonical Java application is the Maven/Spring Boot project at:
 
@@ -34,12 +34,22 @@ contracts/operation-assignment.v2.schema.json   (obsolete targeted envelope; rej
 contracts/operation-assignment.v3.schema.json   (current targeted placement + assignmentId)
 ```
 
+Phase 6D currently:
+
+- includes everything from Phase 6C
+- adds an Account-owned **MediaAsset** (`PENDING_UPLOAD` → `READY`) persisted in PostgreSQL
+- lets the browser upload media with a **presigned PUT** to HTTPS object storage (bytes do **not** pass through Java or Caddy API routes)
+- verifies the object with a server-side HEAD before marking READY
+- creates Jobs from `mediaAssetId` (canonical `s3://media-input/...` is resolved internally for workers)
+- keeps raw `inputUri` Job create as an advanced/self-hosted path
+- does **not** add multipart/resumable upload, DAM folders/tags/sharing, checksum dedup, or a new media operation
+
 Phase 6C currently:
 
 - includes everything from Phase 6B
 - serves a React + TypeScript console from Caddy at `https://localhost` (same HTTPS origin as the API)
-- lets a reviewer paste an Account API key (memory-only; refresh clears it), list Jobs, open a Job, watch live status by polling, read the timeline, retry FAILED operations, cancel a Job, and download artifacts via the existing presigned-URL API
-- does **not** add username/password, OAuth, browser sessions on Java, SSE/WebSockets, or a media upload path
+- lets a reviewer paste an Account API key (memory-only; refresh clears it), **upload local media**, list Jobs, open a Job, watch live status by polling, read the timeline, retry FAILED operations, cancel a Job, and download artifacts via the existing presigned-URL API
+- does **not** add username/password, OAuth, browser sessions on Java, SSE/WebSockets, multipart/resumable upload, or asset sharing
 
 Phase 6B currently:
 
@@ -116,13 +126,12 @@ Least Loaded is a baseline that reacts to current executing work. It is not a th
 ```text
                          Browser
                            |
-                         HTTPS
-                           |
+                           | HTTPS (console + API)
                            v
                     Caddy ingress
                    /            \
                   /              \
-         React static         /api (and /jobs, /health, …)
+         React static         /api (and /jobs, /media-assets, /health, …)
            console                    |
                                       v
                              Java Control Plane
@@ -137,6 +146,9 @@ Least Loaded is a baseline that reacts to current executing work. It is not a th
                                \               /
                                 \             /
                                    MinIO/S3
+
+Browser -- HTTPS presigned PUT/GET --> Caddy :9443 --> MinIO
+         (media bytes never pass through Java)
 
 Java / Scheduler / Worker
           |
@@ -262,6 +274,15 @@ docker compose up --build
 
 Wait until `control-service` is healthy, then:
 
+1. Open `https://localhost` (or `https://localhost:8443` if `INGRESS_HTTPS_PORT` is 8443).
+2. Trust Caddy’s internal CA if the browser warns (see Local TLS).
+3. Paste `MEDIA_PLATFORM_BOOTSTRAP_API_KEY` from `.env`.
+4. **New Job** → choose a local media file → select operations → **Upload & Create Job**.
+5. Watch the Job timeline.
+6. Download artifacts when they exist.
+
+The browser uploads directly to `https://localhost:9443` (presigned PUT). Media bytes do not go through Java. `OBJECT_STORE_PUBLIC_ENDPOINT` must match the host the browser (and `curl`) actually call; Compose interpolates the process environment over `.env`, so an exported `http://127.0.0.1:9000` from an older phase will override the HTTPS default.
+
 ```bash
 curl -k https://localhost/health
 ```
@@ -311,13 +332,13 @@ This is a developer-oriented API-key console, not an end-user identity system. H
 - Artifact **Download** via `POST /jobs/{id}/artifacts/{artifactId}/download-url`, then a top-level navigation to the returned MinIO URL (the console does not rewrite or keep that URL)
 - Live polling about every 3 seconds on a non-terminal Job detail page; polling stops at `COMPLETED`, `FAILED`, or `CANCELLED`
 
-**New Job** is an advanced/dev form: you must already have an object at `s3://media-input/...`. The console does not upload media. First-class ingest is the next product gap.
+**New Job** uploads a local file (or reuses READY media). The manual `s3://...` field is under **Advanced (object URI)**.
 
-The UI is built on the existing REST API. Curl examples below still work. Direct paths such as `https://localhost/jobs` remain proxied. The browser console calls `/api/jobs` (Caddy strips `/api`) so SPA routes like `/job/:id` do not collide with `/jobs`.
+The UI is built on the existing REST API. Curl examples below still work. Direct paths such as `https://localhost/jobs` and `https://localhost/media-assets` remain proxied. The browser console calls `/api/jobs` and `/api/media-assets` (Caddy strips `/api`) so SPA routes like `/job/:id` do not collide with `/jobs`.
 
 Jaeger, Prometheus, and Grafana stay on localhost operator ports. They are not linked from the product console. `/internal/**` is blocked at Caddy; scheduler and workers continue to call Java on `http://control-service:8080`.
 
-Caddy sets `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`, and a narrow Content-Security-Policy (`default-src 'self'` plus `script-src`/`style-src`/`connect-src 'self'`). Artifact downloads are a top-level navigation to the presigned MinIO URL, not a `fetch`, so they are not blocked by `connect-src`. Production JS does not need `unsafe-eval`. CORS is not opened with `Access-Control-Allow-Origin: *`; the console is same-origin.
+Caddy terminates TLS on `:9443` and reverse-proxies to MinIO **without rewriting the signed path**. The upstream `Host` header is `{http.request.hostport}` (for example `localhost:9443`) so SigV4 matches what Java signed. Using `{http.request.header.Host}` inside `reverse_proxy` is wrong: Caddy has already replaced Host with `minio:9000`, which produces `SignatureDoesNotMatch`.
 
 ### Frontend development
 
@@ -459,7 +480,28 @@ No Loki/ELK, alerting, SLO framework, service mesh, or user-facing performance a
 
 ### Submit a job, download an artifact
 
-Upload a small clip to MinIO (`http://127.0.0.1:9000`, buckets `media-input` / `media-output`), then:
+Normal path: upload via the web console, or the MediaAsset API:
+
+```bash
+# 1. Create a PENDING_UPLOAD asset (returns a time-limited PUT URL — do not log it)
+curl -k -sS -X POST https://localhost/media-assets \
+  -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"filename":"sample.mp4","contentType":"video/mp4","sizeBytes":12345}'
+
+# 2. PUT the file to $.upload.url with the same Content-Type header. No API key.
+# 3. Complete (Java HEADs the object)
+curl -k -sS -X POST https://localhost/media-assets/<asset-id>/complete \
+  -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY"
+
+# 4. Create a Job from the READY asset
+curl -k -sS -X POST https://localhost/jobs \
+  -H "Authorization: Bearer $MEDIA_PLATFORM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"mediaAssetId":"<asset-id>","operations":[{"type":"METADATA"},{"type":"THUMBNAIL"}]}'
+```
+
+Advanced / self-hosted: still accepted, for objects you already placed:
 
 ```bash
 curl -k -sS -X POST https://localhost/jobs \
@@ -468,7 +510,7 @@ curl -k -sS -X POST https://localhost/jobs \
   -d '{"inputUri":"s3://media-input/sample.mp4","operations":[{"type":"METADATA"},{"type":"THUMBNAIL"}]}'
 ```
 
-List and inspect with the same HTTPS host. When a THUMBNAIL artifact exists:
+Provide exactly one of `mediaAssetId` or `inputUri`. List and inspect with the same HTTPS host. When a THUMBNAIL artifact exists:
 
 ```bash
 curl -k -sS -X POST \
@@ -476,7 +518,7 @@ curl -k -sS -X POST \
   https://localhost/jobs/<job-id>/artifacts/<artifact-id>/download-url
 ```
 
-The JSON `url` is a **presigned MinIO GET** on `http://127.0.0.1:9000` (not `http://minio:9000`). Curl that URL from the host with **no** API key and **no** internal token. SigV4 is computed for that public host; the URL is not rewritten after signing.
+The JSON `url` is a **presigned GET** on `https://localhost:9443` (not `http://minio:9000`). Curl that URL from the host with **no** API key and **no** internal token. SigV4 is computed for that public host; the URL is not rewritten after signing. Use `curl -k --http1.1` if the client negotiates HTTP/3 poorly.
 
 Cancel and retry are unchanged: `POST /jobs/{id}/cancel` and `POST /jobs/{id}/operations/{id}/retry` through HTTPS.
 
@@ -498,7 +540,7 @@ Caddy uses an **internal CA** (`tls internal`). Browsers will warn until you tru
 docker compose cp ingress:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
 ```
 
-Do not commit certificates. This is development TLS, not a public CA.
+Do not commit certificates. This is development TLS, not a public CA. The same CA signs both the console (`:443` / `:8443`) and the object-store upload host (`:9443`). Trust it once so browser PUTs are not mixed-content (HTTPS page → HTTP MinIO would be blocked).
 
 External client credentials **must** use HTTPS through ingress. Scheduler and worker bearer tokens stay on the private Compose network as **HTTP**. That traffic is **not** mTLS. This phase does not implement a service mesh.
 
@@ -507,7 +549,11 @@ External client credentials **must** use HTTPS through ingress. Scheduler and wo
 | Setting | Used by | Compose value |
 | --- | --- | --- |
 | `OBJECT_STORE_ENDPOINT` | Java HEAD, worker Get/Put | `http://minio:9000` |
-| `OBJECT_STORE_PUBLIC_ENDPOINT` | Java S3 presigner (client URLs) | `http://127.0.0.1:9000` |
+| `OBJECT_STORE_PUBLIC_ENDPOINT` | Java S3 presigner (browser PUT/GET URLs) | `https://localhost:9443` |
+| `MEDIA_UPLOAD_MAX_BYTES` | Declared size before presign; actual size after HEAD | `2147483648` (2 GiB) |
+| `MEDIA_UPLOAD_URL_TTL` | Presigned PUT lifetime (1m–24h) | `15m` |
+
+Presigned PUT cannot cleanly enforce a maximum byte range in this S3-compatible setup. Oversized declared uploads are rejected before signing. After `POST /media-assets/{id}/complete`, Java HEADs the object; if it is over the limit the object is deleted best-effort and the asset becomes `FAILED` (`UPLOAD_TOO_LARGE`). Very large files may later benefit from multipart/resumable upload; this phase uses a single PUT.
 
 Workers never receive `WORKER_TOKEN_PEPPER`. Each worker gets only its own `WORKER_SERVICE_TOKEN`.
 
@@ -516,9 +562,10 @@ Workers never receive `WORKER_TOKEN_PEPPER`. Each worker gets only its own `WORK
 Default product Compose publishes:
 
 - **80 / 443** — HTTPS ingress (and HTTP→HTTPS redirect)
-- **9000** — MinIO S3 API (presigned downloads from the host)
+- **9443** — HTTPS object-store public endpoint (presigned upload/download)
+- **9000** — MinIO S3 API (host debugging; workers use `http://minio:9000`)
 
-PostgreSQL and RabbitMQ AMQP stay on the Compose network so they do not collide with a host Postgres on 5432. Override `MINIO_API_PORT` / `INGRESS_HTTPS_PORT` in `.env` if those host ports are taken, and keep `OBJECT_STORE_PUBLIC_ENDPOINT` in sync with the published MinIO port.
+PostgreSQL and RabbitMQ AMQP stay on the Compose network so they do not collide with a host Postgres on 5432. Override `MINIO_API_PORT` / `INGRESS_HTTPS_PORT` / `INGRESS_STORAGE_HTTPS_PORT` in `.env` if those host ports are taken, and keep `OBJECT_STORE_PUBLIC_ENDPOINT` in sync with the published storage HTTPS port (the signed host must be exactly what the browser calls).
 
 ### Worker scaling
 
@@ -1192,6 +1239,8 @@ No `attemptId`. `assignmentId` is `SchedulingDecision.id`. Ownership still begin
 
 Requirements: Java 21, Docker (PostgreSQL + MinIO + RabbitMQ), Go, FFmpeg/ffprobe.
 
+Canonical object keys for console uploads are `accounts/{accountId}/media/{assetId}/source` in bucket `media-input`. The AWS CLI / `mc cp` examples below remain valid for the **advanced** `inputUri` path.
+
 Generate a tiny local clip (do not commit large binaries). Video-only is enough for METADATA/THUMBNAIL. AUDIO_EXTRACTION needs an audio stream. TRANSCODE_1080P needs video; audio is optional. H264_TO_AV1 needs an H.264 video stream; audio is optional:
 
 ```bash
@@ -1817,4 +1866,4 @@ See [docs/github-workflow.md](docs/github-workflow.md) for the full flow, the lo
 
 ## What comes later
 
-The smallest next **product** milestone is first-class media ingest (upload or a MediaAsset flow) so operators do not have to pre-place `s3://media-input/...` objects. A hardened production secret/TLS story or cloud-hosted deploy can follow. This phase is local Compose only — not Kubernetes, Terraform, or a registry publish. A scheduling benchmark harness, SJF, EDF, runtime estimation, alerting, and SLO frameworks remain later still.
+The smallest next **product** milestone is multipart/resumable upload for very large files, or a hardened production secret/TLS story and cloud-hosted deploy. This phase is local Compose only — not Kubernetes, Terraform, or a registry publish. A scheduling benchmark harness, SJF, EDF, runtime estimation, alerting, and SLO frameworks remain later still.

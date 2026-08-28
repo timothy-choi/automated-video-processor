@@ -63,6 +63,7 @@ export type TimelineEventType =
 export interface JobSummary {
   id: string;
   inputUri: string;
+  mediaAssetId?: string | null;
   status: JobStatus;
   priority: JobPriority;
   deadline: string | null;
@@ -98,6 +99,7 @@ export interface OperationResponse {
 export interface JobResponse {
   id: string;
   inputUri: string;
+  mediaAssetId?: string | null;
   status: JobStatus;
   priority: JobPriority;
   deadline: string | null;
@@ -206,9 +208,49 @@ export interface ArtifactDownloadResponse {
 }
 
 export interface CreateJobRequest {
-  inputUri: string;
+  inputUri?: string;
+  mediaAssetId?: string;
   operations: { type: OperationType }[];
   priority?: JobPriority;
+}
+
+export type MediaAssetStatus = "PENDING_UPLOAD" | "READY" | "FAILED";
+
+export interface MediaAssetResponse {
+  id: string;
+  status: MediaAssetStatus;
+  filename: string;
+  contentType?: string | null;
+  sizeBytes?: number | null;
+  objectUri?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MediaAssetListResponse {
+  items: MediaAssetResponse[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+}
+
+export interface UploadUrlResponse {
+  method: "PUT" | string;
+  url: string;
+  expiresAt: string;
+  headers?: Record<string, string>;
+}
+
+export interface CreateMediaAssetResponse {
+  mediaAsset: MediaAssetResponse;
+  upload: UploadUrlResponse;
+}
+
+export interface CreateMediaAssetRequest {
+  filename: string;
+  contentType?: string;
+  sizeBytes: number;
 }
 
 export interface ApiErrorBody {

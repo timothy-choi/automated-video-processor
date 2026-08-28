@@ -23,6 +23,7 @@ import com.example.drive.job.repository.ArtifactRepository;
 import com.example.drive.job.repository.ExecutionAttemptRepository;
 import com.example.drive.job.repository.JobRepository;
 import com.example.drive.job.repository.OperationRepository;
+import com.example.drive.media.MediaAssetService;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.opentelemetry.api.OpenTelemetry;
@@ -45,6 +46,7 @@ class JobServiceTelemetryIsolationTest {
 				mock(OperationRepository.class),
 				mock(ArtifactRepository.class),
 				mock(ExecutionAttemptRepository.class),
+				mock(MediaAssetService.class),
 				Clock.fixed(Instant.parse("2026-08-27T21:00:00Z"), ZoneOffset.UTC),
 				metrics,
 				OpenTelemetry.noop().getTracer("test")
@@ -70,6 +72,7 @@ class JobServiceTelemetryIsolationTest {
 				mock(OperationRepository.class),
 				mock(ArtifactRepository.class),
 				mock(ExecutionAttemptRepository.class),
+				mock(MediaAssetService.class),
 				Clock.fixed(Instant.parse("2026-08-27T21:00:00Z"), ZoneOffset.UTC),
 				new MediaMetrics(registry),
 				OpenTelemetry.noop().getTracer("test")
@@ -109,6 +112,7 @@ class JobServiceTelemetryIsolationTest {
 						mock(OperationRepository.class),
 						mock(ArtifactRepository.class),
 						mock(ExecutionAttemptRepository.class),
+						mock(MediaAssetService.class),
 						Clock.fixed(Instant.parse("2026-08-27T21:00:00Z"), ZoneOffset.UTC),
 						new MediaMetrics(new SimpleMeterRegistry()),
 						sdk.getTracer("test")

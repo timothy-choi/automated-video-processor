@@ -40,4 +40,22 @@ class ObjectStorePresignEndpointTest {
 		assertThat(signed.url().getQuery()).contains("X-Amz-Signature");
 		assertThat(signed.url().toString()).doesNotContain("minio.internal");
 	}
+
+	@Test
+	void signedPutUrlUsesPublicHostWithoutRewritingAfterSignature() {
+		ObjectStoreAccess.PresignedPut signed = objectStoreAccess.presignPut(
+				"media-input",
+				"accounts/demo/media/demo/source",
+				"video/mp4",
+				Duration.ofMinutes(15)
+		);
+
+		assertThat(signed.url().getHost()).isEqualTo("127.0.0.1");
+		assertThat(signed.url().getPort()).isEqualTo(19000);
+		assertThat(signed.url().getPath()).isEqualTo("/media-input/accounts/demo/media/demo/source");
+		assertThat(signed.url().getQuery()).contains("X-Amz-Signature");
+		assertThat(signed.url().getQuery()).contains("X-Amz-Expires");
+		assertThat(signed.url().toString()).doesNotContain("minio.internal");
+		assertThat(signed.url().getQuery()).doesNotContain("X-Amz-Security-Token");
+	}
 }

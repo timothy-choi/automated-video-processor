@@ -16,6 +16,7 @@ public final class TelemetryRedaction {
 			"access_key",
 			"signed_url",
 			"presigned_url",
+			"upload_url",
 			"password",
 			"token"
 	);

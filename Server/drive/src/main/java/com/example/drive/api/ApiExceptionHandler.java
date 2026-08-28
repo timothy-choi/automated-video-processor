@@ -28,6 +28,7 @@ import com.example.drive.job.OperationNotFoundException;
 import com.example.drive.job.StaleAssignmentException;
 import com.example.drive.job.StaleExecutionAttemptException;
 import com.example.drive.job.WorkerNotEligibleException;
+import com.example.drive.media.MediaAssetException;
 import com.example.drive.storage.ObjectNotFoundException;
 import com.example.drive.storage.ObjectStoreUnavailableException;
 import com.example.drive.worker.InvalidRegistrationException;
@@ -80,6 +81,11 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(ArtifactUriInvalidException.class)
 	public ResponseEntity<ApiError> handleArtifactUriInvalid(ArtifactUriInvalidException ex) {
 		return respond(HttpStatus.BAD_REQUEST, "ARTIFACT_URI_INVALID", ex.getMessage());
+	}
+
+	@ExceptionHandler(MediaAssetException.class)
+	public ResponseEntity<ApiError> handleMediaAsset(MediaAssetException ex) {
+		return respond(ex.getStatus(), ex.getCode(), ex.getMessage());
 	}
 
 	@ExceptionHandler(ObjectNotFoundException.class)

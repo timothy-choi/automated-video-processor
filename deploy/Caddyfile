@@ -8,7 +8,7 @@ localhost, 127.0.0.1 {
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
 		X-Frame-Options DENY
-		Content-Security-Policy "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; script-src 'self'; style-src 'self'; connect-src 'self'"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; img-src 'self' data:; script-src 'self'; style-src 'self'; connect-src 'self' https://127.0.0.1:{$INGRESS_STORAGE_HTTPS_PORT:9443} https://localhost:{$INGRESS_STORAGE_HTTPS_PORT:9443}"
 	}
 
 	# Internal control-plane routes stay on the Compose network (scheduler/workers → Java :8080).
@@ -30,6 +30,9 @@ localhost, 127.0.0.1 {
 	handle /jobs* {
 		reverse_proxy control-service:8080
 	}
+	handle /media-assets* {
+		reverse_proxy control-service:8080
+	}
 	handle /api-keys* {
 		reverse_proxy control-service:8080
 	}
@@ -45,6 +48,43 @@ localhost, 127.0.0.1 {
 		encode gzip
 		try_files {path} /index.html
 		file_server
+	}
+}
+
+# Browser-reachable HTTPS object store. SigV4 is signed for this host:port;
+# reverse_proxy preserves Host. Do not strip or rewrite the signed path.
+https://127.0.0.1:{$INGRESS_STORAGE_HTTPS_PORT:9443}, https://localhost:{$INGRESS_STORAGE_HTTPS_PORT:9443} {
+	tls internal
+
+	@allowedOrigin header_regexp Origin ^https://(localhost|127\.0\.0\.1)(:[0-9]+)?$
+	@devOrigin header_regexp Origin ^http://(localhost|127\.0\.0\.1):5173$
+
+	@preflight method OPTIONS
+	handle @preflight {
+		header @allowedOrigin Access-Control-Allow-Origin "{http.request.header.Origin}"
+		header @devOrigin Access-Control-Allow-Origin "{http.request.header.Origin}"
+		header Access-Control-Allow-Methods "GET, PUT, HEAD, OPTIONS"
+		header Access-Control-Allow-Headers "Content-Type, Content-Length, Content-MD5, x-amz-content-sha256, x-amz-date, x-amz-security-token, x-amz-user-agent, x-amz-checksum-crc32, x-amz-checksum-crc32c, x-amz-checksum-sha1, x-amz-checksum-sha256, x-amz-sdk-checksum-algorithm, Authorization"
+		header Access-Control-Expose-Headers "ETag, Content-Length, Content-Type"
+		header Access-Control-Max-Age "86400"
+		header Vary Origin
+		respond 204
+	}
+
+	header @allowedOrigin Access-Control-Allow-Origin "{http.request.header.Origin}"
+	header @devOrigin Access-Control-Allow-Origin "{http.request.header.Origin}"
+	header Access-Control-Expose-Headers "ETag, Content-Length, Content-Type"
+	header Vary Origin
+
+	reverse_proxy minio:9000 {
+		# Use the original client host:port. {http.request.header.Host} is already
+		# rewritten to the upstream (minio:9000) inside reverse_proxy, which breaks SigV4.
+		header_up Host {http.request.hostport}
+		header_down -Access-Control-Allow-Origin
+		header_down -Access-Control-Allow-Methods
+		header_down -Access-Control-Allow-Headers
+		header_down -Access-Control-Allow-Credentials
+		header_down -Access-Control-Expose-Headers
 	}
 }
 
