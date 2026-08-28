@@ -21,6 +21,7 @@ import com.example.drive.job.dto.JobArtifactsResponse;
 import com.example.drive.job.dto.JobListResponse;
 import com.example.drive.job.dto.JobOperationsResponse;
 import com.example.drive.job.dto.JobResponse;
+import com.example.drive.job.dto.JobTimelineResponse;
 import com.example.drive.job.dto.OperationAttemptsResponse;
 import com.example.drive.job.dto.RetryJobResponse;
 import com.example.drive.job.dto.RetryOperationResponse;
@@ -33,6 +34,7 @@ import jakarta.validation.Valid;
 public class JobController {
 
 	private final JobService jobService;
+	private final JobTimelineService jobTimelineService;
 	private final JobCancellationService jobCancellationService;
 	private final JobRetryService jobRetryService;
 	private final ArtifactAccessService artifactAccessService;
@@ -40,12 +42,14 @@ public class JobController {
 
 	public JobController(
 			JobService jobService,
+			JobTimelineService jobTimelineService,
 			JobCancellationService jobCancellationService,
 			JobRetryService jobRetryService,
 			ArtifactAccessService artifactAccessService,
 			CurrentAccount currentAccount
 	) {
 		this.jobService = jobService;
+		this.jobTimelineService = jobTimelineService;
 		this.jobCancellationService = jobCancellationService;
 		this.jobRetryService = jobRetryService;
 		this.artifactAccessService = artifactAccessService;
@@ -111,6 +115,11 @@ public class JobController {
 	@GetMapping("/{id}")
 	public JobResponse getJob(@PathVariable("id") UUID id) {
 		return jobService.getJob(id, currentAccount.requireId());
+	}
+
+	@GetMapping("/{id}/timeline")
+	public JobTimelineResponse getTimeline(@PathVariable("id") UUID id) {
+		return jobTimelineService.getTimeline(id, currentAccount.requireId());
 	}
 
 	@GetMapping("/{id}/operations")
