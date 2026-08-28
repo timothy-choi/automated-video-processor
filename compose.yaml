@@ -183,7 +183,9 @@ services:
       OTEL_RESOURCE_ATTRIBUTES: worker.id=worker-b
 
   ingress:
-    image: caddy:2-alpine
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.ingress
     ports:
       - "${INGRESS_HTTP_PORT:-80}:80"
       - "${INGRESS_HTTPS_PORT:-443}:443"

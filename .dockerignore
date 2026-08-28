@@ -1,0 +1,16 @@
+.git
+**/.git
+**/node_modules
+**/dist
+**/target
+**/.env
+**/.env.*
+!.env.example
+**/.DS_Store
+**/coverage
+**/*.md
+docs
+contracts
+scheduler
+worker
+Server
